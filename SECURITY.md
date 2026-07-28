@@ -21,7 +21,7 @@ disclosure through the private advisory.
 
 ## Security boundary
 
-BigQuery Data Agent Eval is a trusted local workstation tool. It uses the current user's Google
+PrismTrail is a trusted local workstation tool. It uses the current user's Google
 Cloud Application Default Credentials and has no application-level user authentication.
 
 The default Docker Compose configuration publishes the service only on `127.0.0.1`. Do not change

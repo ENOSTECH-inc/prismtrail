@@ -4,6 +4,8 @@ node_modules/
 data/
 work/
 *.png
+!public/assets/
+!public/assets/prismtrail-mark.png
 VALIDATION.md
 design-qa.md
 npm-debug.log*

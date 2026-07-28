@@ -1,9 +1,9 @@
 ---
-name: bq-data-agent-eval
-description: Set up, operate, test, and extend the BigQuery Data Agent Eval repository. Use when a coding agent needs to configure ADC, register a BigQuery Data Agent, create or import test suites, run evaluations, inspect system/business scores, export Google Sheets reports, configure GCS storage, modify the application, or verify Docker-based local startup.
+name: prismtrail
+description: Set up, operate, test, and extend PrismTrail. Use when a coding agent needs to configure ADC, register a supported data agent, create or import test suites, run evaluations, inspect system/business scores, export Google Sheets reports, configure storage, modify the application, or verify Docker-based local startup.
 ---
 
-# BigQuery Data Agent Eval
+# PrismTrail
 
 Operate this repository as a local-first evaluation system for existing BigQuery Data Agents.
 Preserve the distinction between deterministic system requirements and Gemini-judged business

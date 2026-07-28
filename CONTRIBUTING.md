@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for improving BigQuery Data Agent Eval.
+Thank you for improving PrismTrail.
 
 ## Development setup
 

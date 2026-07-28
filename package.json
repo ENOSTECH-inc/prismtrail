@@ -1,25 +1,25 @@
 {
-  "name": "bq-data-agent-eval",
+  "name": "prismtrail",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local evaluation and reporting UI for BigQuery Data Agents",
+  "description": "Local-first evaluation, regression testing, and reporting for data agents",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ENOSTECH-inc/bigquery-data-agent-eval.git"
+    "url": "git+https://github.com/ENOSTECH-inc/prismtrail.git"
   },
-  "homepage": "https://github.com/ENOSTECH-inc/bigquery-data-agent-eval#readme",
+  "homepage": "https://github.com/ENOSTECH-inc/prismtrail#readme",
   "bugs": {
-    "url": "https://github.com/ENOSTECH-inc/bigquery-data-agent-eval/issues"
+    "url": "https://github.com/ENOSTECH-inc/prismtrail/issues"
   },
   "bin": {
-    "bq-agent-eval": "./bin/bq-agent-eval.mjs"
+    "prismtrail": "./bin/prismtrail.mjs"
   },
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "setup": "node bin/bq-agent-eval.mjs",
+    "setup": "node bin/prismtrail.mjs",
     "test": "node --test"
   },
   "dependencies": {

@@ -1,6 +1,6 @@
 # Third-party notices
 
-BigQuery Data Agent Eval depends on open-source packages distributed under their respective
+PrismTrail depends on open-source packages distributed under their respective
 licenses. The authoritative license texts are included in each installed package and its source
 repository.
 

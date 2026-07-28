@@ -1,4 +1,0 @@
-interface:
-  display_name: "BigQuery Data Agent Eval"
-  short_description: "Set up and operate BigQuery Data Agent evaluations"
-  default_prompt: "Use $bq-data-agent-eval to set up and validate this BigQuery Data Agent evaluation workspace."

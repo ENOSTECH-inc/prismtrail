@@ -21,4 +21,4 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm audit --omit=dev --audit-level=high
-      - run: docker build -t bq-data-agent-eval:test .
+      - run: docker build -t prismtrail:test .

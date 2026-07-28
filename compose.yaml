@@ -1,4 +1,4 @@
-name: bq-agent-eval
+name: prismtrail
 
 services:
   app:
@@ -31,4 +31,4 @@ services:
 
 volumes:
   agent-eval-data:
-    name: bq-agent-eval-data
+    name: prismtrail-data

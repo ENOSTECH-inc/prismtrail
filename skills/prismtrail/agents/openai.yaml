@@ -1,0 +1,4 @@
+interface:
+  display_name: "PrismTrail"
+  short_description: "Set up and operate data-agent evaluations"
+  default_prompt: "Use $prismtrail to set up and validate this data-agent evaluation workspace."

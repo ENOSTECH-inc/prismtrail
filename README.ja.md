@@ -1,12 +1,16 @@
-# BigQuery Data Agent Eval
+<p align="center">
+  <img src="./public/assets/prismtrail-mark.png" alt="PrismTrail ロゴ" width="168">
+</p>
+
+# PrismTrail
 
 [English](./README.md) · [アーキテクチャ](./ARCHITECTURE.md) · [セキュリティ](./SECURITY.md) · [コントリビューション](./CONTRIBUTING.md)
 
-> 既存のBigQuery Data Agentを対象に、ローカルで回帰テスト・精度評価・Google Sheets
+> データエージェントを対象に、ローカルで回帰テスト・精度評価・Google Sheets
 > レポーティングを行う評価基盤です。
 
-BigQuery Data Agent Evalは、繰り返し確認したい実業務の質問をテストスイートとして管理し、
-Data AgentのレスポンストレースとBigQuery Job情報を取得します。動作の健全性とビジネス上の
+PrismTrailは、繰り返し確認したい実業務の質問をテストスイートとして管理します。最初の
+アダプターはBigQuery Data AgentのレスポンストレースとBigQuery Job情報を取得します。動作の健全性とビジネス上の
 正確性を分けて評価し、Web UIとGoogle Sheetsへ共有しやすいレポートを出力します。
 
 ローカルPCとコーディングエージェントでの利用を想定しています。認証にはApplication
@@ -56,8 +60,8 @@ Default Credentials（ADC）を使用し、アクセストークンや認証情�
 ### 1. インストール
 
 ```bash
-git clone https://github.com/ENOSTECH-inc/bigquery-data-agent-eval.git
-cd bigquery-data-agent-eval
+git clone https://github.com/ENOSTECH-inc/prismtrail.git
+cd prismtrail
 npm ci
 ```
 
@@ -108,17 +112,17 @@ docker compose down
 ## セットアップCLI
 
 ```text
-bq-agent-eval init     検証済みの.envを作成
-bq-agent-eval doctor   Node、Docker、gcloud、ADC、設定を診断
-bq-agent-eval up       Docker Composeをビルドして起動
-bq-agent-eval skill    同梱エージェントスキルのパスを表示
+prismtrail init     検証済みの.envを作成
+prismtrail doctor   Node、Docker、gcloud、ADC、設定を診断
+prismtrail up       Docker Composeをビルドして起動
+prismtrail skill    同梱エージェントスキルのパスを表示
 ```
 
 グローバルインストールは不要です。`npm run setup -- <command>`で利用できます。
 
 ## コーディングエージェント用スキル
 
-[`skills/bq-data-agent-eval/SKILL.md`](./skills/bq-data-agent-eval/SKILL.md) に、セットアップ、
+[`skills/prismtrail/SKILL.md`](./skills/prismtrail/SKILL.md) に、セットアップ、
 認証、機密データの扱い、評価条件、Google Sheets/GCS操作、コード変更時の検証手順をまとめています。
 
 Codexではスキルディレクトリを`~/.codex/skills/`へコピーまたはシンボリックリンクできます。

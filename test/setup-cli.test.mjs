@@ -5,7 +5,7 @@ import {
   serializeEnv,
   validateAgentResource,
   validateProjectId
-} from "../bin/bq-agent-eval.mjs";
+} from "../bin/prismtrail.mjs";
 
 test("setup CLI parses commands and flags", () => {
   assert.deepEqual(parseArgs(["init", "--project", "example-project", "--force"]), {

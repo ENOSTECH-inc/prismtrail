@@ -1,15 +1,18 @@
-# BigQuery Data Agent Eval
+<p align="center">
+  <img src="./public/assets/prismtrail-mark.png" alt="PrismTrail logo" width="168">
+</p>
+
+# PrismTrail
 
 [日本語](./README.ja.md) · [Architecture](./ARCHITECTURE.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
 
-> Local-first evaluation, regression testing, and Google Sheets reporting for existing
-> BigQuery Data Agents.
+> Local-first evaluation, regression testing, and reporting for data agents.
 
-[![CI](https://github.com/ENOSTECH-inc/bigquery-data-agent-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/ENOSTECH-inc/bigquery-data-agent-eval/actions/workflows/ci.yml)
+[![CI](https://github.com/ENOSTECH-inc/prismtrail/actions/workflows/ci.yml/badge.svg)](https://github.com/ENOSTECH-inc/prismtrail/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](https://nodejs.org/)
 
-BigQuery Data Agent Eval turns repeatable business questions into test suites. It executes them
+PrismTrail turns repeatable business questions into test suites. Its first adapter executes them
 against an existing BigQuery Data Agent, captures response traces and BigQuery job metadata,
 evaluates deterministic behavior and business accuracy separately, and produces team-friendly
 reports in the web UI and Google Sheets.
@@ -74,8 +77,8 @@ Google Sheets and Cloud Storage integrations additionally require their correspo
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/ENOSTECH-inc/bigquery-data-agent-eval.git
-cd bigquery-data-agent-eval
+git clone https://github.com/ENOSTECH-inc/prismtrail.git
+cd prismtrail
 npm ci
 ```
 
@@ -126,19 +129,19 @@ Stop the service:
 docker compose down
 ```
 
-Local application data is stored in the `bq-agent-eval-data` named volume unless GCS primary
+Local application data is stored in the `prismtrail-data` named volume unless GCS primary
 storage is configured. `docker compose down -v` deletes that volume and should only be used for an
 intentional reset.
 
 ## Setup CLI
 
-The repository includes `bq-agent-eval`:
+The repository includes `prismtrail`:
 
 ```text
-bq-agent-eval init     Create a validated, git-ignored .env
-bq-agent-eval doctor   Check Node, Docker, gcloud, ADC, and configuration
-bq-agent-eval up       Build and start Docker Compose
-bq-agent-eval skill    Print the bundled coding-agent skill path
+prismtrail init     Create a validated, git-ignored .env
+prismtrail doctor   Check Node, Docker, gcloud, ADC, and configuration
+prismtrail up       Build and start Docker Compose
+prismtrail skill    Print the bundled coding-agent skill path
 ```
 
 Use it through `npm run setup -- <command>` without installing anything globally. The `bin` entry
@@ -146,7 +149,7 @@ also supports `npm link` for contributors.
 
 ## Coding-agent skill
 
-The repository includes [`skills/bq-data-agent-eval/SKILL.md`](./skills/bq-data-agent-eval/SKILL.md).
+The repository includes [`skills/prismtrail/SKILL.md`](./skills/prismtrail/SKILL.md).
 It gives coding agents the project-specific safety, setup, validation, data-handling, and testing
 workflow.
 

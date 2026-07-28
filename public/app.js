@@ -22,7 +22,7 @@ const state = {
   knowledgePlan: null,
   selectedKnowledgeDetail: null,
   reportPollTimer: null,
-  sidebarCollapsed: localStorage.getItem("agent-eval-sidebar-collapsed") === "true",
+  sidebarCollapsed: localStorage.getItem("prismtrail-sidebar-collapsed") === "true",
   busy: false
 };
 
@@ -99,9 +99,9 @@ function shell(content, active = "suites", editor = false) {
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
         <div class="sidebar-head">
-          <a class="brand" href="#/suites" aria-label="Agent Eval ホーム">
-            <span class="brand-icon">${icon("database-zap", 21)}</span>
-            <span class="brand-copy"><strong>Agent Eval</strong><small>BigQuery向け</small></span>
+          <a class="brand" href="#/suites" aria-label="PrismTrail ホーム">
+            <span class="brand-icon"><img src="/assets/prismtrail-mark.png" alt="" width="32" height="32"></span>
+            <span class="brand-copy"><strong>PrismTrail</strong><small>データエージェント評価</small></span>
           </a>
           <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="${collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}" aria-expanded="${!collapsed}" title="${collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</button>
         </div>
@@ -1679,7 +1679,7 @@ app.addEventListener("click", (event) => {
   const toggle = event.target.closest("#sidebar-toggle");
   if (!toggle) return;
   state.sidebarCollapsed = !state.sidebarCollapsed;
-  localStorage.setItem("agent-eval-sidebar-collapsed", String(state.sidebarCollapsed));
+  localStorage.setItem("prismtrail-sidebar-collapsed", String(state.sidebarCollapsed));
   route();
 });
 initialize();

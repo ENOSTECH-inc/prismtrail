@@ -292,7 +292,7 @@ test("report marks business summaries as unset when no business evaluation ran",
 
 test("schema v1 suite rows migrate with business accuracy disabled", () => {
   const rows = [
-    ["Agent Eval | テストスイート管理"],
+    ["PrismTrail | テストスイート管理"],
     ["スキーマ", "1"],
     ["スイートID", "suite_old"],
     ["スイート名", "旧形式"],

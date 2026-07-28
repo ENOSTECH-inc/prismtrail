@@ -175,6 +175,7 @@ const staticFiles = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/styles.css": ["styles.css", "text/css; charset=utf-8"],
+  "/assets/prismtrail-mark.png": ["assets/prismtrail-mark.png", "image/png"],
   "/vendor/lucide.min.js": ["../node_modules/lucide/dist/umd/lucide.min.js", "text/javascript; charset=utf-8"],
   "/vendor/vega.min.js": ["../node_modules/vega/build/vega.min.js", "text/javascript; charset=utf-8"],
   "/vendor/vega-lite.min.js": ["../node_modules/vega-lite/build/vega-lite.min.js", "text/javascript; charset=utf-8"],
@@ -1595,6 +1596,6 @@ await Promise.all([
 ]);
 await seedData();
 server.listen(port, host, () => {
-  console.log(`BigQuery Data Agent Eval is running at http://${host}:${port}`);
+  console.log(`PrismTrail is running at http://${host}:${port}`);
   console.log(`Agent: ${config.agent}`);
 });

@@ -10,5 +10,7 @@ data
 work
 test
 *.png
+!public/assets/
+!public/assets/prismtrail-mark.png
 VALIDATION.md
 design-qa.md
