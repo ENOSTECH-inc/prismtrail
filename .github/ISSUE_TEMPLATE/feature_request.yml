@@ -1,0 +1,56 @@
+name: Feature request / 機能提案
+description: Propose an improvement or a new data-agent adapter / 改善や新しいアダプターを提案します
+title: "[Feature]: "
+labels:
+  - enhancement
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem first. A solution proposal is welcome, but not required.
+        まず利用者が困っていることを教えてください。実装案は任意です。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 解決したい課題
+      description: Who is affected, in what workflow, and why the current behavior is insufficient?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome / 期待する結果
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 対象領域
+      options:
+        - Data-agent adapter
+        - Test suites and execution
+        - Evaluation and scoring
+        - Reports and Google Sheets
+        - Storage and portability
+        - CLI and coding-agent skill
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 検討した代替案
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution / コントリビューション
+      options:
+        - label: I may be able to help implement or test this change.
+

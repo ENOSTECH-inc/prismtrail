@@ -235,6 +235,13 @@ docker compose build
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for pull requests and validation expectations.
 
+## Community and support
+
+- Ask setup questions and discuss ideas in [GitHub Discussions](https://github.com/ENOSTECH-inc/prismtrail/discussions).
+- Report reproducible bugs or propose features with the [issue forms](https://github.com/ENOSTECH-inc/prismtrail/issues/new/choose).
+- Read [SUPPORT.md](./SUPPORT.md), [CONTRIBUTING.md](./CONTRIBUTING.md), and the [Code of Conduct](./CODE_OF_CONDUCT.md).
+- Report vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).
+
 ## Project structure
 
 ```text

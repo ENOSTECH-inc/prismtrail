@@ -1,0 +1,83 @@
+name: Bug report / 不具合報告
+description: Report a reproducible problem in PrismTrail / 再現可能な不具合を報告します
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve PrismTrail.
+        セキュリティ上の問題は公開Issueにせず、Securityタブの「Report a vulnerability」から報告してください。
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check / 安全確認
+      options:
+        - label: This report contains no credentials, tokens, customer data, production identifiers, or private query results.
+          required: true
+        - label: I confirmed this is not a security vulnerability.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit / バージョンまたはコミット
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: startup
+    attributes:
+      label: How did you run PrismTrail? / 起動方法
+      options:
+        - Docker Compose
+        - npm start
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / 環境
+      description: OS, browser, Node/Docker version, and relevant adapter. Do not include project IDs or secrets.
+      placeholder: macOS 15, Docker Desktop 4.x, Chrome, BigQuery Data Agent adapter
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce / 再現手順
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Run ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 期待する動作
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior / 実際の動作
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs or screenshots / 機密情報を除いたログ・画像
+      description: Redact credentials, resource names, prompts, responses, SQL results, and customer information.
+      render: shell
+
