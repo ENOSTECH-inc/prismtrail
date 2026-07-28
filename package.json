@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "google-auth-library": "^10.3.0",
-    "lucide": "^0.468.0",
+    "lucide": "^1.27.0",
     "vega": "^6.3.1",
     "vega-embed": "^7.1.0",
     "vega-lite": "^6.4.3"
