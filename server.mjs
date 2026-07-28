@@ -174,6 +174,8 @@ const config = {
 const staticFiles = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+  "/i18n.js": ["i18n.js", "text/javascript; charset=utf-8"],
+  "/i18n-core.js": ["i18n-core.js", "text/javascript; charset=utf-8"],
   "/styles.css": ["styles.css", "text/css; charset=utf-8"],
   "/assets/prismtrail-mark.png": ["assets/prismtrail-mark.png", "image/png"],
   "/vendor/lucide.min.js": ["../node_modules/lucide/dist/umd/lucide.min.js", "text/javascript; charset=utf-8"],

@@ -1,3 +1,13 @@
+import {
+  formatLocaleDate,
+  formatLocaleNumber,
+  getLocale,
+  localizeDocument,
+  setLocale,
+  tr,
+  translateApiMessage
+} from "./i18n.js";
+
 const state = {
   config: null,
   agents: [],
@@ -12,6 +22,7 @@ const state = {
   suitePasteValidation: null,
   suitePasteError: "",
   suitePasteBusy: false,
+  preserveEditorOnLocale: false,
   storageConfig: null,
   storageDraft: null,
   storageTestResult: null,
@@ -38,14 +49,17 @@ const esc = (value) =>
     .replaceAll("'", "&#039;");
 
 function fmtDate(value) {
-  return value
-    ? new Intl.DateTimeFormat("ja-JP", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value))
-    : "未実行";
+  return value ? formatLocaleDate(value, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : tr("未実行", "Never");
 }
 
 function fmtDuration(ms = 0) {
   if (ms < 1000) return `${ms} ms`;
-  return ms < 60000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60000)}分 ${Math.round((ms % 60000) / 1000)}秒`;
+  return ms < 60000
+    ? tr("{seconds} 秒", "{seconds} sec", { seconds: formatLocaleNumber(ms / 1000, { maximumFractionDigits: 1 }) })
+    : tr("{minutes}分 {seconds}秒", "{minutes} min {seconds} sec", {
+      minutes: formatLocaleNumber(Math.floor(ms / 60000)),
+      seconds: formatLocaleNumber(Math.round((ms % 60000) / 1000))
+    });
 }
 
 function fmtBytes(value = 0) {
@@ -67,7 +81,7 @@ function notify(message, kind = "error") {
 async function json(url, options) {
   const response = await fetch(url, options);
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error?.message || body.error || `HTTP ${response.status}`);
+  if (!response.ok) throw new Error(translateApiMessage(body.error?.message || body.error || `HTTP ${response.status}`));
   return body;
 }
 
@@ -76,20 +90,44 @@ function icon(name, size = 17) {
 }
 
 function statusPill(status) {
-  const label = { passed: "合格", failed: "不合格", review_required: "要確認", warning: "注意", ready: "接続済み", unchecked: "未確認", error: "エラー", draft: "下書き", active: "有効", running: "実行中" }[status] || status;
+  const label = {
+    passed: tr("合格", "Passed"),
+    failed: tr("不合格", "Failed"),
+    review_required: tr("要確認", "Review required"),
+    warning: tr("注意", "Warning"),
+    ready: tr("接続済み", "Connected"),
+    unchecked: tr("未確認", "Unchecked"),
+    error: tr("エラー", "Error"),
+    draft: tr("下書き", "Draft"),
+    active: tr("有効", "Active"),
+    running: tr("実行中", "Running")
+  }[status] || status;
   return `<span class="status-pill ${esc(status)}">${esc(label)}</span>`;
 }
 
 function gradeBadge(business) {
   if (!business || business.status === "not_configured") {
-    return `<span class="grade-badge grade-none" aria-label="精度判定なし">— <small>精度判定なし</small></span>`;
+    return `<span class="grade-badge grade-none" aria-label="${tr("精度判定なし", "No accuracy evaluation")}">— <small>${tr("精度判定なし", "Not evaluated")}</small></span>`;
   }
   if (business.status === "judge_error") {
-    return `<span class="grade-badge grade-error" aria-label="精度判定保留">! <small>判定保留</small></span>`;
+    return `<span class="grade-badge grade-error" aria-label="${tr("精度判定保留", "Accuracy evaluation pending")}">! <small>${tr("判定保留", "Pending")}</small></span>`;
   }
   const grade = business.grade || "D";
-  const labels = { A: "◎ 完全一致", B: "○ おおむね一致", C: "△ 一部不一致", D: "× 不一致" };
-  return `<span class="grade-badge grade-${grade.toLowerCase()}" aria-label="精度評価 ${grade}、${labels[grade]}"><b>${grade}</b><small>${labels[grade]}</small></span>`;
+  const labels = {
+    A: tr("◎ 完全一致", "◎ Exact match"),
+    B: tr("○ おおむね一致", "○ Mostly correct"),
+    C: tr("△ 一部不一致", "△ Partially incorrect"),
+    D: tr("× 不一致", "× Incorrect")
+  };
+  return `<span class="grade-badge grade-${grade.toLowerCase()}" aria-label="${tr("精度評価 {grade}、{label}", "Accuracy grade {grade}: {label}", { grade, label: labels[grade] })}"><b>${grade}</b><small>${labels[grade]}</small></span>`;
+}
+
+function localeSelector(compact = false) {
+  const locale = getLocale();
+  return `<div class="locale-switch ${compact ? "compact" : ""}" role="group" aria-label="${tr("表示言語", "Display language")}">
+    <button type="button" data-set-locale="ja" class="${locale === "ja" ? "active" : ""}" aria-pressed="${locale === "ja"}" title="${tr("日本語に切り替える", "Switch to Japanese")}">JA</button>
+    <button type="button" data-set-locale="en" class="${locale === "en" ? "active" : ""}" aria-pressed="${locale === "en"}" title="${tr("英語に切り替える", "Switch to English")}">EN</button>
+  </div>`;
 }
 
 function shell(content, active = "suites", editor = false) {
@@ -99,36 +137,37 @@ function shell(content, active = "suites", editor = false) {
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
         <div class="sidebar-head">
-          <a class="brand" href="#/suites" aria-label="PrismTrail ホーム">
+          <a class="brand" href="#/suites" aria-label="${tr("PrismTrail ホーム", "PrismTrail home")}">
             <span class="brand-icon"><img src="/assets/prismtrail-mark.png" alt="" width="32" height="32"></span>
-            <span class="brand-copy"><strong>PrismTrail</strong><small>データエージェント評価</small></span>
+            <span class="brand-copy"><strong>PrismTrail</strong><small>${tr("データエージェント評価", "Data agent evaluation")}</small></span>
           </a>
-          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="${collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}" aria-expanded="${!collapsed}" title="${collapsed ? "サイドバーを展開" : "サイドバーを折りたたむ"}">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</button>
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}" aria-expanded="${!collapsed}" title="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</button>
         </div>
-        <nav aria-label="メインナビゲーション">
+        <nav aria-label="${tr("メインナビゲーション", "Main navigation")}">
           <section class="nav-group ${["suites", "run", "reports"].includes(active) ? "active-group" : ""}" aria-labelledby="nav-evaluation">
-            <h2 id="nav-evaluation" class="nav-group-label">評価ワークフロー</h2>
-            <a class="${active === "suites" ? "active" : ""}" href="#/suites" title="テストスイート">${icon("layers-3")}<span class="nav-label">テストスイート</span></a>
-            <a class="${active === "run" ? "active" : ""}" href="#/run" title="テスト実行">${icon("play-circle")}<span class="nav-label">テスト実行</span></a>
-            <a class="${active === "reports" ? "active" : ""}" href="#/reports" title="評価レポート">${icon("chart-no-axes-combined")}<span class="nav-label">評価レポート</span></a>
+            <h2 id="nav-evaluation" class="nav-group-label">${tr("評価ワークフロー", "Evaluation")}</h2>
+            <a class="${active === "suites" ? "active" : ""}" href="#/suites" title="${tr("テストスイート", "Test suites")}">${icon("layers-3")}<span class="nav-label">${tr("テストスイート", "Test suites")}</span></a>
+            <a class="${active === "run" ? "active" : ""}" href="#/run" title="${tr("テスト実行", "Test run")}">${icon("play-circle")}<span class="nav-label">${tr("テスト実行", "Test run")}</span></a>
+            <a class="${active === "reports" ? "active" : ""}" href="#/reports" title="${tr("評価レポート", "Evaluation reports")}">${icon("chart-no-axes-combined")}<span class="nav-label">${tr("評価レポート", "Evaluation reports")}</span></a>
           </section>
           <section class="nav-group ${["agents", "knowledge"].includes(active) ? "active-group" : ""}" aria-labelledby="nav-resources">
-            <h2 id="nav-resources" class="nav-group-label">データ・ナレッジ</h2>
-            <a class="${active === "agents" ? "active" : ""}" href="#/agents" title="データエージェント">${icon("bot")}<span class="nav-label">データエージェント</span></a>
-            <a class="${active === "knowledge" ? "active" : ""}" href="#/knowledge" title="GCSナレッジ">${icon("library-big")}<span class="nav-label">GCSナレッジ</span></a>
+            <h2 id="nav-resources" class="nav-group-label">${tr("データ・ナレッジ", "Data & knowledge")}</h2>
+            <a class="${active === "agents" ? "active" : ""}" href="#/agents" title="${tr("データエージェント", "Data agents")}">${icon("bot")}<span class="nav-label">${tr("データエージェント", "Data agents")}</span></a>
+            <a class="${active === "knowledge" ? "active" : ""}" href="#/knowledge" title="${tr("GCSナレッジ", "GCS knowledge")}">${icon("library-big")}<span class="nav-label">${tr("GCSナレッジ", "GCS knowledge")}</span></a>
           </section>
           <section class="nav-group ${active === "sheets" ? "active-group" : ""}" aria-labelledby="nav-integrations">
-            <h2 id="nav-integrations" class="nav-group-label">外部連携</h2>
+            <h2 id="nav-integrations" class="nav-group-label">${tr("外部連携", "Integrations")}</h2>
             <a class="${active === "sheets" ? "active" : ""}" href="#/sheets" title="Google Sheets">${icon("sheet")}<span class="nav-label">Google Sheets</span></a>
           </section>
           <section class="nav-group ${active === "settings" ? "active-group" : ""}" aria-labelledby="nav-system">
-            <h2 id="nav-system" class="nav-group-label">システム管理</h2>
-            <a class="${active === "settings" ? "active" : ""}" href="#/settings" title="設定">${icon("settings-2")}<span class="nav-label">設定</span></a>
+            <h2 id="nav-system" class="nav-group-label">${tr("システム管理", "System")}</h2>
+            <a class="${active === "settings" ? "active" : ""}" href="#/settings" title="${tr("設定", "Settings")}">${icon("settings-2")}<span class="nav-label">${tr("設定", "Settings")}</span></a>
           </section>
         </nav>
+        ${localeSelector(collapsed)}
         <div class="sidebar-auth">
           <span class="live-dot"></span>
-          <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(state.config?.billingProject || "接続確認中")}</small></span>
+          <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(state.config?.billingProject || tr("接続確認中", "Checking connection"))}</small></span>
         </div>
       </aside>
       <main class="main">${content}</main>
@@ -144,6 +183,7 @@ function empty(title, text) {
 }
 
 function refreshIcons() {
+  localizeDocument(app);
   window.lucide?.createIcons();
 }
 
@@ -155,25 +195,25 @@ function renderSuites() {
       return `<article class="suite-card">
         <div class="card-top"><span class="suite-icon">${icon("layers-3")}</span>${statusPill(suite.status)}</div>
         <h2>${esc(suite.name)}</h2>
-        <p>${esc(suite.description || "説明はまだありません")}</p>
+        <p>${esc(suite.description || tr("説明はまだありません", "No description yet"))}</p>
         <div class="suite-meta">
-          <span>${icon("list-checks", 14)}${suite.cases?.length || 0} ケース</span>
+          <span>${icon("list-checks", 14)}${tr("{count} ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</span>
           <span>${icon("clock-3", 14)}${fmtDate(suite.lastRunAt)}</span>
         </div>
-        ${last ? `<div class="last-result"><span>${last.status === "running" ? "現在の実行" : "直近の評価"}</span><strong>${last.status === "running" ? `${last.summary?.completed || 0}/${last.summary?.total || suite.cases?.length || 0}` : `${last.summary?.passRate || 0}%`}</strong>${statusPill(last.status)}</div>` : ""}
-        <div class="card-actions"><a class="button secondary" href="#/suites/${suite.id}/edit">編集する</a>${activeRun ? `<a class="button primary" href="#/reports/${activeRun.id}">${icon("activity", 15)}進捗を見る</a>` : `<button class="button primary" data-run-suite="${suite.id}">${icon("play", 15)}一括実行</button>`}</div>
+        ${last ? `<div class="last-result"><span>${last.status === "running" ? tr("現在の実行", "Current run") : tr("直近の評価", "Latest evaluation")}</span><strong>${last.status === "running" ? `${last.summary?.completed || 0}/${last.summary?.total || suite.cases?.length || 0}` : `${last.summary?.passRate || 0}%`}</strong>${statusPill(last.status)}</div>` : ""}
+        <div class="card-actions"><a class="button secondary" href="#/suites/${suite.id}/edit">${tr("編集する", "Edit")}</a>${activeRun ? `<a class="button primary" href="#/reports/${activeRun.id}">${icon("activity", 15)}${tr("進捗を見る", "View progress")}</a>` : `<button class="button primary" data-run-suite="${suite.id}">${icon("play", 15)}${tr("一括実行", "Run suite")}</button>`}</div>
       </article>`;
     })
     .join("");
   app.innerHTML = shell(`
-    ${pageHead("テストスイート", "実業務プロンプトをまとめて実行し、品質とコストを継続評価します。", `<div class="head-actions"><a href="#/sheets" class="button secondary">${icon("sheet", 16)}Sheets連携</a><button id="new-suite" class="button primary">${icon("plus", 16)}新しいスイート</button></div>`)}
+    ${pageHead(tr("テストスイート", "Test suites"), tr("実業務プロンプトをまとめて実行し、品質とコストを継続評価します。", "Run real-world prompts together and continuously evaluate quality and cost."), `<div class="head-actions"><a href="#/sheets" class="button secondary">${icon("sheet", 16)}${tr("Sheets連携", "Sheets integration")}</a><button id="new-suite" class="button primary">${icon("plus", 16)}${tr("新しいスイート", "New suite")}</button></div>`)}
     <section class="summary-strip">
-      <div><span>スイート</span><strong>${state.suites.length}</strong></div>
-      <div><span>登録ケース</span><strong>${state.suites.reduce((n, s) => n + (s.cases?.length || 0), 0)}</strong></div>
-      <div><span>実行レポート</span><strong>${state.suiteRuns.length}</strong></div>
+      <div><span>${tr("スイート", "Suites")}</span><strong>${formatLocaleNumber(state.suites.length)}</strong></div>
+      <div><span>${tr("登録ケース", "Test cases")}</span><strong>${formatLocaleNumber(state.suites.reduce((n, s) => n + (s.cases?.length || 0), 0))}</strong></div>
+      <div><span>${tr("実行レポート", "Run reports")}</span><strong>${formatLocaleNumber(state.suiteRuns.length)}</strong></div>
       <div><span>Data Agent</span><strong>${state.agents.length}</strong></div>
     </section>
-    <section class="card-grid">${cards || empty("まだスイートがありません", "最初のテストスイートを作成してください。")}</section>
+    <section class="card-grid">${cards || empty(tr("まだスイートがありません", "No suites yet"), tr("最初のテストスイートを作成してください。", "Create your first test suite."))}</section>
   `, "suites");
 
   document.querySelector("#new-suite")?.addEventListener("click", createSuite);
@@ -185,7 +225,7 @@ async function createSuite() {
     const suite = await json("/api/suites", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "新しいテストスイート", description: "", cases: [] })
+      body: JSON.stringify({ name: tr("新しいテストスイート", "New test suite"), description: "", cases: [] })
     });
     state.suites.unshift(suite);
     location.hash = `#/suites/${suite.id}/edit`;
@@ -200,43 +240,43 @@ function caseForm(item, index) {
   return `<article class="case-editor" data-case-index="${index}">
     <div class="case-titlebar">
       <span class="case-number">${String(index + 1).padStart(2, "0")}</span>
-      <div><input class="plain-title" data-field="title" value="${esc(item.title)}" aria-label="テストケース名"><small>${esc(state.agents.find((a) => a.id === item.agentId)?.displayName || "Data Agent未選択")}</small></div>
-      <button class="icon-button danger" data-remove-case="${index}" aria-label="ケースを削除">${icon("trash-2")}</button>
+      <div><input class="plain-title" data-field="title" value="${esc(item.title)}" aria-label="${tr("テストケース名", "Test case name")}"><small>${esc(state.agents.find((a) => a.id === item.agentId)?.displayName || tr("Data Agent未選択", "No Data Agent selected"))}</small></div>
+      <button class="icon-button danger" data-remove-case="${index}" aria-label="${tr("ケースを削除", "Delete case")}">${icon("trash-2")}</button>
     </div>
     <div class="field-grid">
-      <label class="span-2">検証プロンプト<textarea data-field="prompt" rows="4">${esc(item.prompt)}</textarea></label>
-      <label>対象Data Agent<select data-field="agentId">${state.agents.map((agent) => `<option value="${agent.id}" ${agent.id === item.agentId ? "selected" : ""}>${esc(agent.displayName)}</option>`).join("")}</select></label>
-      <label>思考モード<select data-field="thinkingMode"><option value="FAST" ${item.thinkingMode !== "THINKING" ? "selected" : ""}>FAST</option><option value="THINKING" ${item.thinkingMode === "THINKING" ? "selected" : ""}>THINKING</option></select></label>
-      <label class="span-2">ケース固有バケット（複数選択）
+      <label class="span-2">${tr("検証プロンプト", "Test prompt")}<textarea data-field="prompt" rows="4">${esc(item.prompt)}</textarea></label>
+      <label>${tr("対象Data Agent", "Target Data Agent")}<select data-field="agentId">${state.agents.map((agent) => `<option value="${agent.id}" ${agent.id === item.agentId ? "selected" : ""}>${esc(agent.displayName)}</option>`).join("")}</select></label>
+      <label>${tr("思考モード", "Thinking mode")}<select data-field="thinkingMode"><option value="FAST" ${item.thinkingMode !== "THINKING" ? "selected" : ""}>FAST</option><option value="THINKING" ${item.thinkingMode === "THINKING" ? "selected" : ""}>THINKING</option></select></label>
+      <label class="span-2">${tr("ケース固有バケット（複数選択）", "Case-specific buckets (multiple selection)")}
         <select data-knowledge multiple size="${Math.min(3, Math.max(2, state.knowledgeSources.length))}">
-          ${state.knowledgeSources.map((source) => `<option value="${source.id}" ${(item.knowledgeSourceIds || []).includes(source.id) ? "selected" : ""}>${esc(source.name)} · gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${source.chunkCount || 0} チャンク</option>`).join("")}
+          ${state.knowledgeSources.map((source) => `<option value="${source.id}" ${(item.knowledgeSourceIds || []).includes(source.id) ? "selected" : ""}>${esc(source.name)} · gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${tr("{count} チャンク", "{count} chunks", { count: formatLocaleNumber(source.chunkCount || 0) })}</option>`).join("")}
         </select>
-        <small class="field-help">未選択の場合はスイート共通ナレッジを使います。選択時はVertex AIが回答と関連チャンクの整合性を評価します。</small>
+        <small class="field-help">${tr("未選択の場合はスイート共通ナレッジを使います。選択時はVertex AIが回答と関連チャンクの整合性を評価します。", "If none are selected, the suite-level knowledge is used. When selected, Vertex AI evaluates consistency between the answer and relevant chunks.")}</small>
       </label>
     </div>
     <details class="expectations" open>
-      <summary>評価条件</summary>
+      <summary>${tr("評価条件", "Evaluation criteria")}</summary>
       <fieldset class="requirement-section system-requirements">
-        <legend>システム要件 <small>動作チェック</small></legend>
-        <p>回答・SQL・チャート・時間・コストが指定どおりかを決定論的に確認します。</p>
+        <legend>${tr("システム要件", "System requirements")} <small>${tr("動作チェック", "Behavior checks")}</small></legend>
+        <p>${tr("回答・SQL・チャート・時間・コストが指定どおりかを決定論的に確認します。", "Deterministically verify the response, SQL, chart, duration, and cost.")}</p>
         <div class="expectation-grid">
-          <label class="check"><input type="checkbox" data-system-expect="requireSql" ${system.requireSql !== false ? "checked" : ""}> SQLを生成・実行</label>
-          <label class="check"><input type="checkbox" data-system-expect="requireChart" ${system.requireChart ? "checked" : ""}> チャートを生成</label>
-          <label>最大実行時間（秒）<input type="number" min="0" data-system-expect="maxDurationMs" data-scale="1000" value="${Number(system.maxDurationMs || 0) / 1000}"></label>
-          <label>最大課金量（MB）<input type="number" min="0" data-system-expect="maxBytesBilled" data-scale="1048576" value="${Number(system.maxBytesBilled || 0) / 1048576}"></label>
-          <label class="span-2">回答に含める語句（カンマ区切り）<input data-system-expect="requiredPhrases" value="${esc((system.requiredPhrases || []).join(", "))}"></label>
+          <label class="check"><input type="checkbox" data-system-expect="requireSql" ${system.requireSql !== false ? "checked" : ""}> ${tr("SQLを生成・実行", "Generate and run SQL")}</label>
+          <label class="check"><input type="checkbox" data-system-expect="requireChart" ${system.requireChart ? "checked" : ""}> ${tr("チャートを生成", "Generate a chart")}</label>
+          <label>${tr("最大実行時間（秒）", "Maximum duration (sec)")}<input type="number" min="0" data-system-expect="maxDurationMs" data-scale="1000" value="${Number(system.maxDurationMs || 0) / 1000}"></label>
+          <label>${tr("最大課金量（MB）", "Maximum bytes billed (MB)")}<input type="number" min="0" data-system-expect="maxBytesBilled" data-scale="1048576" value="${Number(system.maxBytesBilled || 0) / 1048576}"></label>
+          <label class="span-2">${tr("回答に含める語句（カンマ区切り）", "Required phrases (comma-separated)")}<input data-system-expect="requiredPhrases" value="${esc((system.requiredPhrases || []).join(", "))}"></label>
         </div>
       </fieldset>
       <fieldset class="requirement-section business-requirements">
-        <legend>ビジネス要件 <small>精度チェック</small></legend>
-        <p>回答内容が、事前に定義した正しい事実・判断基準と一致するかをGeminiで採点します。</p>
+        <legend>${tr("ビジネス要件", "Business requirements")} <small>${tr("精度チェック", "Accuracy check")}</small></legend>
+        <p>${tr("回答内容が、事前に定義した正しい事実・判断基準と一致するかをGeminiで採点します。", "Gemini grades whether the answer matches the predefined facts and decision criteria.")}</p>
         <div class="business-toggle-row">
-          <label class="check"><input type="checkbox" data-business-enabled ${business.enabled && business.accuracyCriteria ? "checked" : ""}> AIで回答精度を判定</label>
-          <label>合格ライン<select data-business-passing-grade><option value="B" ${business.passingGrade !== "C" ? "selected" : ""}>B以上（推奨）</option><option value="C" ${business.passingGrade === "C" ? "selected" : ""}>C以上</option></select></label>
+          <label class="check"><input type="checkbox" data-business-enabled ${business.enabled && business.accuracyCriteria ? "checked" : ""}> ${tr("AIで回答精度を判定", "Evaluate answer accuracy with AI")}</label>
+          <label>${tr("合格ライン", "Passing grade")}<select data-business-passing-grade><option value="B" ${business.passingGrade !== "C" ? "selected" : ""}>${tr("B以上（推奨）", "B or higher (recommended)")}</option><option value="C" ${business.passingGrade === "C" ? "selected" : ""}>${tr("C以上", "C or higher")}</option></select></label>
         </div>
-        <label>期待する正解・判定条件
-          <textarea rows="4" maxlength="5000" data-business-criteria placeholder="例: 2026年6月の求人応募数は65,200件。期間・数値・単位が一致すること。">${esc(business.accuracyCriteria || "")}</textarea>
-          <small class="field-help">正解値、対象期間、単位、許容差を具体的に書くと判定が安定します。Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
+        <label>${tr("期待する正解・判定条件", "Expected answer and criteria")}
+          <textarea rows="4" maxlength="5000" data-business-criteria placeholder="${tr("例: 2026年6月の求人応募数は65,200件。期間・数値・単位が一致すること。", "Example: There were 65,200 job applications in June 2026. The period, value, and unit must match.")}">${esc(business.accuracyCriteria || "")}</textarea>
+          <small class="field-help">${tr("正解値、対象期間、単位、許容差を具体的に書くと判定が安定します。", "Specify the expected value, period, unit, and tolerance for more stable grading.")} Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
         </label>
         <div class="grade-legend">${gradeBadge({ grade: "A", status: "passed" })}${gradeBadge({ grade: "B", status: "passed" })}${gradeBadge({ grade: "C", status: "review" })}${gradeBadge({ grade: "D", status: "failed" })}</div>
       </fieldset>
@@ -248,13 +288,13 @@ function suitePasteDialog(suite) {
   const validation = state.suitePasteValidation;
   const text = state.suitePasteText;
   const rows = text ? text.replace(/\r\n/g, "\n").split("\n").filter((line) => line.trim()).length : 0;
-  const detected = text ? `${text.includes("\t") ? "TSV" : "CSV"} · ${rows}行を検出` : "";
+  const detected = text ? tr("{format} · {count}行を検出", "{format} · {count} rows detected", { format: text.includes("\t") ? "TSV" : "CSV", count: formatLocaleNumber(rows) }) : "";
   const diff = validation?.diff;
   const preview = validation?.preview || [];
   const status = state.suitePasteError
     ? `<div class="paste-validation error">${icon("circle-alert", 17)}<div><strong>検証できませんでした</strong><p>${esc(state.suitePasteError)}</p></div></div>`
     : validation
-      ? `<div class="paste-validation success">${icon("badge-check", 17)}<div><strong>${validation.caseCount}ケースを更新できます</strong><p>${validation.delimiter.toUpperCase()} · 追加 ${diff?.added || 0} · 変更 ${diff?.updated || 0} · 削除 ${diff?.removed || 0} · 変更なし ${diff?.unchanged || 0}</p></div></div>`
+      ? `<div class="paste-validation success">${icon("badge-check", 17)}<div><strong>${tr("{count}ケースを更新できます", "{count} cases are ready to update", { count: formatLocaleNumber(validation.caseCount) })}</strong><p>${validation.delimiter.toUpperCase()} · ${tr("追加 {added} · 変更 {updated} · 削除 {removed} · 変更なし {unchanged}", "Added {added} · Updated {updated} · Removed {removed} · Unchanged {unchanged}", { added: formatLocaleNumber(diff?.added || 0), updated: formatLocaleNumber(diff?.updated || 0), removed: formatLocaleNumber(diff?.removed || 0), unchanged: formatLocaleNumber(diff?.unchanged || 0) })}</p></div></div>`
       : `<div class="paste-detection">${icon("scan-text", 16)}<span>${detected || "貼り付けるとCSV / TSVと行数を自動判定します。"}</span></div>`;
   return `
     <dialog id="suite-paste-dialog" class="suite-paste-dialog">
@@ -268,7 +308,7 @@ function suitePasteDialog(suite) {
           <textarea id="suite-paste-text" rows="10" spellcheck="false" placeholder="ケースID&#9;ケース名&#9;プロンプト&#9;Data Agent ID&#10;case_001&#9;月次売上&#9;月次売上を集計して&#9;agent_...">${esc(text)}</textarea>
         </label>
         ${status}
-        ${preview.length ? `<section class="paste-preview"><header><strong>反映プレビュー</strong><span>先頭${preview.length}件</span></header><div class="paste-preview-table">${preview.map((item) => `<div><code>${esc(item.id)}</code><strong>${esc(item.title)}</strong><span>${esc(item.prompt)}</span><small>${esc(state.agents.find((agent) => agent.id === item.agentId)?.displayName || item.agentId)}</small></div>`).join("")}</div></section>` : ""}
+        ${preview.length ? `<section class="paste-preview"><header><strong>${tr("反映プレビュー", "Import preview")}</strong><span>${tr("先頭{count}件", "First {count}", { count: formatLocaleNumber(preview.length) })}</span></header><div class="paste-preview-table">${preview.map((item) => `<div><code>${esc(item.id)}</code><strong>${esc(item.title)}</strong><span>${esc(item.prompt)}</span><small>${esc(state.agents.find((agent) => agent.id === item.agentId)?.displayName || item.agentId)}</small></div>`).join("")}</div></section>` : ""}
         <aside class="replace-warning">${icon("info", 15)}<span>適用すると、現在のテストケースは検証済みの内容で置き換わります。検証だけでは保存されません。</span></aside>
         <footer>
           <button class="button secondary" value="cancel">キャンセル</button>
@@ -286,24 +326,24 @@ function renderEditor() {
     state.sheetConnections.find((connection) => connection.status === "ready" && connection.spreadsheetUrl) ||
     state.sheetConnections.find((connection) => connection.spreadsheetUrl);
   const sheetShortcut = connectedSheet
-    ? `<a class="button sheet-link" href="${esc(connectedSheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}連携シートを開く${icon("external-link", 13)}</a>`
-    : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}Google Sheetsを連携</a>`;
+    ? `<a class="button sheet-link" href="${esc(connectedSheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}${tr("連携シートを開く", "Open linked sheet")}${icon("external-link", 13)}</a>`
+    : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`;
   const messages = state.assistantMessages
     .map((message) => `<div class="chat ${message.role}"><span>${message.role === "assistant" ? "AI" : "YOU"}</span><p>${esc(message.text)}</p></div>`)
     .join("");
   app.innerHTML = shell(`
     <div class="editor-shell">
       <header class="editor-toolbar">
-        <a href="#/suites" class="toolbar-back">${icon("arrow-left")}テストスイート</a>
-        <div class="toolbar-name"><strong>${esc(suite.name)}</strong><span id="save-state">保存済み</span></div>
-        <div class="toolbar-actions">${sheetShortcut}<button id="save-suite" class="button secondary">${icon("save", 15)}保存</button><button id="run-current-suite" class="button bright">${icon("play", 15)}スイートを実行</button></div>
+        <a href="#/suites" class="toolbar-back">${icon("arrow-left")}${tr("テストスイート", "Test suites")}</a>
+        <div class="toolbar-name"><strong>${esc(suite.name)}</strong><span id="save-state">${tr("保存済み", "Saved")}</span></div>
+        <div class="toolbar-actions">${localeSelector(true)}${sheetShortcut}<button id="save-suite" class="button secondary">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button></div>
       </header>
       <div class="editor-columns">
         <main class="suite-workspace">
-          <div class="workspace-title"><div><h1>テスト設計を編集</h1><p>プロンプト、接続先、合格条件をケースごとに定義します。</p></div><span class="count-badge">${suite.cases.length} ケース</span></div>
+          <div class="workspace-title"><div><h1>${tr("テスト設計を編集", "Edit test design")}</h1><p>${tr("プロンプト、接続先、合格条件をケースごとに定義します。", "Define the prompt, target, and passing criteria for each case.")}</p></div><span class="count-badge">${tr("{count} ケース", "{count} cases", { count: formatLocaleNumber(suite.cases.length) })}</span></div>
           <section class="basic-panel">
-            <label>スイート名<input id="suite-name" value="${esc(suite.name)}"></label>
-            <label>目的・説明<textarea id="suite-description" rows="2">${esc(suite.description)}</textarea></label>
+            <label>${tr("スイート名", "Suite name")}<input id="suite-name" value="${esc(suite.name)}"></label>
+            <label>${tr("目的・説明", "Purpose and description")}<textarea id="suite-description" rows="2">${esc(suite.description)}</textarea></label>
             <div class="suite-knowledge">
               <span>実行時に接続するナレッジバケット（複数選択）</span>
               <div>${state.knowledgeSources.map((source) => `<label class="source-check"><input type="checkbox" data-suite-source value="${source.id}" ${(suite.knowledgeSourceIds || []).includes(source.id) ? "checked" : ""}><span>${icon("file-stack", 14)}${esc(source.name)}<small>gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${source.chunkCount || 0} チャンク</small></span></label>`).join("") || `<a href="#/knowledge" class="text-link">GCSナレッジを登録する ${icon("arrow-right", 14)}</a>`}</div>
@@ -322,8 +362,8 @@ function renderEditor() {
               ${sheetShortcut}
             </div>
           </section>`}
-          <div class="section-row"><div><h2>テストケース</h2><p>上から順に実行されます。</p></div><div class="section-actions"><button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}表を貼り付けて一括編集</button><button id="add-case" class="button secondary">${icon("plus", 15)}ケースを追加</button></div></div>
-          <div id="case-list">${suite.cases.map(caseForm).join("") || empty("ケースがありません", "上の作成方法から、最初のケースを追加してください。")}</div>
+          <div class="section-row"><div><h2>${tr("テストケース", "Test cases")}</h2><p>${tr("上から順に実行されます。", "Cases run from top to bottom.")}</p></div><div class="section-actions"><button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}${tr("表を貼り付けて一括編集", "Bulk edit by pasting a table")}</button><button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button></div></div>
+          <div id="case-list">${suite.cases.map(caseForm).join("") || empty(tr("ケースがありません", "No test cases"), tr("上の作成方法から、最初のケースを追加してください。", "Choose a method above to add your first case."))}</div>
         </main>
         <aside class="assistant-panel" aria-label="AIテストスイートアシスタント">
           <header><span class="assistant-icon">${icon("sparkles", 20)}</span><div><strong>AIテストスイートアシスタント</strong><small>Vertex AI · ${esc(state.config.vertexModel)} · RAG ${suite.knowledgeSourceIds?.length || 0}</small></div><span class="adc-badge"><i></i> ADC</span></header>
@@ -346,6 +386,7 @@ function renderEditor() {
       </div>
       ${suitePasteDialog(suite)}
     </div>`, "suites", true);
+  localizeDocument(app);
   bindEditor();
   if (state.suitePasteOpen) document.querySelector("#suite-paste-dialog")?.showModal();
 }
@@ -381,7 +422,7 @@ async function submitSuitePaste(validateOnly) {
   const button = document.querySelector(validateOnly ? "#validate-suite-paste" : "#apply-suite-paste");
   if (button) {
     button.disabled = true;
-    button.innerHTML = `${icon("loader-circle", 15)}${validateOnly ? "検証中…" : "反映中…"}`;
+    button.innerHTML = `${icon("loader-circle", 15)}${validateOnly ? tr("検証中…", "Validating…") : tr("反映中…", "Applying…")}`;
     refreshIcons();
   }
   try {
@@ -408,7 +449,7 @@ async function submitSuitePaste(validateOnly) {
     state.suitePasteOpen = false;
     state.suitePasteText = "";
     state.suitePasteValidation = null;
-    notify(`${result.validation.caseCount}ケースを反映しました。`, "success");
+    notify(tr("{count}ケースを反映しました。", "Applied {count} cases.", { count: formatLocaleNumber(result.validation.caseCount) }), "success");
     renderEditor();
   } catch (error) {
     state.suitePasteError = error.message;
@@ -449,8 +490,8 @@ function bindEditor() {
     const detection = document.querySelector(".paste-detection span");
     if (detection) {
       detection.textContent = pasteText.value.trim()
-        ? `${pasteText.value.includes("\t") ? "TSV" : "CSV"} · ${rows}行を検出`
-        : "貼り付けるとCSV / TSVと行数を自動判定します。";
+        ? tr("{format} · {count}行を検出", "{format} · {count} rows detected", { format: pasteText.value.includes("\t") ? "TSV" : "CSV", count: formatLocaleNumber(rows) })
+        : tr("貼り付けるとCSV / TSVと行数を自動判定します。", "Paste CSV or TSV to detect its format and row count automatically.");
     }
     const validate = document.querySelector("#validate-suite-paste");
     if (validate) validate.disabled = !pasteText.value.trim();
@@ -461,7 +502,7 @@ function bindEditor() {
   });
   document.querySelector("#apply-suite-paste")?.addEventListener("click", () => submitSuitePaste(false));
   document.querySelectorAll("[data-remove-case]").forEach((button) => button.addEventListener("click", () => {
-    if (confirm("このテストケースを削除しますか？")) {
+    if (confirm(tr("このテストケースを削除しますか？", "Delete this test case?"))) {
       state.selectedSuite.cases.splice(Number(button.dataset.removeCase), 1);
       renderEditor();
     }
@@ -479,7 +520,7 @@ function bindEditor() {
   document.querySelector("#apply-patch")?.addEventListener("click", applyPatch);
   document.querySelectorAll("input,textarea,select").forEach((input) => {
     if (input.closest("#assistant-form") || input.closest("#suite-paste-dialog")) return;
-    input.addEventListener("input", () => (document.querySelector("#save-state").textContent = "未保存"));
+    input.addEventListener("input", () => (document.querySelector("#save-state").textContent = tr("未保存", "Unsaved")));
   });
 }
 
@@ -529,8 +570,8 @@ async function saveSuite({ silent = false } = {}) {
     const saved = await json(`/api/suites/${suite.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(suite) });
     state.selectedSuite = saved;
     state.suites = state.suites.map((item) => (item.id === saved.id ? saved : item));
-    document.querySelector("#save-state").textContent = "保存済み";
-    if (!silent) notify("テストスイートを保存しました。", "success");
+    document.querySelector("#save-state").textContent = tr("保存済み", "Saved");
+    if (!silent) notify(tr("テストスイートを保存しました。", "Test suite saved."), "success");
     return saved;
   } catch (error) {
     notify(error.message);
@@ -553,7 +594,7 @@ async function sendAssistant(text) {
     state.assistantMessages.push({ role: "assistant", text: reply.message || "変更案を作成しました。" });
     state.assistantPatch = reply.patch && Object.keys(reply.patch).length ? reply.patch : null;
   } catch (error) {
-    state.assistantMessages.push({ role: "assistant", text: `Vertex AIに接続できませんでした: ${error.message}` });
+    state.assistantMessages.push({ role: "assistant", text: tr("Vertex AIに接続できませんでした: {message}", "Could not connect to Vertex AI: {message}", { message: translateApiMessage(error.message) }) });
     notify(error.message);
   } finally {
     state.busy = false;
@@ -580,8 +621,8 @@ async function applyPatch() {
 
 async function runSuite(id) {
   const suite = state.suites.find((item) => item.id === id);
-  if (!suite?.cases?.length) return notify("ケースを1件以上登録してください。");
-  if (!confirm(`${suite.name} の ${suite.cases.length} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？`)) return;
+  if (!suite?.cases?.length) return notify(tr("ケースを1件以上登録してください。", "Add at least one test case."));
+  if (!confirm(tr("{name} の {count} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？", "Run {count} cases in {name}? BigQuery usage charges may apply. Continue?", { name: suite.name, count: formatLocaleNumber(suite.cases.length) }))) return;
   try {
     state.busy = true;
     const run = await json(`/api/suites/${id}/run`, { method: "POST" });
@@ -616,7 +657,7 @@ function renderKnowledge() {
     <article class="knowledge-card">
       <header><span class="suite-icon">${icon("bucket", 18)}</span><div><h2><a href="#/knowledge/${source.id}">${esc(source.name)}</a></h2><code>${esc(source.projectId || "project未設定")} · gs://${esc(source.bucket)}/${esc(source.prefix || "")}</code></div>${statusPill(source.status)}</header>
       <p>${esc(source.description || "GCS上の業務資料をテスト設計と評価のコンテキストとして利用します。")}</p>
-      <div class="knowledge-stats"><span><b>${source.objectCount || 0}</b> ファイル</span><span><b>${source.chunkCount || 0}</b> チャンク</span><span><b>${fmtDate(source.lastSyncedAt)}</b> 同期</span></div>
+      <div class="knowledge-stats"><span><b>${formatLocaleNumber(source.objectCount || 0)}</b> ${tr("ファイル", "files")}</span><span><b>${formatLocaleNumber(source.chunkCount || 0)}</b> ${tr("チャンク", "chunks")}</span><span><b>${fmtDate(source.lastSyncedAt)}</b> ${tr("同期", "synced")}</span></div>
       <div class="knowledge-actions">
         <a class="button primary" href="#/knowledge/${source.id}">${icon("folder-open", 14)}詳細を見る</a>
         <a class="button secondary" href="${esc(gcsConsoleUrl(source))}" target="_blank" rel="noreferrer">${icon("external-link", 14)}GCSを開く</a>
@@ -627,8 +668,8 @@ function renderKnowledge() {
     ${pageHead("GCSナレッジ", "GCSの資料を簡易RAGとして検索し、テスト設計・回答判定・Data Agent計画に利用します。", `<button id="new-knowledge-source" class="button primary">${icon("plus", 16)}バケットを登録</button>`)}
     <section class="rag-flow">
       <div>${icon("cloud-upload", 21)}<span><b>1. GCS</b><small>資料をアップロード</small></span></div><i>${icon("arrow-right", 15)}</i>
-      <div>${icon("scan-text", 21)}<span><b>2. 索引化</b><small>抽出・チャンク化</small></span></div><i>${icon("arrow-right", 15)}</i>
-      <div>${icon("search-code", 21)}<span><b>3. 検索</b><small>関連箇所を検索</small></span></div><i>${icon("arrow-right", 15)}</i>
+      <div>${icon("scan-text", 21)}<span><b>${tr("2. 索引化", "2. Index")}</b><small>${tr("抽出・チャンク化", "Extract & chunk")}</small></span></div><i>${icon("arrow-right", 15)}</i>
+      <div>${icon("search-code", 21)}<span><b>${tr("3. 検索", "3. Retrieve")}</b><small>${tr("関連箇所を検索", "Find relevant context")}</small></span></div><i>${icon("arrow-right", 15)}</i>
       <div>${icon("sparkles", 21)}<span><b>4. Vertex AI</b><small>作成・判定・計画</small></span></div>
     </section>
     <section class="knowledge-grid">${sourceCards || empty("GCSバケットが未登録です", "既存バケットとprefixを登録してください。バケット自体は作成しません。")}</section>
@@ -718,12 +759,12 @@ function renderKnowledgeDetail() {
       </article>
     </section>
     <section class="bucket-files-panel">
-      <div class="section-row"><div><h2>GCSファイル</h2><p>${objects.length}件を表示${detail.truncated ? "（先頭200件）" : ""}</p></div></div>
+      <div class="section-row"><div><h2>GCSファイル</h2><p>${tr("{count}件を表示", "Showing {count}", { count: formatLocaleNumber(objects.length) })}${detail.truncated ? tr("（先頭200件）", " (first 200)") : ""}</p></div></div>
       ${objectRows ? `<div class="table-scroll"><table><thead><tr><th>オブジェクト</th><th>サイズ</th><th>更新日時</th><th></th></tr></thead><tbody>${objectRows}</tbody></table></div>` : empty("ファイルがありません", "上の「ファイルを選択」から追加すると、自動同期後にここへ表示されます。")}
     </section>
     <section class="bucket-usage-panel">
       <div><h2>このバケットを利用するテストスイート</h2><p>テスト実行時は、スイートまたはケースで選択した複数のナレッジバケットをまとめて検索します。</p></div>
-      <div class="usage-suite-list">${usingSuites.map((suite) => `<a href="#/suites/${suite.id}/edit">${icon("layers-3", 14)}<span><strong>${esc(suite.name)}</strong><small>${suite.cases?.length || 0}ケース</small></span>${icon("arrow-right", 14)}</a>`).join("") || `<a href="#/suites">${icon("plus", 14)}テストスイートで接続先を選択する${icon("arrow-right", 14)}</a>`}</div>
+      <div class="usage-suite-list">${usingSuites.map((suite) => `<a href="#/suites/${suite.id}/edit">${icon("layers-3", 14)}<span><strong>${esc(suite.name)}</strong><small>${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</small></span>${icon("arrow-right", 14)}</a>`).join("") || `<a href="#/suites">${icon("plus", 14)}テストスイートで接続先を選択する${icon("arrow-right", 14)}</a>`}</div>
     </section>
   `, "knowledge");
   bindKnowledgeDetail();
@@ -747,7 +788,7 @@ async function syncKnowledgeDetail(button, sourceId) {
       objects: result.objects,
       index: result.index
     };
-    notify(`${result.source.objectCount}ファイル、${result.source.chunkCount}チャンクを同期しました。`, "success");
+    notify(tr("{files}ファイル、{chunks}チャンクを同期しました。", "Synced {files} files and {chunks} chunks.", { files: formatLocaleNumber(result.source.objectCount), chunks: formatLocaleNumber(result.source.chunkCount) }), "success");
     renderKnowledgeDetail();
     refreshIcons();
   } catch (error) {
@@ -759,15 +800,15 @@ async function syncKnowledgeDetail(button, sourceId) {
 async function uploadKnowledgeDetail(input) {
   const files = [...input.files];
   if (!files.length) return;
-  if (files.length > 20) return notify("一度に追加できるファイルは20件までです。");
+  if (files.length > 20) return notify(tr("一度に追加できるファイルは20件までです。", "You can add up to 20 files at a time."));
   const progress = document.querySelector("#upload-progress");
   input.disabled = true;
   progress.hidden = false;
   let uploadedCount = 0;
   try {
     for (const [index, file] of files.entries()) {
-      if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name} は4MBを超えています。`);
-      progress.textContent = `${index + 1} / ${files.length} · ${file.name} をアップロード中`;
+      if (file.size > 4 * 1024 * 1024) throw new Error(tr("{name} は4MBを超えています。", "{name} exceeds 4 MB.", { name: file.name }));
+      progress.textContent = tr("{current} / {total} · {name} をアップロード中", "{current} / {total} · Uploading {name}", { current: formatLocaleNumber(index + 1), total: formatLocaleNumber(files.length), name: file.name });
       await json(`/api/knowledge-sources/${input.dataset.detailUpload}/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -779,7 +820,7 @@ async function uploadKnowledgeDetail(input) {
       });
       uploadedCount += 1;
     }
-    progress.textContent = "アップロード完了。検索インデックスを同期中…";
+    progress.textContent = tr("アップロード完了。検索インデックスを同期中…", "Upload complete. Syncing the search index…");
     const result = await json(`/api/knowledge-sources/${input.dataset.detailUpload}/sync`, { method: "POST" });
     updateKnowledgeSourceState(result.source);
     state.selectedKnowledgeDetail = {
@@ -788,11 +829,11 @@ async function uploadKnowledgeDetail(input) {
       objects: result.objects,
       index: result.index
     };
-    notify(`${uploadedCount}ファイルを追加し、${result.source.chunkCount}チャンクへ同期しました。`, "success");
+    notify(tr("{files}ファイルを追加し、{chunks}チャンクへ同期しました。", "Added {files} files and synced {chunks} chunks.", { files: formatLocaleNumber(uploadedCount), chunks: formatLocaleNumber(result.source.chunkCount) }), "success");
     renderKnowledgeDetail();
     refreshIcons();
   } catch (error) {
-    const prefix = uploadedCount ? `${uploadedCount}ファイルのアップロード後、同期に失敗しました。` : "";
+    const prefix = uploadedCount ? tr("{count}ファイルのアップロード後、同期に失敗しました。", "Sync failed after uploading {count} files. ", { count: formatLocaleNumber(uploadedCount) }) : "";
     progress.className = "upload-progress error";
     progress.textContent = `${prefix}${error.message}`;
     notify(`${prefix}${error.message}`);
@@ -846,7 +887,7 @@ function bindKnowledge() {
   function renderSelectedBuckets() {
     const names = [...selectedBucketNames];
     selectedBucketsPanel.innerHTML = names.map((name) => `
-      <span class="selected-bucket">${icon("bucket", 13)}<span>${esc(name)}</span><button type="button" data-remove-bucket="${esc(name)}" aria-label="${esc(name)}を選択解除">${icon("x", 12)}</button></span>
+      <span class="selected-bucket">${icon("bucket", 13)}<span>${esc(name)}</span><button type="button" data-remove-bucket="${esc(name)}" aria-label="${tr("{name}を選択解除", "Deselect {name}", { name: esc(name) })}">${icon("x", 12)}</button></span>
     `).join("");
     selectedBucketsPanel.querySelectorAll("[data-remove-bucket]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -857,7 +898,7 @@ function bindKnowledge() {
     });
     if (names.length) {
       bucketStatus.className = "bucket-status selected";
-      bucketStatus.textContent = `${names.length}件のバケットを選択中`;
+      bucketStatus.textContent = tr("{count}件のバケットを選択中", "{count} buckets selected", { count: formatLocaleNumber(names.length) });
       if (names.length === 1 && !form.elements.name.value.trim()) form.elements.name.value = names[0];
     }
     refreshIcons();
@@ -891,12 +932,12 @@ function bindKnowledge() {
     if (filteredBuckets.length) {
       searchInput.setAttribute("aria-activedescendant", "bucket-option-0");
       bucketStatus.className = "bucket-status";
-      bucketStatus.textContent = `${filteredBuckets.length} / ${bucketOptions.length} バケットを表示 · ${selectedBucketNames.size}件選択`;
+      bucketStatus.textContent = tr("{visible} / {total} バケットを表示 · {selected}件選択", "Showing {visible} / {total} buckets · {selected} selected", { visible: formatLocaleNumber(filteredBuckets.length), total: formatLocaleNumber(bucketOptions.length), selected: formatLocaleNumber(selectedBucketNames.size) });
     } else {
       searchInput.removeAttribute("aria-activedescendant");
       optionsPanel.innerHTML = `<div class="bucket-empty">${icon("search-x", 18)}<span><strong>該当するバケットがありません</strong><small>名前、ロケーション、ストレージクラスで検索できます。</small></span></div>`;
       bucketStatus.className = "bucket-status";
-      bucketStatus.textContent = `0 / ${bucketOptions.length} バケットを表示`;
+      bucketStatus.textContent = tr("0 / {total} バケットを表示", "Showing 0 / {total} buckets", { total: formatLocaleNumber(bucketOptions.length) });
     }
     optionsPanel.querySelectorAll("[data-bucket-name]").forEach((option) => {
       option.addEventListener("mousedown", (event) => event.preventDefault());
@@ -928,7 +969,7 @@ function bindKnowledge() {
         searchInput.focus();
       } else {
         bucketStatus.className = "bucket-status";
-        bucketStatus.textContent = "このプロジェクトで選択可能なバケットはありません。";
+        bucketStatus.textContent = tr("このプロジェクトで選択可能なバケットはありません。", "No selectable buckets were found in this project.");
       }
     } catch (error) {
       bucketStatus.className = "bucket-status error";
@@ -947,7 +988,7 @@ function bindKnowledge() {
     searchInput.value = "";
     searchInput.disabled = true;
     bucketStatus.className = "bucket-status";
-    bucketStatus.textContent = "プロジェクトIDを確認して「バケットを取得」を押してください。";
+    bucketStatus.textContent = tr("プロジェクトIDを確認して「バケットを取得」を押してください。", "Check the project ID, then select “Load buckets”.");
     closeBucketOptions();
     dialog.showModal();
   });
@@ -966,7 +1007,7 @@ function bindKnowledge() {
     searchInput.disabled = true;
     closeBucketOptions();
     bucketStatus.className = "bucket-status";
-    bucketStatus.textContent = "プロジェクトを変更しました。バケットを再取得してください。";
+    bucketStatus.textContent = tr("プロジェクトを変更しました。バケットを再取得してください。", "The project changed. Load the bucket list again.");
   });
   searchInput.addEventListener("focus", () => {
     if (bucketOptions.length) renderBucketOptions();
@@ -996,7 +1037,7 @@ function bindKnowledge() {
     event.preventDefault();
     if (!selectedBucketNames.size) {
       bucketStatus.className = "bucket-status error";
-      bucketStatus.textContent = "一覧から登録するバケットを1件以上選択してください。";
+      bucketStatus.textContent = tr("一覧から登録するバケットを1件以上選択してください。", "Select at least one bucket from the list.");
       searchInput.focus();
       return;
     }
@@ -1012,8 +1053,8 @@ function bindKnowledge() {
         ...state.knowledgeSources.filter((item) => !result.sources.some((source) => source.id === item.id))
       ];
       dialog.close();
-      const skippedText = result.skipped?.length ? `、${result.skipped.length}件は登録済みのためスキップ` : "";
-      notify(`${result.sources.length}件のバケットを登録しました${skippedText}。`, "success");
+      const skippedText = result.skipped?.length ? tr("、{count}件は登録済みのためスキップ", "; skipped {count} already registered", { count: formatLocaleNumber(result.skipped.length) }) : "";
+      notify(tr("{count}件のバケットを登録しました{skipped}。", "Registered {count} buckets{skipped}.", { count: formatLocaleNumber(result.sources.length), skipped: skippedText }), "success");
       renderKnowledge();
       refreshIcons();
     } catch (error) { notify(error.message); }
@@ -1023,7 +1064,7 @@ function bindKnowledge() {
     try {
       const result = await json(`/api/knowledge-sources/${button.dataset.syncSource}/sync`, { method: "POST" });
       state.knowledgeSources = state.knowledgeSources.map((item) => item.id === result.source.id ? result.source : item);
-      notify(`${result.source.objectCount}ファイル、${result.source.chunkCount}チャンクを同期しました。`, "success");
+      notify(tr("{files}ファイル、{chunks}チャンクを同期しました。", "Synced {files} files and {chunks} chunks.", { files: formatLocaleNumber(result.source.objectCount), chunks: formatLocaleNumber(result.source.chunkCount) }), "success");
       renderKnowledge(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -1032,14 +1073,14 @@ function bindKnowledge() {
     if (!files.length) return;
     try {
       for (const file of files) {
-        if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name} は4MBを超えています。`);
+        if (file.size > 4 * 1024 * 1024) throw new Error(tr("{name} は4MBを超えています。", "{name} exceeds 4 MB.", { name: file.name }));
         await json(`/api/knowledge-sources/${input.dataset.uploadSource}/upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fileName: file.name, contentType: file.type, contentBase64: bytesToBase64(await file.arrayBuffer()) })
         });
       }
-      notify(`${files.length}ファイルをGCSへアップロードしました。同期すると検索対象になります。`, "success");
+      notify(tr("{count}ファイルをGCSへアップロードしました。同期すると検索対象になります。", "Uploaded {count} files to GCS. Sync to make them searchable.", { count: formatLocaleNumber(files.length) }), "success");
     } catch (error) { notify(error.message); }
     input.value = "";
   }));
@@ -1103,7 +1144,7 @@ function renderAgents() {
     try {
       const updated = await json(`/api/agents/${button.dataset.checkAgent}/check`, { method: "POST" });
       state.agents = state.agents.map((item) => (item.id === updated.id ? updated : item));
-      notify("接続を確認しました。BigQueryクエリは実行していません。", "success");
+      notify(tr("接続を確認しました。BigQueryクエリは実行していません。", "Connection verified. No BigQuery query was run."), "success");
       renderAgents();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -1111,7 +1152,7 @@ function renderAgents() {
 
 function renderSheets() {
   const suiteOptions = state.suites
-    .map((suite) => `<option value="${suite.id}">${esc(suite.name)} · ${suite.cases?.length || 0}ケース</option>`)
+    .map((suite) => `<option value="${suite.id}">${esc(suite.name)} · ${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</option>`)
     .join("");
   const reportOptions = state.suiteRuns
     .map((run) => `<option value="${run.id}">${esc(run.suiteName)} · ${fmtDate(run.createdAt)} · ${run.summary?.passRate || 0}%</option>`)
@@ -1168,8 +1209,8 @@ function renderSheets() {
       </form>
       <div class="format-note">
         <span>${icon("lock-keyhole", 17)}</span>
-        <div><strong>固定タブと列定義</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> と <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> のみをアプリが再作成します。ユーザー作成タブは変更しません。</p></div>
-        <b>スキーマ v${state.sheetFormat?.schemaVersion || 1}</b>
+        <div><strong>${tr("固定タブと列定義", "Managed tabs and columns")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> ${tr("と", "and")} <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("のみをアプリが再作成します。ユーザー作成タブは変更しません。", "are the only tabs recreated by the app. User-created tabs are left unchanged.")}</p></div>
+        <b>${tr("スキーマ", "Schema")} v${state.sheetFormat?.schemaVersion || 1}</b>
       </div>
     </section>
     <section class="sheet-grid">${connections || empty("接続先がありません", "ADCアカウントへ共有済みのGoogleスプレッドシートを追加してください。")}</section>
@@ -1196,7 +1237,7 @@ function bindSheets() {
         body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))
       });
       updateSheetConnection(connection);
-      notify(`${connection.title} に接続しました。`, "success");
+      notify(tr("{title} に接続しました。", "Connected to {title}.", { title: connection.title }), "success");
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   });
@@ -1205,7 +1246,7 @@ function bindSheets() {
     try {
       const connection = await json(`/api/sheets/connections/${button.dataset.checkSheet}/check`, { method: "POST" });
       updateSheetConnection(connection);
-      notify("Google Sheets APIへの接続を確認しました。", "success");
+      notify(tr("Google Sheets APIへの接続を確認しました。", "Google Sheets API connection verified."), "success");
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -1220,18 +1261,18 @@ function bindSheets() {
         body: JSON.stringify({ suiteId: form.elements.suiteId.value })
       });
       updateSheetConnection(result.connection);
-      notify(`${result.tabName} に${result.rowCount}行を書き出しました。`, "success");
+      notify(tr("{tab} に{count}行を書き出しました。", "Exported {count} rows to {tab}.", { tab: result.tabName, count: formatLocaleNumber(result.rowCount) }), "success");
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
   document.querySelectorAll("[data-import-suite]").forEach((button) => button.addEventListener("click", async () => {
-    if (!confirm("固定フォーマットを検証してテストスイートを取り込みます。続けますか？")) return;
+    if (!confirm(tr("固定フォーマットを検証してテストスイートを取り込みます。続けますか？", "Validate the fixed format and import the test suite. Continue?"))) return;
     button.disabled = true;
     try {
       const result = await json(`/api/sheets/connections/${button.dataset.importSuite}/import-suite`, { method: "POST" });
       updateSheetConnection(result.connection);
       state.suites = [result.suite, ...state.suites.filter((item) => item.id !== result.suite.id)];
-      notify(`テストスイートを${result.mode === "updated" ? "更新" : "新規作成"}しました。`, "success");
+      notify(result.mode === "updated" ? tr("テストスイートを更新しました。", "Updated the test suite.") : tr("テストスイートを新規作成しました。", "Created a new test suite."), "success");
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -1246,7 +1287,7 @@ function bindSheets() {
         body: JSON.stringify({ suiteRunId: form.elements.suiteRunId.value })
       });
       updateSheetConnection(result.connection);
-      notify(`${result.tabName} に評価結果を書き出しました。`, "success");
+      notify(tr("{tab} に評価結果を書き出しました。", "Exported evaluation results to {tab}.", { tab: result.tabName }), "success");
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -1302,7 +1343,7 @@ function renderSettings() {
         <dl>
           <div><dt>保存先</dt><dd>${esc(isLocal ? config.localPath || "未設定" : config.bucket ? `gs://${config.bucket}/${config.prefix || ""}` : "未設定")}</dd></div>
           <div><dt>最終同期</dt><dd>${esc(config.lastSyncedAt ? fmtDate(config.lastSyncedAt) : "未実行")}</dd></div>
-          <div><dt>保存データ</dt><dd>${Number(config.objectCount || 0).toLocaleString("ja-JP")}件 · ${fmtBytes(config.sizeBytes || 0)}</dd></div>
+          <div><dt>保存データ</dt><dd>${tr("{count}件", "{count} items", { count: formatLocaleNumber(config.objectCount || 0) })} · ${fmtBytes(config.sizeBytes || 0)}</dd></div>
         </dl>
       </div>
     </section>
@@ -1430,7 +1471,7 @@ function bindStorageSettings() {
       state.storageConfig = response.config || response;
       state.storageDraft = null;
       state.storageTestResult = null;
-      notify("プライマリーストレージ設定を保存しました。", "success");
+      notify(tr("プライマリーストレージ設定を保存しました。", "Primary storage settings saved."), "success");
       renderSettings();
     } catch (error) {
       notify(error.message);
@@ -1456,7 +1497,9 @@ async function migrateStorage(mode) {
     if (response.config) state.storageConfig = response.config;
     if (mode === "copy_and_switch") state.storageDraft = null;
     const copied = response.migration?.copiedFiles;
-    notify(mode === "sync" ? "指定した保存先へデータを同期しました。" : `${copied == null ? "" : `${copied}件の`}データをコピーし、保存先を切り替えました。`, "success");
+    notify(mode === "sync"
+      ? tr("指定した保存先へデータを同期しました。", "Synced data to the selected storage destination.")
+      : tr("{count}データをコピーし、保存先を切り替えました。", "Copied {count}items and switched the storage destination.", { count: copied == null ? "" : `${formatLocaleNumber(copied)} ` }), "success");
     renderSettings();
   } catch (error) {
     notify(error.message);
@@ -1488,9 +1531,9 @@ function renderReport(report) {
       const business = item.evaluation?.business;
       return `<article class="report-case ${item.status}">
         <header><span>${statusPill(item.status)}</span><div><strong>${esc(item.title)}</strong><small>${esc(item.caseId)}</small></div>${gradeBadge(business)}</header>
-        ${item.error ? `<p class="error-text">${esc(item.error)}</p>` : ""}
+        ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
         <div class="evaluation-layers">
-          <section><div class="layer-title"><strong>システム要件</strong><b>${system.passedCount || 0}/${system.checkCount || 0} 合格 · ${system.score ?? 0}点</b></div><div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(check.label)}</span>`).join("")}</div></section>
+          <section><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{passed}/{total} 合格 · {score}点", "{passed}/{total} passed · {score} pts", { passed: formatLocaleNumber(system.passedCount || 0), total: formatLocaleNumber(system.checkCount || 0), score: formatLocaleNumber(system.score ?? 0) })}</b></div><div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></section>
           <section class="business-result"><div class="layer-title"><strong>ビジネス要件</strong></div>${business?.status === "not_configured" || !business ? `<p class="muted-copy">このケースには精度条件が設定されていません。</p>` : `<p><strong>${esc(business.summary || "判定理由はありません。")}</strong></p><details><summary>精度判定の詳細</summary><dl><dt>期待条件</dt><dd>${esc(business.expectedCriteria || "")}</dd><dt>差分</dt><dd>${esc((business.discrepancies || []).join(" / ") || "なし")}</dd><dt>判定モデル</dt><dd>${esc(business.judgeAudit?.model || "—")}</dd></dl></details>`}</section>
         </div>
         ${item.runId ? `<a href="#/runs/${item.runId}" class="text-link">実行トレースを見る ${icon("arrow-right", 14)}</a>` : ""}
@@ -1498,15 +1541,15 @@ function renderReport(report) {
     }
     const active = report.currentCase?.caseId === testCase.id;
     const phaseLabel = {
-      running: "Data Agentを実行中",
-      evaluating_system: "システム要件を確認中",
-      evaluating_business: "Geminiで回答精度を判定中"
-    }[report.currentCase?.phase] || "実行待ち";
+      running: tr("Data Agentを実行中", "Running Data Agent"),
+      evaluating_system: tr("システム要件を確認中", "Checking system requirements"),
+      evaluating_business: tr("Geminiで回答精度を判定中", "Evaluating answer accuracy with Gemini")
+    }[report.currentCase?.phase] || tr("実行待ち", "Waiting");
     return `<article class="report-case ${active ? "case-running" : "case-pending"}">
       <header>
         <span class="${active ? "live-spinner" : "case-index"}">${active ? "" : String(index + 1).padStart(2, "0")}</span>
-        <div><strong>${esc(testCase.title)}</strong><small>${active ? phaseLabel : "実行待ち"}</small></div>
-        <b>${active ? "実行中" : "—"}</b>
+        <div><strong>${esc(testCase.title)}</strong><small>${active ? phaseLabel : tr("実行待ち", "Waiting")}</small></div>
+        <b>${active ? tr("実行中", "Running") : "—"}</b>
       </header>
       <div class="skeleton-layer"><strong>システム要件</strong><div class="skeleton-checks"><i></i><i></i><i></i></div></div>
       <div class="skeleton-layer"><strong>ビジネス要件</strong><div class="skeleton-grade"></div></div>
@@ -1514,28 +1557,28 @@ function renderReport(report) {
   }).join("");
   const sheetExport = report.sheetExport || { status: "pending" };
   const sheetPanel = sheetExport.status === "succeeded"
-    ? `<section class="sheet-export-status succeeded">${icon("sheet", 20)}<div><strong>評価レポートをGoogle Sheetsへ自動出力しました</strong><p>${esc(sheetExport.spreadsheetTitle)} · ${esc(sheetExport.tabName)} · ${sheetExport.rowCount || 0}行</p></div><a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">シートを開く ${icon("external-link", 14)}</a></section>`
+    ? `<section class="sheet-export-status succeeded">${icon("sheet", 20)}<div><strong>${tr("評価レポートをGoogle Sheetsへ自動出力しました", "Evaluation report exported to Google Sheets")}</strong><p>${esc(sheetExport.spreadsheetTitle)} · ${esc(sheetExport.tabName)} · ${tr("{count}行", "{count} rows", { count: formatLocaleNumber(sheetExport.rowCount || 0) })}</p></div><a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${tr("シートを開く", "Open sheet")} ${icon("external-link", 14)}</a></section>`
     : sheetExport.status === "exporting"
       ? `<section class="sheet-export-status exporting"><span class="live-spinner"></span><div><strong>Google Sheetsへ評価レポートを書き戻しています</strong><p>レポートは完成しています。このまま自動出力の完了を待ちます。</p></div></section>`
       : sheetExport.status === "failed"
-        ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>Google Sheetsへの自動出力に失敗しました</strong><p>${esc(sheetExport.message)}</p></div><a class="button secondary" href="#/sheets">Sheets連携を確認</a></section>`
+        ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("Google Sheetsへの自動出力に失敗しました", "Automatic export to Google Sheets failed")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/sheets">${tr("Sheets連携を確認", "Check Sheets integration")}</a></section>`
         : sheetExport.status === "skipped"
-          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>Google Sheetsへの自動出力は行われませんでした</strong><p>${esc(sheetExport.message)}</p></div><a class="button secondary" href="#/sheets">Sheets連携を設定</a></section>`
+          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a></section>`
           : "";
   const actions = `<div class="head-actions">${sheetExport.status === "succeeded" ? `<a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}シートを開く</a>` : ""}<button onclick="window.print()" class="button secondary" ${isRunning ? "disabled" : ""}>${icon("printer", 15)}印刷</button></div>`;
   app.innerHTML = shell(`
     ${pageHead(report.suiteName, `${fmtDate(report.createdAt)} · ${report.id}`, actions)}
     <section class="report-hero ${report.status}">
-      <div class="overall-score"><span>${isRunning ? "実行進捗" : "総合スコア"}</span><strong>${isRunning ? completed : overallScore ?? "—"}<small>/${isRunning ? total : 100}</small></strong>${!isRunning && businessConfigured > 0 ? `<em>システム 40% + ビジネス 60%</em>` : !isRunning ? `<em>ビジネス要件未評価のためシステムスコアを採用</em>` : ""}</div>
+      <div class="overall-score"><span>${isRunning ? tr("実行進捗", "Run progress") : tr("総合スコア", "Overall score")}</span><strong>${isRunning ? completed : overallScore ?? "—"}<small>/${isRunning ? total : 100}</small></strong>${!isRunning && businessConfigured > 0 ? `<em>${tr("システム 40% + ビジネス 60%", "System 40% + business 60%")}</em>` : !isRunning ? `<em>${tr("ビジネス要件未評価のためシステムスコアを採用", "System score used because business requirements were not evaluated")}</em>` : ""}</div>
       <div class="ring score-ring system-ring" style="--progress:${systemScore};--ring-color:#65a0ff"><b>${scoreText(systemScore)}</b><span>システム要件</span></div>
       <div class="ring score-ring business-ring ${businessScore === null ? "unscored" : ""}" style="--progress:${businessScore ?? 0};--ring-color:#c084fc"><b>${scoreText(businessScore)}</b><span>ビジネス要件</span></div>
-      <div class="hero-copy">${statusPill(report.status)}<h2>${isRunning ? `${report.currentCase?.title || "実行準備中"}を処理しています` : report.status === "passed" ? "すべてのケースが基準を満たしました" : "改善が必要なケースがあります"}</h2><p>${isRunning ? "ケースが完了するたびに、この評価レポートへ結果が追加されます。" : `${report.summary?.passed || 0}件合格 / ${report.summary?.failed || 0}件不合格`}</p></div>
+      <div class="hero-copy">${statusPill(report.status)}<h2>${isRunning ? tr("{title}を処理しています", "Processing {title}", { title: report.currentCase?.title || tr("実行準備中", "Preparing run") }) : report.status === "passed" ? tr("すべてのケースが基準を満たしました", "All cases met the criteria") : tr("改善が必要なケースがあります", "Some cases need improvement")}</h2><p>${isRunning ? tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。", "Results appear in this report as each case completes.") : tr("{passed}件合格 / {failed}件不合格", "{passed} passed / {failed} failed", { passed: formatLocaleNumber(report.summary?.passed || 0), failed: formatLocaleNumber(report.summary?.failed || 0) })}</p></div>
       ${isRunning ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
-    <section class="report-metrics"><div><span>システム要件 正解率</span><strong>${scoreText(systemScore)}</strong><small>${report.summary?.systemPassed ?? report.summary?.passed ?? 0} / ${completed} ケース合格</small></div><div><span>ビジネス要件 正解率</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? `${report.summary?.businessEvaluated || 0} / ${businessConfigured} ケース採点済み` : "精度条件未設定"}</small></div><div><span>精度 A / B / C / D</span><strong>${report.summary?.accuracyGrades?.A || 0} / ${report.summary?.accuracyGrades?.B || 0} / ${report.summary?.accuracyGrades?.C || 0} / ${report.summary?.accuracyGrades?.D || 0}</strong></div><div><span>所要時間</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${completed} / ${total} ケース完了</small></div></section>
-    ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>SQL実行証跡を再評価しました</strong><p>${esc(report.evaluationCorrection.reason)}</p></div></section>` : ""}
+    <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div><span>${tr("精度 A / B / C / D", "Accuracy A / B / C / D")}</span><strong>${report.summary?.accuracyGrades?.A || 0} / ${report.summary?.accuracyGrades?.B || 0} / ${report.summary?.accuracyGrades?.C || 0} / ${report.summary?.accuracyGrades?.D || 0}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
+    ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
-    <div class="section-row"><div><h2>ケース別評価</h2><p>${isRunning ? "完了したケースから評価内容を表示します。" : "失敗した条件から改善ポイントを特定できます。"}</p></div><b class="live-updated">${isRunning ? `${completed}/${total} 完了 · 自動更新中` : `完了 ${fmtDate(report.completedAt)}`}</b></div>
+    <div class="section-row"><div><h2>${tr("ケース別評価", "Case evaluations")}</h2><p>${isRunning ? tr("完了したケースから評価内容を表示します。", "Evaluations appear as cases complete.") : tr("失敗した条件から改善ポイントを特定できます。", "Use failed criteria to identify areas for improvement.")}</p></div><b class="live-updated">${isRunning ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
     <section class="report-cases">${cases}</section>
   `, "reports");
   if (isRunning || sheetExport.status === "exporting") {
@@ -1547,7 +1590,7 @@ function renderReport(report) {
         renderReport(updated);
         refreshIcons();
       } catch (error) {
-        notify(`進捗の更新に失敗しました: ${error.message}`);
+        notify(tr("進捗の更新に失敗しました: {message}", "Failed to refresh progress: {message}", { message: translateApiMessage(error.message) }));
       }
     }, 1000);
   }
@@ -1561,7 +1604,7 @@ function renderSingleRun() {
   document.querySelector("#single-run-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const agent = state.agents.find((a) => a.id === document.querySelector("#single-agent").value);
-    if (!confirm("BigQuery利用料金が発生する可能性があります。実行しますか？")) return;
+    if (!confirm(tr("BigQuery利用料金が発生する可能性があります。実行しますか？", "BigQuery usage charges may apply. Run the test?"))) return;
     try {
       const run = await json("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: document.querySelector("#single-prompt").value, agent: agent.resourceName, agentLabel: agent.displayName, thinkingMode: document.querySelector("#single-mode").value }) });
       state.runs.unshift(run);
@@ -1588,7 +1631,7 @@ function renderRunDetail(run) {
         : matchedSql
           ? `<div class="matched-sql-note">${icon("badge-check", 14)}検証済みクエリを再利用</div><pre>${esc(matchedSql)}</pre>`
           : `<details><summary>イベントデータ</summary><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></details>`;
-    return `<article class="trace-event"><span class="trace-dot ${event.severity}"></span><div><header><strong>${esc(event.label)}</strong><code>${esc(event.kind)} · #${index + 1}</code></header>${body}</div></article>`;
+    return `<article class="trace-event"><span class="trace-dot ${event.severity}"></span><div><header><strong>${esc(translateApiMessage(event.label))}</strong><code>${esc(event.kind)} · #${index + 1}</code></header>${body}</div></article>`;
   }).join("");
   const breadcrumbs = context
     ? `<nav class="breadcrumbs" aria-label="パンくず"><a href="#/suites">テストスイート</a>${icon("chevron-right", 12)}<a href="#/suites/${context.suiteId}/edit">${esc(context.suiteName)}</a>${icon("chevron-right", 12)}<a href="#/reports/${context.suiteRunId}">評価レポート</a>${icon("chevron-right", 12)}<span>${esc(context.caseTitle)}</span></nav>`
@@ -1600,12 +1643,12 @@ function renderRunDetail(run) {
     ${breadcrumbs}
     ${pageHead(title, subtitle, actions)}
     <section class="run-context"><div><span>選択中のケース</span><strong>${esc(subtitle)}</strong></div><div><span>検証プロンプト</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>
-    <section class="report-metrics"><div><span>結果</span><strong>${esc(run.summary.status)}</strong></div><div><span>所要時間</span><strong>${fmtDuration(run.summary.durationMs)}</strong></div><div><span>課金対象</span><strong>${fmtBytes(run.summary.totalBytesBilled)}</strong></div><div><span>SQL / ジョブ</span><strong>${run.summary.sqlCount} / ${run.summary.jobCount}</strong></div></section>
+    <section class="report-metrics"><div><span>${tr("結果", "Result")}</span><strong>${statusPill(run.summary.status)}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(run.summary.durationMs)}</strong></div><div><span>${tr("課金対象", "Bytes billed")}</span><strong>${fmtBytes(run.summary.totalBytesBilled)}</strong></div><div><span>${tr("SQL / ジョブ", "SQL / jobs")}</span><strong>${run.summary.sqlCount} / ${run.summary.jobCount}</strong></div></section>
     ${caseRun ? `<section class="run-evaluation-summary">
-      <article><div class="layer-title"><strong>システム要件</strong><b>${systemEvaluation?.score ?? 0}点</b></div><div class="checks">${(systemEvaluation?.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(check.label)}</span>`).join("")}</div></article>
+      <article><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{score}点", "{score} pts", { score: formatLocaleNumber(systemEvaluation?.score ?? 0) })}</b></div><div class="checks">${(systemEvaluation?.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></article>
       <article><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(businessEvaluation)}</div><p>${esc(businessEvaluation?.summary || "精度条件は設定されていません。")}</p>${businessEvaluation?.expectedCriteria ? `<dl><dt>期待した内容</dt><dd>${esc(businessEvaluation.expectedCriteria)}</dd><dt>回答との差分</dt><dd>${esc((businessEvaluation.discrepancies || []).join(" / ") || "なし")}</dd></dl>` : ""}</article>
     </section>` : ""}
-    <section class="trace-panel"><div class="section-row"><div><h2>レスポンストレース</h2><p>${run.events.length}件のイベント · ${esc(run.agentLabel)}</p></div></div>${events}</section>
+    <section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンストレース", "Response trace")}</h2><p>${tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber(run.events.length) })} · ${esc(run.agentLabel)}</p></div></div>${events}</section>
   `, "run");
 }
 
@@ -1633,9 +1676,13 @@ async function route() {
         state.suitePasteValidation = null;
         state.suitePasteError = "";
       }
-      state.selectedSuite = await json(`/api/suites/${parts[1]}`);
-      state.assistantMessages = [];
-      state.assistantPatch = null;
+      if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
+        state.preserveEditorOnLocale = false;
+      } else {
+        state.selectedSuite = await json(`/api/suites/${parts[1]}`);
+        state.assistantMessages = [];
+        state.assistantPatch = null;
+      }
       renderEditor();
     } else renderSuites();
     refreshIcons();
@@ -1670,16 +1717,34 @@ async function initialize() {
     if (!location.hash) location.hash = "#/suites";
     await route();
   } catch (error) {
-    app.innerHTML = empty("起動できませんでした", error.message);
+    app.innerHTML = empty(tr("起動できませんでした", "Could not start the application"), translateApiMessage(error.message));
   }
 }
 
 window.addEventListener("hashchange", route);
+window.addEventListener("prismtrail:localechange", () => {
+  document.documentElement.lang = getLocale();
+  route();
+});
 app.addEventListener("click", (event) => {
+  const localeButton = event.target.closest("[data-set-locale]");
+  if (localeButton) {
+    if (location.hash.match(/^#\/suites\/[^/]+\/edit/) && state.selectedSuite && document.querySelector("#suite-name")) {
+      try {
+        state.selectedSuite = collectSuite();
+        state.preserveEditorOnLocale = true;
+      } catch {
+        // The editor may be between renders; keep the last in-memory state.
+      }
+    }
+    setLocale(localeButton.dataset.setLocale);
+    return;
+  }
   const toggle = event.target.closest("#sidebar-toggle");
   if (!toggle) return;
   state.sidebarCollapsed = !state.sidebarCollapsed;
   localStorage.setItem("prismtrail-sidebar-collapsed", String(state.sidebarCollapsed));
   route();
 });
+document.documentElement.lang = getLocale();
 initialize();
