@@ -2,8 +2,13 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest commit on the `main` branch. Until the project publishes
-versioned releases, older commits are not supported.
+Security fixes are applied to the latest commit on the `main` branch and released from the latest
+supported minor series.
+
+| Version | Supported |
+|---|---|
+| 0.1.x | Yes |
+| Earlier development snapshots | No |
 
 ## Reporting a vulnerability
 
