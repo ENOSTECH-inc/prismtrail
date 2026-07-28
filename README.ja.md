@@ -194,6 +194,13 @@ docker compose build
 
 詳細は[CONTRIBUTING.md](./CONTRIBUTING.md)と[ARCHITECTURE.md](./ARCHITECTURE.md)を参照してください。
 
+## コミュニティとサポート
+
+- セットアップの質問やアイデア相談は[GitHub Discussions](https://github.com/ENOSTECH-inc/prismtrail/discussions)を利用してください。
+- 再現可能な不具合や機能提案は[Issueフォーム](https://github.com/ENOSTECH-inc/prismtrail/issues/new/choose)から登録できます。
+- [SUPPORT.md](./SUPPORT.md)、[CONTRIBUTING.md](./CONTRIBUTING.md)、[行動規範](./CODE_OF_CONDUCT.md)を確認してください。
+- 脆弱性は公開Issueにせず、[SECURITY.md](./SECURITY.md)に従って非公開で報告してください。
+
 ## 参考にしたOSS
 
 本プロジェクトはBigQuery Data Agentに特化した独立実装です。評価基盤の説明や設計上の観点は

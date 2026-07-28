@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas / 質問・アイデア
+    url: https://github.com/ENOSTECH-inc/prismtrail/discussions
+    about: Ask for help or discuss an idea before filing an issue.
+  - name: Security vulnerability / 脆弱性報告
+    url: https://github.com/ENOSTECH-inc/prismtrail/security/advisories/new
+    about: Report security issues privately. Do not open a public issue.
+

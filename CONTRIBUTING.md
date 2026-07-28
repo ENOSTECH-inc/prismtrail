@@ -2,6 +2,10 @@
 
 Thank you for improving PrismTrail.
 
+By participating, you agree to follow our [Code of Conduct](./CODE_OF_CONDUCT.md).
+Questions and early-stage ideas belong in [GitHub Discussions](https://github.com/ENOSTECH-inc/prismtrail/discussions).
+Use the structured issue forms for reproducible bugs and actionable feature requests.
+
 ## Development setup
 
 ```bash
@@ -31,6 +35,9 @@ runtime `data/`, traces, credentials, spreadsheet IDs, bucket names, or customer
 
 Changes to evaluation semantics, persistence, authentication, GCS writes, Google Sheets imports,
 or network binding require extra review.
+
+PRs are squash-merged after the required CI check passes. Keep the title suitable for the final
+commit history. Maintainers may close stale or out-of-scope proposals with an explanation.
 
 ## Coding guidelines
 
