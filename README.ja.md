@@ -9,6 +9,10 @@
 > データエージェントを対象に、ローカルで回帰テスト・精度評価・Google Sheets
 > レポーティングを行う評価基盤です。
 
+<p align="center">
+  <img src="./docs/prismtrail-concept.png" alt="PrismTrailのコンセプト図。テスト入力をデータエージェントへ送り、システム要件、精度、証跡、コスト、レイテンシーを評価し、レポートへつなげます。" width="1200">
+</p>
+
 PrismTrailは、繰り返し確認したい実業務の質問をテストスイートとして管理します。最初の
 アダプターはBigQuery Data AgentのレスポンストレースとBigQuery Job情報を取得します。動作の健全性とビジネス上の
 正確性を分けて評価し、Web UIとGoogle Sheetsへ共有しやすいレポートを出力します。

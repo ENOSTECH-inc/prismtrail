@@ -12,6 +12,10 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](https://nodejs.org/)
 
+<p align="center">
+  <img src="./docs/prismtrail-concept.png" alt="PrismTrail concept: test inputs flow through a data-agent adapter into system, accuracy, evidence, cost, and latency evaluation, producing live reports and confident decisions." width="1200">
+</p>
+
 PrismTrail turns repeatable business questions into test suites. Its first adapter executes them
 against an existing BigQuery Data Agent, captures response traces and BigQuery job metadata,
 evaluates deterministic behavior and business accuracy separately, and produces team-friendly
