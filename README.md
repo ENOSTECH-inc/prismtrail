@@ -63,6 +63,11 @@ This project models those concerns explicitly:
 - Local or GCS primary storage with non-destructive migration and optimistic concurrency
 - Docker Compose startup on macOS, Windows, and Linux
 - Setup/diagnostic CLI and a bundled coding-agent skill
+- Complete Japanese and English UI with a persistent language switcher
+
+The web UI initially follows the browser language (`ja` for Japanese browsers, English
+otherwise). Use the language switcher in the application header or Settings to change it;
+the preference is saved only in the local browser.
 
 ## Quick start
 
