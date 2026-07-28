@@ -6,6 +6,8 @@ work/
 *.png
 !public/assets/
 !public/assets/prismtrail-mark.png
+!docs/
+!docs/prismtrail-concept.png
 VALIDATION.md
 design-qa.md
 npm-debug.log*
