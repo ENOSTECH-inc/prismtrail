@@ -1,0 +1,17 @@
+[
+  {
+    "id": "top-states-chart",
+    "label": "州別顧客数",
+    "question": "Show the top 10 states by number of customers as a bar chart."
+  },
+  {
+    "id": "returns-outliers",
+    "label": "返品率の外れ値",
+    "question": "Find customers who have returned items more than 20% more often than the average customer returns for a store in Tennessee for the year 2000."
+  },
+  {
+    "id": "manufacturer-price",
+    "label": "メーカー別販売価格",
+    "question": "Report the average extended sales price per item brand of manufacturer 128 for all sales in November."
+  }
+]

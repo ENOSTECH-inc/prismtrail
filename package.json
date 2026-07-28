@@ -1,0 +1,35 @@
+{
+  "name": "bq-data-agent-eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local evaluation and reporting UI for BigQuery Data Agents",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ENOSTECH-inc/bigquery-data-agent-eval.git"
+  },
+  "homepage": "https://github.com/ENOSTECH-inc/bigquery-data-agent-eval#readme",
+  "bugs": {
+    "url": "https://github.com/ENOSTECH-inc/bigquery-data-agent-eval/issues"
+  },
+  "bin": {
+    "bq-agent-eval": "./bin/bq-agent-eval.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "setup": "node bin/bq-agent-eval.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "google-auth-library": "^10.3.0",
+    "lucide": "^0.468.0",
+    "vega": "^6.3.1",
+    "vega-embed": "^7.1.0",
+    "vega-lite": "^6.4.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

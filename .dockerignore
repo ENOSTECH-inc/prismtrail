@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules
+npm-debug.log*
+data
+work
+test
+*.png
+VALIDATION.md
+design-qa.md

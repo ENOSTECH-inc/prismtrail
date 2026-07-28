@@ -1,0 +1,10 @@
+.DS_Store
+.env
+node_modules/
+data/
+work/
+*.png
+VALIDATION.md
+design-qa.md
+npm-debug.log*
+.coverage/

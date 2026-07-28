@@ -1,0 +1,34 @@
+name: bq-agent-eval
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${APP_PORT:-4318}:4318"
+    environment:
+      PORT: "4318"
+      HOST: "0.0.0.0"
+      GOOGLE_APPLICATION_CREDENTIALS: "${CONTAINER_ADC_PATH:-/home/node/.config/gcloud/application_default_credentials.json}"
+      GOOGLE_CLOUD_QUOTA_PROJECT: "${GOOGLE_CLOUD_QUOTA_PROJECT:-${BQ_AGENT_BILLING_PROJECT:-}}"
+      BQ_AGENT_BILLING_PROJECT: "${BQ_AGENT_BILLING_PROJECT:-}"
+      BQ_AGENT_LOCATION: "${BQ_AGENT_LOCATION:-global}"
+      BQ_AGENT_RESOURCE: "${BQ_AGENT_RESOURCE:-}"
+      BQ_AGENT_LABEL: "${BQ_AGENT_LABEL:-My BigQuery Data Agent}"
+      VERTEX_AI_PROJECT: "${VERTEX_AI_PROJECT:-${BQ_AGENT_BILLING_PROJECT:-}}"
+      VERTEX_AI_LOCATION: "${VERTEX_AI_LOCATION:-global}"
+      VERTEX_AI_MODEL: "${VERTEX_AI_MODEL:-gemini-2.5-flash}"
+      VERTEX_AI_JUDGE_MODEL: "${VERTEX_AI_JUDGE_MODEL:-gemini-2.5-flash-lite}"
+    volumes:
+      - agent-eval-data:/app/data
+      - type: bind
+        source: "${GCLOUD_CONFIG_DIR:-${HOME}/.config/gcloud}"
+        target: /home/node/.config/gcloud
+        read_only: true
+    restart: unless-stopped
+    init: true
+
+volumes:
+  agent-eval-data:
+    name: bq-agent-eval-data
