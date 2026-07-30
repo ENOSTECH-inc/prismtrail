@@ -40,12 +40,21 @@ import {
   searchChunks
 } from "./lib/knowledge.mjs";
 import {
+  AGENTS_SHEET,
+  bootstrapManagedSheets,
+  emptySuiteTemplate,
   getSpreadsheet,
   parseSpreadsheetId,
   pastedTextToSuiteInput,
   readSuiteSheet,
   REPORT_SHEET,
   SUITE_SHEET,
+  SUITES_SHEET,
+  normalizeSuiteAgentRefs,
+  prepareSuiteForSheetExport,
+  isCaseRunnable,
+  normalizeCaseStatus,
+  writeCatalogSheets,
   writeReportSheet,
   writeSuiteSheet
 } from "./lib/google-sheets.mjs";
@@ -167,6 +176,8 @@ const config = {
   sheets: {
     suiteTab: SUITE_SHEET,
     reportTab: REPORT_SHEET,
+    agentsTab: AGENTS_SHEET,
+    suitesTab: SUITES_SHEET,
     schemaVersion: 2
   }
 };
@@ -302,12 +313,14 @@ function normalizeExpectations(value = {}) {
 function normalizeSuite(body, existing = {}) {
   const now = new Date().toISOString();
   const cases = Array.isArray(body.cases) ? body.cases : existing.cases || [];
+  const defaultAgentId = String(body.defaultAgentId ?? existing.defaultAgentId ?? "").trim();
   return {
     schemaVersion: 2,
     id: existing.id || objectId("suite"),
     name: String(body.name ?? existing.name ?? "無題のテストスイート").trim().slice(0, 120),
     description: String(body.description ?? existing.description ?? "").trim().slice(0, 2000),
     status: body.status === "active" ? "active" : existing.status || "draft",
+    defaultAgentId,
     knowledgeSourceIds: Array.isArray(body.knowledgeSourceIds)
       ? body.knowledgeSourceIds.map(String).filter(Boolean).slice(0, 20)
       : existing.knowledgeSourceIds || [],
@@ -315,11 +328,12 @@ function normalizeSuite(body, existing = {}) {
       id: /^[a-zA-Z0-9_-]+$/.test(String(item.id || "")) ? String(item.id) : `case_${index + 1}_${randomUUID().slice(0, 6)}`,
       title: String(item.title || `テストケース ${index + 1}`).trim().slice(0, 160),
       prompt: String(item.prompt || "").trim().slice(0, 5000),
-      agentId: String(item.agentId || "").trim(),
+      agentId: String(item.agentId || defaultAgentId || "").trim(),
       knowledgeSourceIds: Array.isArray(item.knowledgeSourceIds)
         ? item.knowledgeSourceIds.map(String).filter(Boolean).slice(0, 20)
         : [],
       thinkingMode: item.thinkingMode === "THINKING" ? "THINKING" : "FAST",
+      status: normalizeCaseStatus(item.status, { fallback: "active" }),
       expectations: normalizeExpectations(item.expectations)
     })),
     createdAt: existing.createdAt || now,
@@ -591,23 +605,118 @@ function sheetConnectionProjection(connection) {
     lastExportedAt: connection.lastExportedAt,
     lastOperation: connection.lastOperation,
     createdAt: connection.createdAt,
-    updatedAt: connection.updatedAt
+    updatedAt: connection.updatedAt,
+    bootstrap: connection.bootstrap || null
   };
 }
 
-async function refreshSheetConnection(connection) {
-  const remote = await getSpreadsheet(connection.spreadsheetId);
+async function resolveBootstrapSuite(suiteId) {
+  if (suiteId) {
+    const suite = await findLocalSuite(String(suiteId));
+    if (!suite) throw new Error("初期化に使うテストスイートが見つかりません。");
+    return suite;
+  }
+  const suites = await suiteStore.list();
+  if (!suites.length) return emptySuiteTemplate();
+  return [...suites].sort((left, right) =>
+    String(right.updatedAt || right.createdAt || "").localeCompare(
+      String(left.updatedAt || left.createdAt || "")
+    )
+  )[0];
+}
+
+async function connectAndBootstrapSheet({
+  spreadsheetId,
+  suiteId,
+  existing = null,
+  forceOperational = false
+}) {
   const now = new Date().toISOString();
+  const suite = await resolveBootstrapSuite(suiteId);
+  const agents = await agentStore.list();
+  const suites = await suiteStore.list();
+  const bootstrap = await bootstrapManagedSheets(spreadsheetId, {
+    suite,
+    agents,
+    suites,
+    forceOperational
+  });
+  const remote = bootstrap.spreadsheet;
+  const bootstrapped =
+    bootstrap.suiteBootstrapped || bootstrap.reportBootstrapped || bootstrap.catalogsBootstrapped;
   return sheetConnectionStore.save({
-    ...connection,
+    schemaVersion: 1,
+    id: existing?.id || objectId("sheet"),
+    spreadsheetId,
     title: remote.title,
     spreadsheetUrl: remote.spreadsheetUrl,
-    locale: remote.locale,
+    locale: remote.locale || existing?.locale || null,
     authSource: remote.authSource,
     status: "ready",
     lastCheckedAt: now,
-    updatedAt: now
+    lastImportedAt: existing?.lastImportedAt || null,
+    lastExportedAt: bootstrapped ? now : existing?.lastExportedAt || null,
+    lastOperation: bootstrapped
+      ? `bootstrapped:${[
+          bootstrap.catalogsBootstrapped ? `${AGENTS_SHEET}+${SUITES_SHEET}` : null,
+          bootstrap.suiteBootstrapped ? SUITE_SHEET : null,
+          bootstrap.reportBootstrapped ? REPORT_SHEET : null
+        ]
+          .filter(Boolean)
+          .join(",")}`
+      : existing?.lastOperation || "connected",
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    bootstrap: {
+      suiteBootstrapped: bootstrap.suiteBootstrapped,
+      reportBootstrapped: bootstrap.reportBootstrapped,
+      catalogsBootstrapped: bootstrap.catalogsBootstrapped,
+      agentCount: bootstrap.agentCount,
+      suiteCount: bootstrap.suiteCount,
+      suiteId: suite.id || null,
+      suiteName: suite.name || null
+    }
   });
+}
+
+async function refreshSheetConnection(connection, { suiteId, forceOperational = false } = {}) {
+  return connectAndBootstrapSheet({
+    spreadsheetId: connection.spreadsheetId,
+    suiteId,
+    existing: connection,
+    forceOperational
+  });
+}
+
+async function syncReadySheetCatalogs() {
+  const connections = (await sheetConnectionStore.list()).filter(
+    (connection) => connection.status === "ready"
+  );
+  if (!connections.length) return [];
+  const agents = await agentStore.list();
+  const suites = await suiteStore.list();
+  const results = [];
+  for (const connection of connections) {
+    try {
+      const catalog = await writeCatalogSheets(connection.spreadsheetId, { agents, suites });
+      const now = new Date().toISOString();
+      const updated = await sheetConnectionStore.save({
+        ...connection,
+        title: catalog.spreadsheet.title,
+        spreadsheetUrl: catalog.spreadsheet.spreadsheetUrl,
+        authSource: catalog.spreadsheet.authSource,
+        status: "ready",
+        lastCheckedAt: now,
+        lastExportedAt: now,
+        lastOperation: `catalog-sync:${AGENTS_SHEET},${SUITES_SHEET}`,
+        updatedAt: now
+      });
+      results.push(updated);
+    } catch (error) {
+      console.error(`[sheets-catalog] ${connection.id} ${error.message}`);
+    }
+  }
+  return results;
 }
 
 async function findLocalSuite(id) {
@@ -636,24 +745,27 @@ function suiteCaseDiff(previousCases = [], nextCases = []) {
 }
 
 async function validateSuiteReferences(suite) {
-  const agents = new Set((await agentStore.list()).map((agent) => agent.id));
+  const agents = await agentStore.list();
+  const normalized = normalizeSuiteAgentRefs(suite, agents);
+  const agentIds = new Set(agents.map((agent) => agent.id));
   const unknownAgents = [
-    ...new Set((suite.cases || []).map((item) => item.agentId).filter((id) => !agents.has(id)))
+    ...new Set((normalized.cases || []).map((item) => item.agentId).filter((id) => !agentIds.has(id)))
   ];
   if (unknownAgents.length) {
     throw new Error(`未登録のData Agent IDがあります: ${unknownAgents.join(", ")}`);
   }
   const knowledgeSources = new Set((await knowledgeSourceStore.list()).map((source) => source.id));
   const referencedKnowledge = [
-    ...(suite.knowledgeSourceIds || []),
-    ...(suite.cases || []).flatMap((item) => item.knowledgeSourceIds || [])
+    ...(normalized.knowledgeSourceIds || []),
+    ...(normalized.cases || []).flatMap((item) => item.knowledgeSourceIds || [])
   ];
   const unknownKnowledge = [...new Set(referencedKnowledge.filter((id) => !knowledgeSources.has(id)))];
   if (unknownKnowledge.length) {
     throw new Error(`未登録のナレッジIDがあります: ${unknownKnowledge.join(", ")}`);
   }
   return {
-    agentCount: new Set((suite.cases || []).map((item) => item.agentId)).size,
+    suite: normalized,
+    agentCount: new Set((normalized.cases || []).map((item) => item.agentId)).size,
     knowledgeSourceCount: new Set(referencedKnowledge).size
   };
 }
@@ -697,6 +809,10 @@ async function executeRun(body) {
 
 async function createSuiteRun(suite) {
   if (!suite.cases?.length) throw new Error("テストケースを1件以上登録してください。");
+  const runnableCount = suite.cases.filter((item) => isCaseRunnable(item)).length;
+  if (!runnableCount) {
+    throw new Error("実行可のテストケースがありません。ケースのステータスを「実行可」にしてください。");
+  }
   const suiteRun = {
     schemaVersion: 1,
     id: objectId("suite_run"),
@@ -710,7 +826,13 @@ async function createSuiteRun(suite) {
     currentCase: null,
     sheetExport: { status: "pending" },
     caseRuns: [],
-    summary: { status: "running", total: suite.cases.length, completed: 0 }
+    summary: {
+      status: "running",
+      total: suite.cases.length,
+      runnable: runnableCount,
+      skipped: suite.cases.length - runnableCount,
+      completed: 0
+    }
   };
   await suiteRunStore.save(suiteRun);
   return suiteRun;
@@ -767,6 +889,21 @@ async function processSuiteRun(suite, suiteRun) {
   const agents = new Map((await agentStore.list()).map((agent) => [agent.id, agent]));
   for (let caseIndex = 0; caseIndex < suite.cases.length; caseIndex += 1) {
     const testCase = suite.cases[caseIndex];
+    if (!isCaseRunnable(testCase)) {
+      suiteRun.caseRuns.push({
+        caseId: testCase.id,
+        title: testCase.title,
+        status: "skipped",
+        skipReason: "ケースのステータスが実行可ではないためスキップしました。",
+        evaluation: { status: "skipped", score: null, checks: [] }
+      });
+      suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
+      suiteRun.summary.total = suite.cases.length;
+      suiteRun.summary.completed = suiteRun.caseRuns.length;
+      suiteRun.updatedAt = new Date().toISOString();
+      await suiteRunStore.save(suiteRun);
+      continue;
+    }
     suiteRun.currentCase = {
       index: caseIndex,
       caseId: testCase.id,
@@ -1147,10 +1284,7 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/runs") {
       sendJson(response, 200, {
-        runs: (await runStore.list()).map((run) => ({
-          ...run,
-          summary: correctedRunSummary(run)
-        }))
+        runs: await runStore.list()
       });
       return;
     }
@@ -1298,6 +1432,7 @@ const server = createServer(async (request, response) => {
         createdAt: now,
         updatedAt: now
       });
+      syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
       sendJson(response, 201, agent);
       return;
     }
@@ -1314,6 +1449,7 @@ const server = createServer(async (request, response) => {
         lastCheckedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+      syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
       sendJson(response, 200, updated);
       return;
     }
@@ -1324,7 +1460,9 @@ const server = createServer(async (request, response) => {
         format: {
           suiteTab: SUITE_SHEET,
           reportTab: REPORT_SHEET,
-          schemaVersion: 1,
+          agentsTab: AGENTS_SHEET,
+          suitesTab: SUITES_SHEET,
+          schemaVersion: 2,
           maxCases: 50
         }
       });
@@ -1336,23 +1474,11 @@ const server = createServer(async (request, response) => {
       const duplicate = (await sheetConnectionStore.list()).find(
         (connection) => connection.spreadsheetId === spreadsheetId
       );
-      const now = new Date().toISOString();
-      const remote = await getSpreadsheet(spreadsheetId);
-      const connection = await sheetConnectionStore.save({
-        schemaVersion: 1,
-        id: duplicate?.id || objectId("sheet"),
+      const connection = await connectAndBootstrapSheet({
         spreadsheetId,
-        title: remote.title,
-        spreadsheetUrl: remote.spreadsheetUrl,
-        locale: remote.locale,
-        authSource: remote.authSource,
-        status: "ready",
-        lastCheckedAt: now,
-        lastImportedAt: duplicate?.lastImportedAt || null,
-        lastExportedAt: duplicate?.lastExportedAt || null,
-        lastOperation: "connected",
-        createdAt: duplicate?.createdAt || now,
-        updatedAt: now
+        suiteId: body.suiteId,
+        existing: duplicate || null,
+        forceOperational: Boolean(body.forceOperational || body.forceSamples)
       });
       sendJson(response, duplicate ? 200 : 201, sheetConnectionProjection(connection));
       return;
@@ -1361,11 +1487,15 @@ const server = createServer(async (request, response) => {
       /^\/api\/sheets\/connections\/([a-zA-Z0-9_-]+)\/check$/
     );
     if (request.method === "POST" && sheetCheckMatch) {
+      const body = await readJson(request).catch(() => ({}));
       sendJson(
         response,
         200,
         sheetConnectionProjection(
-          await refreshSheetConnection(await sheetConnectionStore.get(sheetCheckMatch[1]))
+          await refreshSheetConnection(await sheetConnectionStore.get(sheetCheckMatch[1]), {
+            suiteId: body?.suiteId,
+            forceOperational: Boolean(body?.forceOperational || body?.forceSamples)
+          })
         )
       );
       return;
@@ -1377,7 +1507,13 @@ const server = createServer(async (request, response) => {
       const connection = await sheetConnectionStore.get(sheetExportSuiteMatch[1]);
       const body = await readJson(request);
       const suite = await suiteStore.get(String(body.suiteId || ""));
-      const result = await writeSuiteSheet(connection.spreadsheetId, suite);
+      const agents = await agentStore.list();
+      const prepared = prepareSuiteForSheetExport(suite, agents);
+      const result = await writeSuiteSheet(connection.spreadsheetId, prepared, { agents });
+      await writeCatalogSheets(connection.spreadsheetId, {
+        agents,
+        suites: await suiteStore.list()
+      });
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
         ...connection,
@@ -1404,9 +1540,13 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && sheetImportSuiteMatch) {
       const connection = await sheetConnectionStore.get(sheetImportSuiteMatch[1]);
       const imported = await readSuiteSheet(connection.spreadsheetId);
-      await validateSuiteReferences(imported.suite);
-      const existing = await findLocalSuite(imported.suite.sourceSuiteId);
-      const suite = await suiteStore.save(normalizeSuite(imported.suite, existing || {}));
+      const references = await validateSuiteReferences(imported.suite);
+      const existing = await findLocalSuite(references.suite.sourceSuiteId || imported.suite.sourceSuiteId);
+      const suite = await suiteStore.save(normalizeSuite(references.suite, existing || {}));
+      await writeCatalogSheets(connection.spreadsheetId, {
+        agents: await agentStore.list(),
+        suites: await suiteStore.list()
+      });
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
         ...connection,
@@ -1434,6 +1574,10 @@ const server = createServer(async (request, response) => {
         await suiteRunStore.get(String(body.suiteRunId || ""))
       );
       const result = await writeReportSheet(connection.spreadsheetId, report);
+      await writeCatalogSheets(connection.spreadsheetId, {
+        agents: await agentStore.list(),
+        suites: await suiteStore.list()
+      });
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
         ...connection,
@@ -1477,8 +1621,9 @@ const server = createServer(async (request, response) => {
       if (!existing) {
         throw new Error("貼り付け内容に対応する既存テストスイートが見つかりません。");
       }
-      const suite = normalizeSuite(imported.suite, existing);
-      const references = await validateSuiteReferences(suite);
+      const suiteInput = normalizeSuite(imported.suite, existing);
+      const references = await validateSuiteReferences(suiteInput);
+      const suite = normalizeSuite(references.suite, existing);
       const validation = {
         format: imported.format,
         delimiter: imported.delimiter,
@@ -1490,7 +1635,8 @@ const server = createServer(async (request, response) => {
           prompt: item.prompt,
           agentId: item.agentId
         })),
-        ...references
+        agentCount: references.agentCount,
+        knowledgeSourceCount: references.knowledgeSourceCount
       };
       if (body.validateOnly === true) {
         sendJson(response, 200, { suite, mode: "validated", validation });
@@ -1510,7 +1656,9 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/suites") {
-      sendJson(response, 201, await suiteStore.save(normalizeSuite(await readJson(request))));
+      const suite = await suiteStore.save(normalizeSuite(await readJson(request)));
+      syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+      sendJson(response, 201, suite);
       return;
     }
     const suiteMatch = url.pathname.match(/^\/api\/suites\/([a-zA-Z0-9_-]+)$/);
@@ -1520,7 +1668,24 @@ const server = createServer(async (request, response) => {
     }
     if ((request.method === "PATCH" || request.method === "PUT") && suiteMatch) {
       const existing = await suiteStore.get(suiteMatch[1]);
-      sendJson(response, 200, await suiteStore.save(normalizeSuite(await readJson(request), existing)));
+      const suite = await suiteStore.save(normalizeSuite(await readJson(request), existing));
+      syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+      sendJson(response, 200, suite);
+      return;
+    }
+    if (request.method === "DELETE" && suiteMatch) {
+      const suite = await suiteStore.get(suiteMatch[1]);
+      const activeRun = (await suiteRunStore.list()).find(
+        (run) => run.suiteId === suite.id && run.status === "running"
+      );
+      if (activeRun) {
+        const error = new Error("実行中のスイートは削除できません。完了してから削除してください。");
+        error.status = 409;
+        throw error;
+      }
+      await suiteStore.delete(suite.id);
+      syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+      sendJson(response, 200, { deleted: true, id: suite.id, name: suite.name });
       return;
     }
     const suiteRunMatch = url.pathname.match(/^\/api\/suites\/([a-zA-Z0-9_-]+)\/run$/);
