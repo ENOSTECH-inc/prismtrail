@@ -25,6 +25,7 @@ import {
   summarizeSuiteRun
 } from "./lib/evaluate.mjs";
 import { JsonStore } from "./lib/json-store.mjs";
+import { createAsyncMutex, mapWithConcurrency } from "./lib/concurrency.mjs";
 import { RunStore } from "./lib/store.mjs";
 import {
   createStorageBackend,
@@ -163,6 +164,13 @@ const knowledgeSourceStore = new JsonStore(primaryStorage, "knowledge-sources");
 const knowledgeIndexStore = new JsonStore(primaryStorage, "knowledge-indexes");
 const port = Number(process.env.PORT || 4318);
 const host = process.env.HOST || "127.0.0.1";
+const SUITE_RUN_MAX_CONCURRENCY = 30;
+
+function suiteRunConcurrency() {
+  const raw = Number(process.env.SUITE_RUN_CONCURRENCY ?? SUITE_RUN_MAX_CONCURRENCY);
+  if (!Number.isFinite(raw) || raw < 1) return SUITE_RUN_MAX_CONCURRENCY;
+  return Math.min(SUITE_RUN_MAX_CONCURRENCY, Math.floor(raw));
+}
 
 const config = {
   billingProject: process.env.BQ_AGENT_BILLING_PROJECT || "",
@@ -824,6 +832,7 @@ async function createSuiteRun(suite) {
     updatedAt: new Date().toISOString(),
     completedAt: null,
     currentCase: null,
+    activeCases: [],
     sheetExport: { status: "pending" },
     caseRuns: [],
     summary: {
@@ -831,7 +840,9 @@ async function createSuiteRun(suite) {
       total: suite.cases.length,
       runnable: runnableCount,
       skipped: suite.cases.length - runnableCount,
-      completed: 0
+      completed: 0,
+      running: 0,
+      concurrency: suiteRunConcurrency()
     }
   };
   await suiteRunStore.save(suiteRun);
@@ -887,179 +898,211 @@ async function autoExportSuiteRun(suiteRun) {
 
 async function processSuiteRun(suite, suiteRun) {
   const agents = new Map((await agentStore.list()).map((agent) => [agent.id, agent]));
-  for (let caseIndex = 0; caseIndex < suite.cases.length; caseIndex += 1) {
-    const testCase = suite.cases[caseIndex];
+  const concurrency = suiteRunConcurrency();
+  const withLock = createAsyncMutex();
+  const caseRunById = new Map();
+  const activeCases = new Map();
+
+  const orderedCaseRuns = () =>
+    suite.cases.map((item) => caseRunById.get(item.id)).filter(Boolean);
+
+  const setCasePhase = (testCase, caseIndex, phase) =>
+    withLock(async () => {
+      const current = activeCases.get(testCase.id) || {
+        index: caseIndex,
+        caseId: testCase.id,
+        title: testCase.title,
+        startedAt: new Date().toISOString()
+      };
+      activeCases.set(testCase.id, { ...current, phase });
+      const active = [...activeCases.values()].sort((left, right) => left.index - right.index);
+      suiteRun.activeCases = active;
+      suiteRun.currentCase = active[0] || null;
+      suiteRun.updatedAt = new Date().toISOString();
+      await suiteRunStore.save(suiteRun);
+    });
+
+  const recordCaseResult = (caseResult) =>
+    withLock(async () => {
+      caseRunById.set(caseResult.caseId, caseResult);
+      activeCases.delete(caseResult.caseId);
+      const active = [...activeCases.values()].sort((left, right) => left.index - right.index);
+      suiteRun.activeCases = active;
+      suiteRun.currentCase = active[0] || null;
+      suiteRun.caseRuns = orderedCaseRuns();
+      suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
+      suiteRun.summary.total = suite.cases.length;
+      suiteRun.summary.completed = suiteRun.caseRuns.length;
+      suiteRun.summary.running = active.length;
+      suiteRun.summary.concurrency = concurrency;
+      suiteRun.status = "running";
+      suiteRun.updatedAt = new Date().toISOString();
+      await suiteRunStore.save(suiteRun);
+    });
+
+  suiteRun.summary = {
+    ...(suiteRun.summary || {}),
+    concurrency,
+    running: 0
+  };
+  await suiteRunStore.save(suiteRun);
+
+  await mapWithConcurrency(suite.cases, concurrency, async (testCase, caseIndex) => {
     if (!isCaseRunnable(testCase)) {
-      suiteRun.caseRuns.push({
+      await recordCaseResult({
         caseId: testCase.id,
         title: testCase.title,
         status: "skipped",
         skipReason: "ケースのステータスが実行可ではないためスキップしました。",
         evaluation: { status: "skipped", score: null, checks: [] }
       });
-      suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
-      suiteRun.summary.total = suite.cases.length;
-      suiteRun.summary.completed = suiteRun.caseRuns.length;
-      suiteRun.updatedAt = new Date().toISOString();
-      await suiteRunStore.save(suiteRun);
-      continue;
+      return;
     }
-    suiteRun.currentCase = {
-      index: caseIndex,
-      caseId: testCase.id,
-      title: testCase.title,
-      phase: "running",
-      startedAt: new Date().toISOString()
-    };
-    suiteRun.updatedAt = suiteRun.currentCase.startedAt;
-    await suiteRunStore.save(suiteRun);
+
+    await setCasePhase(testCase, caseIndex, "running");
     const agent = agents.get(testCase.agentId);
     if (!agent) {
-      suiteRun.caseRuns.push({
+      await recordCaseResult({
         caseId: testCase.id,
         title: testCase.title,
         status: "failed",
         error: "選択されたData Agentが登録されていません。",
         evaluation: { status: "failed", score: 0, checks: [] }
       });
-    } else {
-      try {
-        const selectedKnowledgeSourceIds = testCase.knowledgeSourceIds?.length
-          ? testCase.knowledgeSourceIds
-          : suite.knowledgeSourceIds || [];
-        const retrieved = await retrieveKnowledge(testCase.prompt, selectedKnowledgeSourceIds);
-        const run = await executeRun({
-          question: testCase.prompt,
-          agent: agent.resourceName,
-          agentLabel: agent.displayName,
-          thinkingMode: testCase.thinkingMode,
-          context: {
-            suiteRunId: suiteRun.id,
-            suiteId: suite.id,
-            suiteName: suite.name,
-            caseId: testCase.id,
-            caseTitle: testCase.title
-          }
-        });
-        suiteRun.currentCase.phase = "evaluating_system";
-        suiteRun.updatedAt = new Date().toISOString();
-        await suiteRunStore.save(suiteRun);
-        let evaluation = evaluateRun(run, testCase.expectations);
-        if (retrieved.context) {
-          const responseText = (run.events || [])
-            .filter((event) => event.kind === "text.final_response")
-            .flatMap((event) => event.payload?.parts || [])
-            .join("\n");
-          let judge;
+      return;
+    }
+
+    try {
+      const selectedKnowledgeSourceIds = testCase.knowledgeSourceIds?.length
+        ? testCase.knowledgeSourceIds
+        : suite.knowledgeSourceIds || [];
+      const retrieved = await retrieveKnowledge(testCase.prompt, selectedKnowledgeSourceIds);
+      const run = await executeRun({
+        question: testCase.prompt,
+        agent: agent.resourceName,
+        agentLabel: agent.displayName,
+        thinkingMode: testCase.thinkingMode,
+        context: {
+          suiteRunId: suiteRun.id,
+          suiteId: suite.id,
+          suiteName: suite.name,
+          caseId: testCase.id,
+          caseTitle: testCase.title
+        }
+      });
+      await setCasePhase(testCase, caseIndex, "evaluating_system");
+      let evaluation = evaluateRun(run, testCase.expectations);
+      if (retrieved.context) {
+        const responseText = (run.events || [])
+          .filter((event) => event.kind === "text.final_response")
+          .flatMap((event) => event.payload?.parts || [])
+          .join("\n");
+        let judge;
+        try {
+          judge = await judgeResponseWithContext({
+            project: config.vertexProject,
+            location: config.vertexLocation,
+            model: config.vertexModel,
+            question: testCase.prompt,
+            responseText,
+            knowledgeContext: retrieved.context
+          });
+        } catch (error) {
+          judge = {
+            passed: false,
+            score: 0,
+            reason: `ナレッジ根拠判定を完了できませんでした: ${error.message}`,
+            citations: [],
+            evaluationError: true
+          };
+        }
+        evaluation = appendContextEvaluation(evaluation, judge);
+      }
+      const businessRequirements = testCase.expectations?.businessRequirements || {};
+      if (businessRequirements.enabled && businessRequirements.accuracyCriteria) {
+        await setCasePhase(testCase, caseIndex, "evaluating_business");
+        const finalText = (run.events || [])
+          .filter((event) => event.kind === "text.final_response")
+          .flatMap((event) => event.payload?.parts || [])
+          .join("\n");
+        const dataEvidence = (run.events || [])
+          .filter((event) => event.kind === "data.result")
+          .slice(0, 5)
+          .map((event) => JSON.stringify(event.payload))
+          .join("\n")
+          .slice(0, 40_000);
+        const answerEvidence = [
+          finalText ? `FINAL_RESPONSE:\n${finalText}` : "",
+          dataEvidence ? `DATA_RESULT:\n${dataEvidence}` : ""
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        let accuracyJudge;
+        if (!answerEvidence) {
+          accuracyJudge = {
+            evaluationError: true,
+            reason: "精度を判定できる最終回答またはデータ結果がありません。"
+          };
+        } else {
           try {
-            judge = await judgeResponseWithContext({
+            accuracyJudge = await judgeBusinessAccuracy({
               project: config.vertexProject,
               location: config.vertexLocation,
-              model: config.vertexModel,
+              model: config.vertexJudgeModel,
               question: testCase.prompt,
-              responseText,
-              knowledgeContext: retrieved.context
+              accuracyCriteria: businessRequirements.accuracyCriteria,
+              answerEvidence
             });
           } catch (error) {
-            judge = {
-              passed: false,
-              score: 0,
-              reason: `ナレッジ根拠判定を完了できませんでした: ${error.message}`,
-              citations: [],
-              evaluationError: true
-            };
-          }
-          evaluation = appendContextEvaluation(evaluation, judge);
-        }
-        const businessRequirements = testCase.expectations?.businessRequirements || {};
-        if (businessRequirements.enabled && businessRequirements.accuracyCriteria) {
-          suiteRun.currentCase.phase = "evaluating_business";
-          suiteRun.updatedAt = new Date().toISOString();
-          await suiteRunStore.save(suiteRun);
-          const finalText = (run.events || [])
-            .filter((event) => event.kind === "text.final_response")
-            .flatMap((event) => event.payload?.parts || [])
-            .join("\n");
-          const dataEvidence = (run.events || [])
-            .filter((event) => event.kind === "data.result")
-            .slice(0, 5)
-            .map((event) => JSON.stringify(event.payload))
-            .join("\n")
-            .slice(0, 40_000);
-          const answerEvidence = [
-            finalText ? `FINAL_RESPONSE:\n${finalText}` : "",
-            dataEvidence ? `DATA_RESULT:\n${dataEvidence}` : ""
-          ].filter(Boolean).join("\n\n");
-          let accuracyJudge;
-          if (!answerEvidence) {
             accuracyJudge = {
               evaluationError: true,
-              reason: "精度を判定できる最終回答またはデータ結果がありません。"
+              reason: `Vertex AIによる精度判定を完了できませんでした: ${error.message}`
             };
-          } else {
-            try {
-              accuracyJudge = await judgeBusinessAccuracy({
-                project: config.vertexProject,
-                location: config.vertexLocation,
-                model: config.vertexJudgeModel,
-                question: testCase.prompt,
-                accuracyCriteria: businessRequirements.accuracyCriteria,
-                answerEvidence
-              });
-            } catch (error) {
-              accuracyJudge = {
-                evaluationError: true,
-                reason: `Vertex AIによる精度判定を完了できませんでした: ${error.message}`
-              };
-            }
           }
-          evaluation = composeEvaluation(evaluation, accuracyJudge, businessRequirements);
-        } else {
-          evaluation = composeEvaluation(evaluation, null, businessRequirements);
         }
-        suiteRun.caseRuns.push({
-          caseId: testCase.id,
-          title: testCase.title,
-          agentId: agent.id,
-          status: evaluation.status,
-          runId: run.id,
-          runSummary: run.summary,
-          knowledge: {
-            sourceIds: selectedKnowledgeSourceIds,
-            retrievedChunks: retrieved.matches.map((chunk) => ({
-              sourceId: chunk.sourceId,
-              objectName: chunk.objectName,
-              chunkIndex: chunk.chunkIndex,
-              score: chunk.score
-            }))
-          },
-          evaluation
-        });
-      } catch (error) {
-        suiteRun.caseRuns.push({
-          caseId: testCase.id,
-          title: testCase.title,
-          agentId: agent.id,
-          status: "failed",
-          error: error.message,
-          evaluation: { status: "failed", score: 0, checks: [] }
-        });
+        evaluation = composeEvaluation(evaluation, accuracyJudge, businessRequirements);
+      } else {
+        evaluation = composeEvaluation(evaluation, null, businessRequirements);
       }
+      await recordCaseResult({
+        caseId: testCase.id,
+        title: testCase.title,
+        agentId: agent.id,
+        status: evaluation.status,
+        runId: run.id,
+        runSummary: run.summary,
+        knowledge: {
+          sourceIds: selectedKnowledgeSourceIds,
+          retrievedChunks: retrieved.matches.map((chunk) => ({
+            sourceId: chunk.sourceId,
+            objectName: chunk.objectName,
+            chunkIndex: chunk.chunkIndex,
+            score: chunk.score
+          }))
+        },
+        evaluation
+      });
+    } catch (error) {
+      await recordCaseResult({
+        caseId: testCase.id,
+        title: testCase.title,
+        agentId: agent.id,
+        status: "failed",
+        error: error.message,
+        evaluation: { status: "failed", score: 0, checks: [] }
+      });
     }
-    suiteRun.updatedAt = new Date().toISOString();
-    suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
-    suiteRun.summary.total = suite.cases.length;
-    suiteRun.summary.completed = suiteRun.caseRuns.length;
-    suiteRun.status = "running";
-    await suiteRunStore.save(suiteRun);
-  }
+  });
 
   suiteRun.status = summarizeSuiteRun(suiteRun.caseRuns).status;
   suiteRun.completedAt = new Date().toISOString();
   suiteRun.updatedAt = suiteRun.completedAt;
   suiteRun.currentCase = null;
+  suiteRun.activeCases = [];
   suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
   suiteRun.summary.completed = suiteRun.caseRuns.length;
+  suiteRun.summary.running = 0;
+  suiteRun.summary.concurrency = concurrency;
   suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.completedAt };
   await suiteRunStore.save(suiteRun);
   await suiteStore.save({ ...suite, lastRunAt: suiteRun.completedAt, updatedAt: suiteRun.completedAt });
@@ -1077,6 +1120,7 @@ async function startSuiteRun(suite) {
       suiteRun.status = "failed";
       suiteRun.fatalError = error.message;
       suiteRun.currentCase = null;
+      suiteRun.activeCases = [];
       suiteRun.completedAt = now;
       suiteRun.updatedAt = now;
       suiteRun.sheetExport = {

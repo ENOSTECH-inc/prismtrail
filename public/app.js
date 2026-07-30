@@ -2010,12 +2010,17 @@ function renderReport(report) {
         ${item.runId ? `<a href="#/runs/${item.runId}" class="text-link">実行トレースを見る ${icon("arrow-right", 14)}</a>` : ""}
       </article>`;
     }
-    const active = report.currentCase?.caseId === testCase.id;
+    const activeCases = report.activeCases?.length
+      ? report.activeCases
+      : report.currentCase
+        ? [report.currentCase]
+        : [];
+    const active = activeCases.find((item) => item.caseId === (testCase.id || testCase.caseId));
     const phaseLabel = {
       running: tr("Data Agentを実行中", "Running Data Agent"),
       evaluating_system: tr("システム要件を確認中", "Checking system requirements"),
       evaluating_business: tr("Geminiで回答精度を判定中", "Evaluating answer accuracy with Gemini")
-    }[report.currentCase?.phase] || tr("実行待ち", "Waiting");
+    }[active?.phase] || tr("実行待ち", "Waiting");
     return `<article class="report-case ${active ? "case-running" : "case-pending"}">
       <header>
         <span class="${active ? "live-spinner" : "case-index"}">${active ? "" : String(index + 1).padStart(2, "0")}</span>
@@ -2026,6 +2031,16 @@ function renderReport(report) {
       <div class="skeleton-layer"><strong>ビジネス要件</strong><div class="skeleton-grade"></div></div>
     </article>`;
   }).join("");
+  const runningCount = report.summary?.running ?? (report.activeCases?.length || (report.currentCase ? 1 : 0));
+  const concurrency = report.summary?.concurrency || 30;
+  const runningHeadline = runningCount > 1
+    ? tr("{count}件を並列実行中（最大{limit}）", "Running {count} cases in parallel (max {limit})", {
+      count: formatLocaleNumber(runningCount),
+      limit: formatLocaleNumber(concurrency)
+    })
+    : tr("{title}を処理しています", "Processing {title}", {
+      title: report.currentCase?.title || report.activeCases?.[0]?.title || tr("実行準備中", "Preparing run")
+    });
   const sheetExport = report.sheetExport || { status: "pending" };
   const sheetPanel = sheetExport.status === "succeeded"
     ? `<section class="sheet-export-status succeeded">${icon("sheet", 20)}<div><strong>${tr("評価レポートをGoogle Sheetsへ自動出力しました", "Evaluation report exported to Google Sheets")}</strong><p>${esc(sheetExport.spreadsheetTitle)} · ${esc(sheetExport.tabName)} · ${tr("{count}行", "{count} rows", { count: formatLocaleNumber(sheetExport.rowCount || 0) })}</p></div><a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${tr("シートを開く", "Open sheet")} ${icon("external-link", 14)}</a></section>`
@@ -2050,7 +2065,7 @@ function renderReport(report) {
       <div class="overall-score"><span>${isRunning ? tr("実行進捗", "Run progress") : tr("総合スコア", "Overall score")}</span><strong>${isRunning ? completed : overallScore ?? "—"}<small>/${isRunning ? total : 100}</small></strong>${!isRunning && businessConfigured > 0 ? `<em>${tr("システム 40% + ビジネス 60%", "System 40% + business 60%")}</em>` : !isRunning ? `<em>${tr("ビジネス要件未評価のためシステムスコアを採用", "System score used because business requirements were not evaluated")}</em>` : ""}</div>
       <div class="ring score-ring system-ring" style="--progress:${systemScore};--ring-color:#65a0ff"><b>${scoreText(systemScore)}</b><span>システム要件</span></div>
       <div class="ring score-ring business-ring ${businessScore === null ? "unscored" : ""}" style="--progress:${businessScore ?? 0};--ring-color:#c084fc"><b>${scoreText(businessScore)}</b><span>ビジネス要件</span></div>
-      <div class="hero-copy">${statusPill(report.status)}<h2>${isRunning ? tr("{title}を処理しています", "Processing {title}", { title: report.currentCase?.title || tr("実行準備中", "Preparing run") }) : report.status === "passed" ? tr("すべてのケースが基準を満たしました", "All cases met the criteria") : tr("改善が必要なケースがあります", "Some cases need improvement")}</h2><p>${isRunning ? tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。", "Results appear in this report as each case completes.") : tr("{passed}件合格 / {failed}件不合格", "{passed} passed / {failed} failed", { passed: formatLocaleNumber(report.summary?.passed || 0), failed: formatLocaleNumber(report.summary?.failed || 0) })}</p></div>
+      <div class="hero-copy">${statusPill(report.status)}<h2>${isRunning ? runningHeadline : report.status === "passed" ? tr("すべてのケースが基準を満たしました", "All cases met the criteria") : tr("改善が必要なケースがあります", "Some cases need improvement")}</h2><p>${isRunning ? tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear in this report as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) }) : tr("{passed}件合格 / {failed}件不合格", "{passed} passed / {failed} failed", { passed: formatLocaleNumber(report.summary?.passed || 0), failed: formatLocaleNumber(report.summary?.failed || 0) })}</p></div>
       ${isRunning ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
     <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div><span>${tr("精度 A / B / C / D", "Accuracy A / B / C / D")}</span><strong>${report.summary?.accuracyGrades?.A || 0} / ${report.summary?.accuracyGrades?.B || 0} / ${report.summary?.accuracyGrades?.C || 0} / ${report.summary?.accuracyGrades?.D || 0}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
