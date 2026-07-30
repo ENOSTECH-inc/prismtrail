@@ -88,6 +88,36 @@ function notify(message, kind = "error") {
   notify.timer = setTimeout(() => (toast.hidden = true), 7000);
 }
 
+/** In-app confirm — native window.confirm can be silently blocked by the browser. */
+function askConfirm(message, { confirmLabel = tr("続ける", "Continue"), cancelLabel = tr("キャンセル", "Cancel") } = {}) {
+  return new Promise((resolve) => {
+    const existing = document.querySelector("#app-confirm-dialog");
+    existing?.remove();
+    const dialog = document.createElement("dialog");
+    dialog.id = "app-confirm-dialog";
+    dialog.className = "app-confirm-dialog";
+    dialog.innerHTML = `
+      <form method="dialog" class="app-confirm-shell">
+        <header><h2>${tr("確認", "Confirm")}</h2></header>
+        <p>${esc(message)}</p>
+        <footer>
+          <button value="cancel" class="button secondary" type="submit">${esc(cancelLabel)}</button>
+          <button value="confirm" class="button primary" type="submit">${esc(confirmLabel)}</button>
+        </footer>
+      </form>`;
+    document.body.appendChild(dialog);
+    const finish = (result) => {
+      dialog.removeEventListener("close", onClose);
+      dialog.remove();
+      resolve(result);
+    };
+    const onClose = () => finish(dialog.returnValue === "confirm");
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    dialog.querySelector('button[value="confirm"]')?.focus();
+  });
+}
+
 async function json(url, options) {
   const response = await fetch(url, options);
   const body = await response.json();
@@ -569,7 +599,7 @@ function renderEditor() {
         subtitleHtml: `<em id="save-state">${tr("保存済み", "Saved")}</em> · ${tr("テストスイート", "Test suites")}`,
         backHref: "#/suites",
         backLabel: tr("テストスイート一覧に戻る", "Back to test suites"),
-        actions: `${localeSelector(true)}${assistantToggle}<button id="save-suite" class="button secondary">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
+        actions: `${localeSelector(true)}${assistantToggle}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
       })}
       <div class="${columnClass}">
         ${showCaseNav ? caseNav(suite) : ""}
@@ -687,11 +717,11 @@ async function submitSuitePaste(validateOnly) {
 }
 
 function bindEditor() {
-  document.querySelector("#save-suite").addEventListener("click", saveSuite);
-  document.querySelector("#run-current-suite").addEventListener("click", () => runSuite(state.selectedSuite.id));
-  document.querySelector("#add-case").addEventListener("click", addCaseToSuite);
+  document.querySelector("#save-suite")?.addEventListener("click", () => saveSuite());
+  document.querySelector("#run-current-suite")?.addEventListener("click", () => runSuite(state.selectedSuite?.id));
+  document.querySelector("#add-case")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#start-manually")?.addEventListener("click", addCaseToSuite);
-  document.querySelector("#paste-cases").addEventListener("click", openSuitePaste);
+  document.querySelector("#paste-cases")?.addEventListener("click", openSuitePaste);
   document.querySelector("#start-with-paste")?.addEventListener("click", openSuitePaste);
   document.querySelector("#start-with-ai")?.addEventListener("click", () => {
     state.editorTab = "cases";
@@ -994,32 +1024,41 @@ async function applyPatch() {
 }
 
 async function runSuite(id) {
-  const suite = state.suites.find((item) => item.id === id) || (state.selectedSuite?.id === id ? state.selectedSuite : null);
+  if (!id) return notify(tr("スイートが見つかりません。", "Suite not found."));
+  if (document.querySelector("#suite-name") && state.selectedSuite?.id === id) {
+    try {
+      state.selectedSuite = collectSuite();
+    } catch {
+      // Keep the last in-memory suite if the editor form is mid-render.
+    }
+  }
+  const suite =
+    (state.selectedSuite?.id === id ? state.selectedSuite : null) ||
+    state.suites.find((item) => item.id === id) ||
+    null;
   if (!suite?.cases?.length) return notify(tr("ケースを1件以上登録してください。", "Add at least one test case."));
   const runnable = suite.cases.filter((item) => item.status !== "draft");
   if (!runnable.length) {
     return notify(tr("実行可のテストケースがありません。", "There are no runnable test cases."));
   }
   const skipped = suite.cases.length - runnable.length;
-  if (
-    !confirm(
-      skipped
-        ? tr(
-            "{name} の実行可 {runnable} ケースを実行します（下書き {skipped} 件はスキップ）。BigQuery利用料金が発生する可能性があります。続けますか？",
-            "Run {runnable} runnable cases in {name} ({skipped} draft cases will be skipped)? BigQuery usage charges may apply. Continue?",
-            { name: suite.name, runnable: formatLocaleNumber(runnable.length), skipped: formatLocaleNumber(skipped) }
-          )
-        : tr(
-            "{name} の {count} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？",
-            "Run {count} cases in {name}? BigQuery usage charges may apply. Continue?",
-            { name: suite.name, count: formatLocaleNumber(suite.cases.length) }
-          )
-    )
-  ) {
-    return;
-  }
+  const message = skipped
+    ? tr(
+        "{name} の実行可 {runnable} ケースを実行します（下書き {skipped} 件はスキップ）。BigQuery利用料金が発生する可能性があります。続けますか？",
+        "Run {runnable} runnable cases in {name} ({skipped} draft cases will be skipped)? BigQuery usage charges may apply. Continue?",
+        { name: suite.name, runnable: formatLocaleNumber(runnable.length), skipped: formatLocaleNumber(skipped) }
+      )
+    : tr(
+        "{name} の {count} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？",
+        "Run {count} cases in {name}? BigQuery usage charges may apply. Continue?",
+        { name: suite.name, count: formatLocaleNumber(suite.cases.length) }
+      );
+  if (!(await askConfirm(message, { confirmLabel: tr("スイートを実行", "Run suite") }))) return;
   try {
     state.busy = true;
+    if (state.selectedSuite?.id === id) {
+      await saveSuite({ silent: true });
+    }
     const run = await json(`/api/suites/${id}/run`, { method: "POST" });
     state.suiteRuns = [run, ...state.suiteRuns.filter((item) => item.id !== run.id)];
     location.hash = `#/reports/${run.id}`;
@@ -2189,6 +2228,18 @@ app.addEventListener("click", (event) => {
       }
     }
     setLocale(localeButton.dataset.setLocale);
+    return;
+  }
+  const runButton = event.target.closest("#run-current-suite,[data-run-suite]");
+  if (runButton) {
+    event.preventDefault();
+    runSuite(runButton.dataset.runSuite || state.selectedSuite?.id);
+    return;
+  }
+  const saveButton = event.target.closest("#save-suite");
+  if (saveButton) {
+    event.preventDefault();
+    saveSuite();
     return;
   }
   const toggle = event.target.closest("#sidebar-toggle");

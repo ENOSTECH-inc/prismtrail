@@ -326,6 +326,10 @@ dialog header,dialog footer { display: flex; align-items: center; justify-conten
 dialog header { margin-bottom: 18px; }
 dialog header h2 { margin: 0; font-size: 16px; }
 dialog footer { justify-content: end; gap: 8px; margin-top: 18px; }
+.app-confirm-dialog { width: min(420px,92vw); }
+.app-confirm-shell { display: grid; gap: 14px; padding: 20px; }
+.app-confirm-shell > p { margin: 0; color: #40536c; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.app-confirm-shell > footer { margin-top: 4px; }
 .knowledge-dialog { width: min(640px,92vw); overflow: visible; }
 .knowledge-dialog header > div p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
 .project-picker { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 9px; margin-top: 13px; }
