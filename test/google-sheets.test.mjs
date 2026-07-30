@@ -1,14 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  agentsToRows,
+  emptyReportTemplate,
+  emptySuiteTemplate,
+  isManagedSuiteTemplate,
+  metadataRowGroupRequests,
   parseDelimitedText,
   parseSpreadsheetId,
   pastedTextToSuiteInput,
+  prepareSuiteForSheetExport,
   REPORT_DISPLAY_HEADERS,
   reportToRows,
   rowsToSuiteInput,
+  sampleReportTemplate,
   SUITE_DISPLAY_HEADERS,
-  suiteToRows
+  suitesCatalogToRows,
+  suiteToRows,
+  suiteWithSampleCases,
+  updateBordersRequest
 } from "../lib/google-sheets.mjs";
 
 test("parseSpreadsheetId accepts a Sheets URL and raw id", () => {
@@ -16,6 +26,17 @@ test("parseSpreadsheetId accepts a Sheets URL and raw id", () => {
   assert.equal(parseSpreadsheetId(`https://docs.google.com/spreadsheets/d/${id}/edit#gid=0`), id);
   assert.equal(parseSpreadsheetId(id), id);
   assert.throws(() => parseSpreadsheetId("https://example.com/not-a-sheet"), /URLまたはSpreadsheet ID/);
+});
+
+test("updateBordersRequest draws outer and inner grid lines", () => {
+  const request = updateBordersRequest(
+    { sheetId: 1, startRowIndex: 2, endRowIndex: 10, startColumnIndex: 0, endColumnIndex: 5 },
+    { style: "SOLID", outerStyle: "SOLID_MEDIUM" }
+  );
+  assert.equal(request.updateBorders.top.style, "SOLID_MEDIUM");
+  assert.equal(request.updateBorders.innerHorizontal.style, "SOLID");
+  assert.equal(request.updateBorders.innerVertical.style, "SOLID");
+  assert.equal(request.updateBorders.left.style, "SOLID_MEDIUM");
 });
 
 test("suite format round-trips through fixed rows", () => {
@@ -49,13 +70,17 @@ test("suite format round-trips through fixed rows", () => {
     ]
   };
   const rows = suiteToRows(source);
-  assert.equal(SUITE_DISPLAY_HEADERS[10], "ビジネス要件の検証内容（自然言語）");
-  assert.match(rows[8][1], /コピー範囲/);
-  assert.deepEqual(rows[9], SUITE_DISPLAY_HEADERS);
+  assert.equal(SUITE_DISPLAY_HEADERS[11], "ビジネス要件の検証内容（自然言語）");
+  assert.match(rows[10][1], /コピー範囲/);
+  assert.deepEqual(rows[11], SUITE_DISPLAY_HEADERS);
+  assert.equal(rows[6][0], "接続先Data Agent ID");
+  assert.equal(rows[7][0], "接続先Data Agent名");
+  assert.equal(rows[12][5], "実行可");
   const parsed = rowsToSuiteInput(rows);
   assert.equal(parsed.sourceSuiteId, source.id);
   assert.equal(parsed.name, source.name);
   assert.equal(parsed.cases[0].thinkingMode, "THINKING");
+  assert.equal(parsed.cases[0].status, "active");
   assert.deepEqual(parsed.cases[0].expectations.requiredPhrases, ["sales", "month"]);
   assert.equal(parsed.cases[0].expectations.businessRequirements.accuracyCriteria, "2026年6月の売上は65,200円");
   assert.deepEqual(parsed.cases[0].knowledgeSourceIds, ["knowledge_2"]);
@@ -78,7 +103,7 @@ test("legacy accuracy header remains import-compatible", () => {
       }
     }]
   });
-  rows[9][10] = "精度条件（自然言語）";
+  rows[11][11] = "精度条件（自然言語）";
   assert.equal(
     rowsToSuiteInput(rows).cases[0].expectations.businessRequirements.accuracyCriteria,
     "売上は65,200円"
@@ -87,7 +112,7 @@ test("legacy accuracy header remains import-compatible", () => {
 
 test("suite import rejects a changed header contract", () => {
   const rows = suiteToRows({ id: "suite_1", name: "Suite", cases: [] });
-  rows[9][2] = "不正な列";
+  rows[11][2] = "不正な列";
   assert.throws(() => rowsToSuiteInput(rows), /列定義を変更しないでください/);
 });
 
@@ -149,16 +174,19 @@ test("case-table TSV paste preserves target suite metadata", () => {
     cases: []
   };
   const caseRow = [
-    "case_1", "月次売上", "Show monthly sales.", "agent_1", "FAST",
-    "TRUE", "TRUE", "120000", "0", "sales", ""
+    "case_1", "月次売上", "Show monthly sales.", "agent_1", "FAST", "実行可",
+    "TRUE", "TRUE", "120000", "0", "sales", "", ""
   ];
   const text = [SUITE_DISPLAY_HEADERS, caseRow].map((row) => row.join("\t")).join("\n");
   const imported = pastedTextToSuiteInput(text, { targetSuite });
   assert.equal(imported.format, "table-with-header");
+  assert.equal(imported.suite.sourceSuiteId, targetSuite.id);
   assert.equal(imported.suite.name, targetSuite.name);
   assert.equal(imported.suite.description, targetSuite.description);
-  assert.deepEqual(imported.suite.knowledgeSourceIds, ["knowledge_1"]);
-  assert.equal(imported.suite.cases[0].agentId, "agent_1");
+  assert.equal(imported.suite.status, targetSuite.status);
+  assert.deepEqual(imported.suite.knowledgeSourceIds, targetSuite.knowledgeSourceIds);
+  assert.equal(imported.suite.cases[0].title, "月次売上");
+  assert.equal(imported.suite.cases[0].status, "active");
 });
 
 test("full sheet paste can target the currently edited suite and preserve its metadata", () => {
@@ -307,4 +335,210 @@ test("schema v1 suite rows migrate with business accuracy disabled", () => {
   const parsed = rowsToSuiteInput(rows);
   assert.equal(parsed.cases[0].expectations.businessRequirements.enabled, false);
   assert.equal(parsed.cases[0].expectations.businessRequirements.accuracyCriteria, "");
+});
+
+test("managed suite template detection accepts blank-sheet bootstrap rows", () => {
+  const rows = suiteToRows(emptySuiteTemplate({ id: "suite_blank", name: "Blank bootstrap" }));
+  assert.equal(isManagedSuiteTemplate(rows), true);
+  assert.equal(isManagedSuiteTemplate([]), false);
+  assert.equal(isManagedSuiteTemplate([["シート1"]]), false);
+  assert.equal(rowsToSuiteInput(rows).sourceSuiteId, "suite_blank");
+  assert.equal(rowsToSuiteInput(rows).cases.length, 0);
+});
+
+test("sample suite cases seed three editable rows", () => {
+  const seeded = suiteWithSampleCases(
+    { id: "suite_blank", name: "Blank bootstrap", cases: [] },
+    { agentId: "agent_tpcds_retail" }
+  );
+  assert.equal(seeded.cases.length, 3);
+  const rows = suiteToRows(seeded);
+  const parsed = rowsToSuiteInput(rows);
+  assert.equal(parsed.cases.length, 3);
+  assert.equal(parsed.cases[0].title, "月次MAUの確認");
+  assert.equal(parsed.cases[0].agentId, "agent_tpcds_retail");
+  assert.equal(parsed.cases[2].thinkingMode, "THINKING");
+});
+
+test("empty report template keeps importable display headers", () => {
+  const rows = reportToRows(emptyReportTemplate({ id: "suite_1", name: "Suite" }));
+  assert.equal(rows[0][0], "PrismTrail | 評価レポート");
+  assert.deepEqual(rows[15], REPORT_DISPLAY_HEADERS);
+  assert.equal(rows.length, 16);
+});
+
+test("sample report template includes three example case rows", () => {
+  const report = sampleReportTemplate({ id: "suite_1", name: "Suite", cases: [] });
+  assert.equal(report.caseRuns.length, 3);
+  assert.equal(report.summary.accuracyGrades.A, 1);
+  assert.equal(report.caseRuns[2].evaluation.business.grade, "C");
+});
+
+test("agent catalog rows list every registered agent", () => {
+  const rows = agentsToRows([
+    {
+      id: "agent_b",
+      displayName: "Beta",
+      remoteId: "agent_b",
+      resourceName: "projects/p/locations/global/dataAgents/agent_b",
+      projectId: "p",
+      location: "global",
+      status: "ready"
+    },
+    {
+      id: "agent_a",
+      displayName: "Alpha",
+      remoteId: "agent_a",
+      resourceName: "projects/p/locations/global/dataAgents/agent_a",
+      projectId: "p",
+      location: "global",
+      status: "unchecked",
+      description: "desc"
+    }
+  ]);
+  assert.equal(rows[0][0], "PrismTrail | Data Agent一覧");
+  assert.equal(rows[5][0], "Agent ID");
+  assert.equal(rows[6][0], "agent_a");
+  assert.equal(rows[7][1], "Beta");
+});
+
+test("suite catalog rows include linked data agents", () => {
+  const rows = suitesCatalogToRows(
+    [
+      {
+        id: "suite_1",
+        name: "求人検証",
+        status: "draft",
+        description: "説明",
+        knowledgeSourceIds: ["knowledge_1"],
+        cases: [
+          { id: "c1", agentId: "agent_a" },
+          { id: "c2", agentId: "agent_b" },
+          { id: "c3", agentId: "agent_a" }
+        ],
+        updatedAt: "2026-07-30T00:00:00Z"
+      }
+    ],
+    [
+      { id: "agent_a", displayName: "Alpha" },
+      { id: "agent_b", displayName: "Beta" }
+    ]
+  );
+  assert.equal(rows[0][0], "PrismTrail | テストスイート一覧");
+  assert.equal(rows[6][0], "suite_1");
+  assert.equal(rows[6][4], 3);
+  assert.equal(rows[6][5], "agent_a, agent_b");
+  assert.equal(rows[6][6], "Alpha, Beta");
+});
+
+test("suite export fills blank agent ids from the suite default agent", () => {
+  const agents = [{ id: "agent_marketing" }, { id: "agent_other" }];
+  const prepared = prepareSuiteForSheetExport(
+    {
+      id: "suite_1",
+      name: "求人検証",
+      defaultAgentId: "agent_marketing",
+      cases: [
+        { id: "c1", title: "A", prompt: "q1", agentId: "" },
+        { id: "c2", title: "B", prompt: "q2", agentId: "agent_other" }
+      ]
+    },
+    agents
+  );
+  assert.equal(prepared.cases[0].agentId, "agent_marketing");
+  assert.equal(prepared.cases[1].agentId, "agent_other");
+  assert.equal(prepareSuiteForSheetExport({ id: "suite_2", cases: [] }, agents).cases[0].agentId, "agent_marketing");
+});
+
+test("suite sheet metadata and case rows expose GCP Data Agent IDs", () => {
+  const agents = [
+    {
+      id: "agent_tpcds_retail",
+      displayName: "求人汎用エージェント",
+      remoteId: "agent_marketing_marts_core_multi_v1",
+      resourceName: "projects/demo/locations/global/dataAgents/agent_marketing_marts_core_multi_v1"
+    }
+  ];
+  const rows = suiteToRows(
+    {
+      id: "suite_1",
+      name: "求人検証",
+      defaultAgentId: "agent_tpcds_retail",
+      cases: [{ id: "c1", title: "A", prompt: "q1", agentId: "agent_tpcds_retail" }]
+    },
+    { agents }
+  );
+  assert.equal(rows[6][1], "agent_marketing_marts_core_multi_v1");
+  assert.equal(rows[7][1], "求人汎用エージェント");
+  assert.equal(rows[12][3], "agent_marketing_marts_core_multi_v1");
+  const parsed = rowsToSuiteInput(rows);
+  assert.equal(parsed.defaultAgentId, "agent_marketing_marts_core_multi_v1");
+  assert.equal(parsed.cases[0].agentId, "agent_marketing_marts_core_multi_v1");
+});
+
+test("paste accepts Sheets-formatted duration and bytes cells", () => {
+  const imported = pastedTextToSuiteInput(
+    [
+      "ケースID\tテストケース\t検証プロンプト\tData Agent ID\t思考モード\tステータス\tSQL必須\tチャート必須\t最大時間 (ms)\t最大課金バイト\t必須語句\tビジネス要件の検証内容（自然言語）",
+      "case_sample_mau\t月次MAUの確認\t6月のMAUを教えて\tagent_marketing_marts_core_multi_v1\tFAST\t実行可\tTRUE\tFALSE\t120,000 ms\t0 bytes\tMAU\t6月のMAUが数値で回答されること",
+      "CASE_1\t有料広告応募数\t6月の応募数を教えて\tagent_marketing_marts_core_multi_v1\tFAST\t下書き\tTRUE\tFALSE\t180,000 ms\t0 bytes\t\t10万 から 20万の範囲内に収まっていること"
+    ].join("\n"),
+    {
+      targetSuite: {
+        id: "suite_1",
+        name: "求人検証",
+        description: "",
+        status: "draft",
+        knowledgeSourceIds: [],
+        cases: []
+      },
+      preferTargetSuite: true
+    }
+  );
+  assert.equal(imported.format, "table-with-header");
+  assert.equal(imported.suite.cases.length, 2);
+  assert.equal(imported.suite.cases[0].expectations.maxDurationMs, 120000);
+  assert.equal(imported.suite.cases[0].expectations.maxBytesBilled, 0);
+  assert.equal(imported.suite.cases[1].id, "CASE_1");
+  assert.equal(imported.suite.cases[1].status, "draft");
+  assert.equal(imported.suite.cases[1].expectations.maxDurationMs, 180000);
+  assert.equal(
+    imported.suite.cases[1].expectations.businessRequirements.accuracyCriteria,
+    "10万 から 20万の範囲内に収まっていること"
+  );
+});
+
+test("metadata rows become a collapsible row group above the table header", () => {
+  const requests = metadataRowGroupRequests(
+    {
+      rowGroups: [
+        {
+          depth: 1,
+          range: { sheetId: 12, dimension: "ROWS", startIndex: 1, endIndex: 8 }
+        }
+      ]
+    },
+    12,
+    9
+  );
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].deleteDimensionGroup.range, {
+    sheetId: 12,
+    dimension: "ROWS",
+    startIndex: 1,
+    endIndex: 8
+  });
+  assert.deepEqual(requests[1].addDimensionGroup.range, {
+    sheetId: 12,
+    dimension: "ROWS",
+    startIndex: 1,
+    endIndex: 9
+  });
+  assert.deepEqual(metadataRowGroupRequests({}, 3, 15)[0].addDimensionGroup.range, {
+    sheetId: 3,
+    dimension: "ROWS",
+    startIndex: 1,
+    endIndex: 15
+  });
+  assert.deepEqual(metadataRowGroupRequests({}, 3, 1), []);
 });
