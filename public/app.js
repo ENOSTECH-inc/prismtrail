@@ -303,7 +303,6 @@ function renderSuites() {
   `, "suites");
 
   document.querySelector("#new-suite")?.addEventListener("click", createSuite);
-  document.querySelectorAll("[data-run-suite]").forEach((button) => button.addEventListener("click", () => runSuite(button.dataset.runSuite)));
   document.querySelectorAll("[data-delete-suite]").forEach((button) => button.addEventListener("click", () => deleteSuite(button.dataset.deleteSuite)));
 }
 
@@ -717,8 +716,6 @@ async function submitSuitePaste(validateOnly) {
 }
 
 function bindEditor() {
-  document.querySelector("#save-suite")?.addEventListener("click", () => saveSuite());
-  document.querySelector("#run-current-suite")?.addEventListener("click", () => runSuite(state.selectedSuite?.id));
   document.querySelector("#add-case")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#start-manually")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#paste-cases")?.addEventListener("click", openSuitePaste);
