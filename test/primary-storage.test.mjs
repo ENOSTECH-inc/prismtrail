@@ -32,6 +32,9 @@ test("local backend remains compatible with collection/id.json data", async (con
   await store.save({ id: "suite_1", name: "portable", updatedAt: "2026-01-01T00:00:00Z" });
   assert.equal((await store.get("suite_1")).name, "portable");
   assert.deepEqual((await store.list()).map((item) => item.id), ["suite_1"]);
+  await store.delete("suite_1");
+  await assert.rejects(() => store.get("suite_1"), (error) => error?.code === "ENOENT");
+  assert.deepEqual(await store.list(), []);
 });
 
 test("migration previews, copies, and refuses different values with the same id", async (context) => {

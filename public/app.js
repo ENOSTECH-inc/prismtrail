@@ -27,9 +27,12 @@ const state = {
   storageDraft: null,
   storageTestResult: null,
   selectedSuite: null,
+  selectedCaseIndex: 0,
+  editorTab: "cases",
   selectedRun: null,
   assistantMessages: [],
   assistantPatch: null,
+  assistantOpen: false,
   knowledgePlan: null,
   selectedKnowledgeDetail: null,
   reportPollTimer: null,
@@ -50,6 +53,13 @@ const esc = (value) =>
 
 function fmtDate(value) {
   return value ? formatLocaleDate(value, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : tr("未実行", "Never");
+}
+
+/** Display name for a suite evaluation run: 実行時刻_テストスイート名 */
+function suiteRunLabel(run) {
+  const when = fmtDate(run?.createdAt || run?.completedAt);
+  const name = String(run?.suiteName || "").trim() || tr("無題のテストスイート", "Untitled suite");
+  return `${when}_${name}`;
 }
 
 function fmtDuration(ms = 0) {
@@ -78,6 +88,36 @@ function notify(message, kind = "error") {
   notify.timer = setTimeout(() => (toast.hidden = true), 7000);
 }
 
+/** In-app confirm — native window.confirm can be silently blocked by the browser. */
+function askConfirm(message, { confirmLabel = tr("続ける", "Continue"), cancelLabel = tr("キャンセル", "Cancel") } = {}) {
+  return new Promise((resolve) => {
+    const existing = document.querySelector("#app-confirm-dialog");
+    existing?.remove();
+    const dialog = document.createElement("dialog");
+    dialog.id = "app-confirm-dialog";
+    dialog.className = "app-confirm-dialog";
+    dialog.innerHTML = `
+      <form method="dialog" class="app-confirm-shell">
+        <header><h2>${tr("確認", "Confirm")}</h2></header>
+        <p>${esc(message)}</p>
+        <footer>
+          <button value="cancel" class="button secondary" type="submit">${esc(cancelLabel)}</button>
+          <button value="confirm" class="button primary" type="submit">${esc(confirmLabel)}</button>
+        </footer>
+      </form>`;
+    document.body.appendChild(dialog);
+    const finish = (result) => {
+      dialog.removeEventListener("close", onClose);
+      dialog.remove();
+      resolve(result);
+    };
+    const onClose = () => finish(dialog.returnValue === "confirm");
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    dialog.querySelector('button[value="confirm"]')?.focus();
+  });
+}
+
 async function json(url, options) {
   const response = await fetch(url, options);
   const body = await response.json();
@@ -94,12 +134,13 @@ function statusPill(status) {
     passed: tr("合格", "Passed"),
     failed: tr("不合格", "Failed"),
     review_required: tr("要確認", "Review required"),
+    skipped: tr("スキップ", "Skipped"),
     warning: tr("注意", "Warning"),
     ready: tr("接続済み", "Connected"),
     unchecked: tr("未確認", "Unchecked"),
     error: tr("エラー", "Error"),
     draft: tr("下書き", "Draft"),
-    active: tr("有効", "Active"),
+    active: tr("実行可", "Runnable"),
     running: tr("実行中", "Running")
   }[status] || status;
   return `<span class="status-pill ${esc(status)}">${esc(label)}</span>`;
@@ -130,9 +171,10 @@ function localeSelector(compact = false) {
   </div>`;
 }
 
-function shell(content, active = "suites", editor = false) {
-  if (editor) return content;
+function shell(content, active = "suites", mode = false) {
+  if (mode === true || mode === "editor") return content;
   const collapsed = state.sidebarCollapsed;
+  const mainClass = mode === "detail" ? "main detail-mode" : "main";
   return `
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
@@ -170,12 +212,50 @@ function shell(content, active = "suites", editor = false) {
           <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(state.config?.billingProject || tr("接続確認中", "Checking connection"))}</small></span>
         </div>
       </aside>
-      <main class="main">${content}</main>
+      <main class="${mainClass}">${content}</main>
     </div>`;
 }
 
 function pageHead(title, text, action = "") {
   return `<header class="page-head"><div><h1>${esc(title)}</h1><p>${esc(text)}</p></div>${action}</header>`;
+}
+
+/**
+ * Shared navigation chrome: back arrow + title/subtitle (suite-editor mental model).
+ * Prefer this over breadcrumbs for nested screens.
+ */
+function navHeader({
+  title,
+  subtitle = "",
+  subtitleHtml = "",
+  backHref = "",
+  backLabel = "",
+  actions = ""
+} = {}) {
+  const label = backLabel || tr("戻る", "Back");
+  const back = backHref
+    ? `<a href="${esc(backHref)}" class="toolbar-back" aria-label="${esc(label)}" title="${esc(label)}">${icon("arrow-left", 18)}</a>`
+    : "";
+  const sub = subtitleHtml
+    ? `<span>${subtitleHtml}</span>`
+    : subtitle
+      ? `<span>${esc(subtitle)}</span>`
+      : "";
+  return `
+    <header class="nav-toolbar">
+      <div class="toolbar-leading">
+        ${back}
+        <div class="toolbar-name">
+          <strong>${esc(title)}</strong>
+          ${sub}
+        </div>
+      </div>
+      ${actions ? `<div class="toolbar-actions">${actions}</div>` : ""}
+    </header>`;
+}
+
+function detailBody(content) {
+  return `<div class="detail-body">${content}</div>`;
 }
 
 function empty(title, text) {
@@ -193,7 +273,13 @@ function renderSuites() {
       const last = state.suiteRuns.find((run) => run.suiteId === suite.id);
       const activeRun = state.suiteRuns.find((run) => run.suiteId === suite.id && run.status === "running");
       return `<article class="suite-card">
-        <div class="card-top"><span class="suite-icon">${icon("layers-3")}</span>${statusPill(suite.status)}</div>
+        <div class="card-top">
+          <span class="suite-icon">${icon("layers-3")}</span>
+          <div class="card-top-actions">
+            ${statusPill(suite.status)}
+            <button class="icon-button danger" data-delete-suite="${suite.id}" aria-label="${tr("スイートを削除", "Delete suite")}" ${activeRun ? "disabled" : ""}>${icon("trash-2", 15)}</button>
+          </div>
+        </div>
         <h2>${esc(suite.name)}</h2>
         <p>${esc(suite.description || tr("説明はまだありません", "No description yet"))}</p>
         <div class="suite-meta">
@@ -217,7 +303,37 @@ function renderSuites() {
   `, "suites");
 
   document.querySelector("#new-suite")?.addEventListener("click", createSuite);
-  document.querySelectorAll("[data-run-suite]").forEach((button) => button.addEventListener("click", () => runSuite(button.dataset.runSuite)));
+  document.querySelectorAll("[data-delete-suite]").forEach((button) => button.addEventListener("click", () => deleteSuite(button.dataset.deleteSuite)));
+}
+
+async function deleteSuite(id) {
+  const suite = state.suites.find((item) => item.id === id);
+  if (!suite) return;
+  if (state.suiteRuns.some((run) => run.suiteId === id && run.status === "running")) {
+    notify(tr("実行中のスイートは削除できません。", "A running suite cannot be deleted."));
+    return;
+  }
+  if (
+    !confirm(
+      tr(
+        "「{name}」を削除しますか？この操作は取り消せません。",
+        "Delete “{name}”? This cannot be undone.",
+        { name: suite.name }
+      )
+    )
+  ) {
+    return;
+  }
+  try {
+    await json(`/api/suites/${id}`, { method: "DELETE" });
+    state.suites = state.suites.filter((item) => item.id !== id);
+    if (state.selectedSuite?.id === id) state.selectedSuite = null;
+    notify(tr("テストスイートを削除しました。", "Deleted the test suite."), "success");
+    renderSuites();
+    refreshIcons();
+  } catch (error) {
+    notify(error.message);
+  }
 }
 
 async function createSuite() {
@@ -234,6 +350,61 @@ async function createSuite() {
   }
 }
 
+function clampSelectedCaseIndex() {
+  const total = state.selectedSuite?.cases?.length || 0;
+  if (total === 0) {
+    state.selectedCaseIndex = 0;
+    return;
+  }
+  if (state.selectedCaseIndex < 0) state.selectedCaseIndex = 0;
+  if (state.selectedCaseIndex >= total) state.selectedCaseIndex = total - 1;
+}
+
+function caseNav(suite) {
+  return `<nav class="case-nav" aria-label="${tr("テストケース一覧", "Test case list")}">
+    <div class="case-nav-head"><span>${tr("ケース", "Cases")}</span><strong>${formatLocaleNumber(suite.cases.length)}</strong></div>
+    <div class="case-nav-list">
+      ${suite.cases
+        .map((item, index) => {
+          const active = index === state.selectedCaseIndex;
+          const title = String(item.title || "").trim() || tr("無題のケース", "Untitled case");
+          const system = item.expectations?.systemRequirements || item.expectations || {};
+          const business = item.expectations?.businessRequirements || {};
+          const agent =
+            state.agents.find((entry) => entry.id === item.agentId)?.displayName ||
+            item.agentId ||
+            tr("Data Agent未選択", "No Data Agent selected");
+          const thinking = item.thinkingMode === "THINKING" ? "THINKING" : "FAST";
+          const caseStatus = item.status === "draft" ? "draft" : "active";
+          const promptPreview = String(item.prompt || "").trim();
+          const flags = [
+            system.requireSql !== false
+              ? `<span class="case-nav-flag">${icon("database", 11)}SQL</span>`
+              : "",
+            system.requireChart ? `<span class="case-nav-flag">${icon("chart-column", 11)}${tr("チャート", "Chart")}</span>` : "",
+            business.enabled && business.accuracyCriteria
+              ? `<span class="case-nav-flag accent">${icon("sparkles", 11)}${tr("精度", "Accuracy")}</span>`
+              : ""
+          ]
+            .filter(Boolean)
+            .join("");
+          return `<button type="button" class="case-nav-item${active ? " active" : ""}${caseStatus === "draft" ? " is-draft" : ""}" data-select-case="${index}" aria-current="${active ? "page" : "false"}" title="${esc(title)}">
+            <div class="case-nav-card-top">
+              <span class="case-nav-number">${String(index + 1).padStart(2, "0")}</span>
+              <span class="case-nav-status ${caseStatus}">${caseStatus === "active" ? tr("実行可", "Runnable") : tr("下書き", "Draft")}</span>
+            </div>
+            <span class="case-nav-title">${esc(title)}</span>
+            <span class="case-nav-agent">${esc(agent)}</span>
+            <span class="case-nav-mode${thinking === "THINKING" ? " thinking" : ""}">${thinking}</span>
+            ${promptPreview ? `<span class="case-nav-prompt">${esc(promptPreview)}</span>` : `<span class="case-nav-prompt muted">${tr("プロンプト未設定", "No prompt yet")}</span>`}
+            ${flags ? `<div class="case-nav-flags">${flags}</div>` : ""}
+          </button>`;
+        })
+        .join("")}
+    </div>
+  </nav>`;
+}
+
 function caseForm(item, index) {
   const system = item.expectations?.systemRequirements || item.expectations || {};
   const business = item.expectations?.businessRequirements || {};
@@ -247,6 +418,7 @@ function caseForm(item, index) {
       <label class="span-2">${tr("検証プロンプト", "Test prompt")}<textarea data-field="prompt" rows="4">${esc(item.prompt)}</textarea></label>
       <label>${tr("対象Data Agent", "Target Data Agent")}<select data-field="agentId">${state.agents.map((agent) => `<option value="${agent.id}" ${agent.id === item.agentId ? "selected" : ""}>${esc(agent.displayName)}</option>`).join("")}</select></label>
       <label>${tr("思考モード", "Thinking mode")}<select data-field="thinkingMode"><option value="FAST" ${item.thinkingMode !== "THINKING" ? "selected" : ""}>FAST</option><option value="THINKING" ${item.thinkingMode === "THINKING" ? "selected" : ""}>THINKING</option></select></label>
+      <label>${tr("ステータス", "Status")}<select data-field="status"><option value="active" ${item.status !== "draft" ? "selected" : ""}>${tr("実行可", "Runnable")}</option><option value="draft" ${item.status === "draft" ? "selected" : ""}>${tr("下書き", "Draft")}</option></select><small class="field-help">${tr("下書きのケースは評価レポート実行時にスキップされます。", "Draft cases are skipped when a suite evaluation runs.")}</small></label>
       <label class="span-2">${tr("ケース固有バケット（複数選択）", "Case-specific buckets (multiple selection)")}
         <select data-knowledge multiple size="${Math.min(3, Math.max(2, state.knowledgeSources.length))}">
           ${state.knowledgeSources.map((source) => `<option value="${source.id}" ${(item.knowledgeSourceIds || []).includes(source.id) ? "selected" : ""}>${esc(source.name)} · gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${tr("{count} チャンク", "{count} chunks", { count: formatLocaleNumber(source.chunkCount || 0) })}</option>`).join("")}
@@ -322,51 +494,36 @@ function suitePasteDialog(suite) {
 
 function renderEditor() {
   const suite = state.selectedSuite;
+  clampSelectedCaseIndex();
+  if (state.editorTab !== "basics" && state.editorTab !== "cases") state.editorTab = "cases";
+  const selectedCase = suite.cases[state.selectedCaseIndex];
+  const onCasesTab = state.editorTab === "cases";
   const connectedSheet =
     state.sheetConnections.find((connection) => connection.status === "ready" && connection.spreadsheetUrl) ||
     state.sheetConnections.find((connection) => connection.spreadsheetUrl);
   const sheetShortcut = connectedSheet
-    ? `<a class="button sheet-link" href="${esc(connectedSheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}${tr("連携シートを開く", "Open linked sheet")}${icon("external-link", 13)}</a>`
+    ? `<button id="open-linked-sheet" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}</button>`
     : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`;
+  const assistantToggle = `<button id="toggle-assistant" class="button secondary${state.assistantOpen ? " active" : ""}" type="button" aria-pressed="${state.assistantOpen ? "true" : "false"}">${icon("sparkles", 15)}${state.assistantOpen ? tr("AIを閉じる", "Close AI") : tr("AIアシスタント", "AI assistant")}</button>`;
   const messages = state.assistantMessages
     .map((message) => `<div class="chat ${message.role}"><span>${message.role === "assistant" ? "AI" : "YOU"}</span><p>${esc(message.text)}</p></div>`)
     .join("");
-  app.innerHTML = shell(`
-    <div class="editor-shell">
-      <header class="editor-toolbar">
-        <a href="#/suites" class="toolbar-back">${icon("arrow-left")}${tr("テストスイート", "Test suites")}</a>
-        <div class="toolbar-name"><strong>${esc(suite.name)}</strong><span id="save-state">${tr("保存済み", "Saved")}</span></div>
-        <div class="toolbar-actions">${localeSelector(true)}${sheetShortcut}<button id="save-suite" class="button secondary">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button></div>
-      </header>
-      <div class="editor-columns">
-        <main class="suite-workspace">
-          <div class="workspace-title"><div><h1>${tr("テスト設計を編集", "Edit test design")}</h1><p>${tr("プロンプト、接続先、合格条件をケースごとに定義します。", "Define the prompt, target, and passing criteria for each case.")}</p></div><span class="count-badge">${tr("{count} ケース", "{count} cases", { count: formatLocaleNumber(suite.cases.length) })}</span></div>
-          <section class="basic-panel">
-            <label>${tr("スイート名", "Suite name")}<input id="suite-name" value="${esc(suite.name)}"></label>
-            <label>${tr("目的・説明", "Purpose and description")}<textarea id="suite-description" rows="2">${esc(suite.description)}</textarea></label>
-            <div class="suite-knowledge">
-              <span>実行時に接続するナレッジバケット（複数選択）</span>
-              <div>${state.knowledgeSources.map((source) => `<label class="source-check"><input type="checkbox" data-suite-source value="${source.id}" ${(suite.knowledgeSourceIds || []).includes(source.id) ? "checked" : ""}><span>${icon("file-stack", 14)}${esc(source.name)}<small>gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${source.chunkCount || 0} チャンク</small></span></label>`).join("") || `<a href="#/knowledge" class="text-link">GCSナレッジを登録する ${icon("arrow-right", 14)}</a>`}</div>
-            </div>
-          </section>
-          ${suite.cases.length ? "" : `<section class="suite-start-panel">
-            <div><span class="eyebrow">作成方法を選択</span><h2>最初のテストケースを追加しましょう</h2><p>複数ケースをまとめて扱える「表で入力する」方法がおすすめです。</p></div>
-            <div class="suite-start-options">
-              <button id="start-with-paste" class="start-option primary" type="button"><span>${icon("clipboard-paste", 19)}</span><strong>表で入力する <em>おすすめ</em></strong><small>Sheets・Excelの複数ケースを一括追加</small>${icon("arrow-right", 15)}</button>
-              <button id="start-manually" class="start-option" type="button"><span>${icon("square-pen", 19)}</span><strong>1件ずつ追加</strong><small>フォームでプロンプトと条件を設定</small>${icon("arrow-right", 15)}</button>
-              <button id="start-with-ai" class="start-option" type="button"><span>${icon("sparkles", 19)}</span><strong>AIで作成</strong><small>業務シナリオを伝えて設計案を作る</small>${icon("arrow-right", 15)}</button>
-            </div>
-            <div class="sheet-direct-row">
-              <span class="sheet-direct-icon">${icon("sheet", 18)}</span>
-              <div><strong>${connectedSheet ? esc(connectedSheet.title || "連携済みGoogle Sheets") : "Google Sheetsと連携"}</strong><small>${connectedSheet ? "シート上でケースを編集し、アプリへ取り込めます。" : "連携すると、ここから編集用シートを直接開けます。"}</small></div>
-              ${sheetShortcut}
-            </div>
-          </section>`}
-          <div class="section-row"><div><h2>${tr("テストケース", "Test cases")}</h2><p>${tr("上から順に実行されます。", "Cases run from top to bottom.")}</p></div><div class="section-actions"><button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}${tr("表を貼り付けて一括編集", "Bulk edit by pasting a table")}</button><button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button></div></div>
-          <div id="case-list">${suite.cases.map(caseForm).join("") || empty(tr("ケースがありません", "No test cases"), tr("上の作成方法から、最初のケースを追加してください。", "Choose a method above to add your first case."))}</div>
-        </main>
-        <aside class="assistant-panel" aria-label="AIテストスイートアシスタント">
-          <header><span class="assistant-icon">${icon("sparkles", 20)}</span><div><strong>AIテストスイートアシスタント</strong><small>Vertex AI · ${esc(state.config.vertexModel)} · RAG ${suite.knowledgeSourceIds?.length || 0}</small></div><span class="adc-badge"><i></i> ADC</span></header>
+  const showCaseNav = onCasesTab && suite.cases.length > 0;
+  const columnClass = [
+    "editor-columns",
+    showCaseNav ? "has-cases" : "no-cases",
+    state.assistantOpen ? "assistant-open" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const assistantPanel = state.assistantOpen
+    ? `<aside class="assistant-panel" aria-label="AIテストスイートアシスタント">
+          <header>
+            <span class="assistant-icon">${icon("sparkles", 20)}</span>
+            <div><strong>AIテストスイートアシスタント</strong><small>Vertex AI · ${esc(state.config.vertexModel)} · RAG ${suite.knowledgeSourceIds?.length || 0}</small></div>
+            <button id="close-assistant" class="icon-button" type="button" aria-label="${tr("AIパネルを閉じる", "Close AI panel")}">${icon("x", 16)}</button>
+            <span class="adc-badge"><i></i> ADC</span>
+          </header>
           <div class="assistant-body">
             ${messages || `<div class="assistant-intro"><div class="assistant-orb">${icon("wand-sparkles", 25)}</div><h2>業務シナリオから<br>テスト設計を作れます</h2><p>選択したGCS資料から関連箇所を検索し、プロンプトと評価条件の提案に使います。</p></div>
             <div class="quick-actions">
@@ -382,31 +539,124 @@ function renderEditor() {
             <button type="submit" aria-label="送信" ${state.busy ? "disabled" : ""}>${state.busy ? icon("loader-circle") : icon("arrow-up")}</button>
             <small>ADC認証でVertex AIに接続します。変更は確認後に適用されます。</small>
           </form>
-        </aside>
+        </aside>`
+    : "";
+  const basicsPanel = `<section class="basic-panel">
+            <label>${tr("スイート名", "Suite name")}<input id="suite-name" value="${esc(suite.name)}"></label>
+            <label>${tr("接続先Data Agent", "Target Data Agent")}
+              <select id="suite-default-agent">
+                <option value="">${tr("ケースごとに選択", "Choose per case")}</option>
+                ${state.agents.map((agent) => {
+                  const selected =
+                    suite.defaultAgentId === agent.id ||
+                    (!suite.defaultAgentId &&
+                      suite.cases.length > 0 &&
+                      suite.cases.every((item) => item.agentId === agent.id));
+                  return `<option value="${agent.id}" ${selected ? "selected" : ""}>${esc(agent.displayName)}</option>`;
+                }).join("")}
+              </select>
+              <small class="field-help">${tr("シートへ同期するとき、未設定のケースへこのAgent IDを自動入力します。", "When syncing to Sheets, empty case Agent IDs are filled with this value.")}</small>
+            </label>
+            <label>${tr("目的・説明", "Purpose and description")}<textarea id="suite-description" rows="3">${esc(suite.description)}</textarea></label>
+            <div class="suite-knowledge">
+              <span>実行時に接続するナレッジバケット（複数選択）</span>
+              <div>${state.knowledgeSources.map((source) => `<label class="source-check"><input type="checkbox" data-suite-source value="${source.id}" ${(suite.knowledgeSourceIds || []).includes(source.id) ? "checked" : ""}><span>${icon("file-stack", 14)}${esc(source.name)}<small>gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${source.chunkCount || 0} チャンク</small></span></label>`).join("") || `<a href="#/knowledge" class="text-link">GCSナレッジを登録する ${icon("arrow-right", 14)}</a>`}</div>
+            </div>
+          </section>`;
+  const casesPanel = `
+          ${suite.cases.length ? "" : `<section class="suite-start-panel">
+            <div><span class="eyebrow">作成方法を選択</span><h2>最初のテストケースを追加しましょう</h2><p>複数ケースをまとめて扱える「表で入力する」方法がおすすめです。</p></div>
+            <div class="suite-start-options">
+              <button id="start-with-paste" class="start-option primary" type="button"><span>${icon("clipboard-paste", 19)}</span><strong>表で入力する <em>おすすめ</em></strong><small>Sheets・Excelの複数ケースを一括追加</small>${icon("arrow-right", 15)}</button>
+              <button id="start-manually" class="start-option" type="button"><span>${icon("square-pen", 19)}</span><strong>1件ずつ追加</strong><small>フォームでプロンプトと条件を設定</small>${icon("arrow-right", 15)}</button>
+              <button id="start-with-ai" class="start-option" type="button"><span>${icon("sparkles", 19)}</span><strong>AIで作成</strong><small>業務シナリオを伝えて設計案を作る</small>${icon("arrow-right", 15)}</button>
+            </div>
+            <div class="sheet-direct-row">
+              <span class="sheet-direct-icon">${icon("sheet", 18)}</span>
+              <div><strong>${connectedSheet ? esc(connectedSheet.title || "連携済みGoogle Sheets") : "Google Sheetsと連携"}</strong><small>${connectedSheet ? "シート上でケースを編集し、アプリへ取り込めます。" : "連携すると、ここから編集用シートを直接開けます。"}</small></div>
+              ${connectedSheet
+                ? `<button id="open-linked-sheet-inline" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}</button>`
+                : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`}
+            </div>
+          </section>`}
+          <div class="section-row">
+            <div>
+              <h2>${tr("テストケース", "Test cases")}</h2>
+              <p>${tr("左の一覧から選択して編集します。上から順に実行されます。", "Select a case from the left list to edit. Cases run from top to bottom.")}</p>
+            </div>
+            <div class="section-actions">
+              ${sheetShortcut}
+              <button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}${tr("表を貼り付けて一括編集", "Bulk edit by pasting a table")}</button>
+              <button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button>
+            </div>
+          </div>
+          <div id="case-detail">${selectedCase ? caseForm(selectedCase, state.selectedCaseIndex) : empty(tr("ケースがありません", "No test cases"), tr("上の作成方法から、最初のケースを追加してください。", "Choose a method above to add your first case."))}</div>`;
+  app.innerHTML = shell(`
+    <div class="editor-shell">
+      ${navHeader({
+        title: suite.name,
+        subtitleHtml: `<em id="save-state">${tr("保存済み", "Saved")}</em> · ${tr("テストスイート", "Test suites")}`,
+        backHref: "#/suites",
+        backLabel: tr("テストスイート一覧に戻る", "Back to test suites"),
+        actions: `${localeSelector(true)}${assistantToggle}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
+      })}
+      <div class="${columnClass}">
+        ${showCaseNav ? caseNav(suite) : ""}
+        <main class="suite-workspace">
+          <div class="workspace-title">
+            <div>
+              <h1>${tr("テスト設計を編集", "Edit test design")}</h1>
+              <p>${onCasesTab
+                ? tr("プロンプトと合格条件をケースごとに定義します。", "Define the prompt and passing criteria for each case.")
+                : tr("スイート全体の名前・接続先・ナレッジを設定します。", "Configure the suite name, target agent, and knowledge.")}</p>
+            </div>
+            <span class="count-badge">${tr("{count} ケース", "{count} cases", { count: formatLocaleNumber(suite.cases.length) })}</span>
+          </div>
+          <div class="editor-tabs" role="tablist" aria-label="${tr("編集モード", "Edit mode")}">
+            <button type="button" class="editor-tab${state.editorTab === "basics" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "basics" ? "true" : "false"}" data-editor-tab="basics">${icon("sliders-horizontal", 15)}${tr("基本情報", "Basics")}</button>
+            <button type="button" class="editor-tab${state.editorTab === "cases" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "cases" ? "true" : "false"}" data-editor-tab="cases">${icon("list-checks", 15)}${tr("テストケース", "Test cases")}<em>${formatLocaleNumber(suite.cases.length)}</em></button>
+          </div>
+          <div class="editor-tab-panel" data-tab-panel="basics" ${state.editorTab === "basics" ? "" : "hidden"}>${basicsPanel}</div>
+          <div class="editor-tab-panel" data-tab-panel="cases" ${state.editorTab === "cases" ? "" : "hidden"}>${casesPanel}</div>
+        </main>
+        ${assistantPanel}
       </div>
       ${suitePasteDialog(suite)}
-    </div>`, "suites", true);
-  localizeDocument(app);
+    </div>`, "suites", "editor");
+  refreshIcons();
   bindEditor();
   if (state.suitePasteOpen) document.querySelector("#suite-paste-dialog")?.showModal();
 }
 
 function addCaseToSuite() {
+  if (document.querySelector("#suite-name")) {
+    state.selectedSuite = collectSuite();
+  }
+  const defaultAgentId =
+    document.querySelector("#suite-default-agent")?.value ||
+    state.selectedSuite.defaultAgentId ||
+    state.agents[0]?.id ||
+    "";
   state.selectedSuite.cases.push({
     id: `case_${Date.now()}`,
     title: "新しいテストケース",
     prompt: "",
-    agentId: state.agents[0]?.id || "",
+    agentId: defaultAgentId,
     thinkingMode: "FAST",
+    status: "draft",
     expectations: {
       systemRequirements: { requireSql: true, requireChart: false, maxDurationMs: 120000, maxBytesBilled: 0, requiredPhrases: [] },
       businessRequirements: { enabled: false, accuracyCriteria: "", passingGrade: "B" }
     }
   });
+  state.selectedCaseIndex = state.selectedSuite.cases.length - 1;
+  state.editorTab = "cases";
   renderEditor();
 }
 
 function openSuitePaste() {
+  if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
+  state.editorTab = "cases";
   state.suitePasteOpen = true;
   state.suitePasteValidation = null;
   state.suitePasteError = "";
@@ -446,6 +696,8 @@ async function submitSuitePaste(validateOnly) {
     }
     state.selectedSuite = result.suite;
     state.suites = [result.suite, ...state.suites.filter((item) => item.id !== result.suite.id)];
+    state.selectedCaseIndex = 0;
+    state.editorTab = "cases";
     state.suitePasteOpen = false;
     state.suitePasteText = "";
     state.suitePasteValidation = null;
@@ -464,16 +716,107 @@ async function submitSuitePaste(validateOnly) {
 }
 
 function bindEditor() {
-  document.querySelector("#save-suite").addEventListener("click", saveSuite);
-  document.querySelector("#run-current-suite").addEventListener("click", () => runSuite(state.selectedSuite.id));
-  document.querySelector("#add-case").addEventListener("click", addCaseToSuite);
+  document.querySelector("#add-case")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#start-manually")?.addEventListener("click", addCaseToSuite);
-  document.querySelector("#paste-cases").addEventListener("click", openSuitePaste);
+  document.querySelector("#paste-cases")?.addEventListener("click", openSuitePaste);
   document.querySelector("#start-with-paste")?.addEventListener("click", openSuitePaste);
   document.querySelector("#start-with-ai")?.addEventListener("click", () => {
+    state.editorTab = "cases";
+    state.assistantOpen = true;
+    renderEditor();
     const input = document.querySelector("#assistant-input");
-    input.value = "実業務で使う代表的なテストケースを提案して";
-    input.focus();
+    if (input) {
+      input.value = "実業務で使う代表的なテストケースを提案して";
+      input.focus();
+    }
+  });
+  document.querySelectorAll("[data-editor-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = button.dataset.editorTab;
+      if (next !== "basics" && next !== "cases") return;
+      if (next === state.editorTab) return;
+      if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
+      state.editorTab = next;
+      renderEditor();
+    });
+  });
+  const setAssistantOpen = (open) => {
+    if (state.assistantOpen === open) return;
+    if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
+    state.assistantOpen = open;
+    renderEditor();
+  };
+  document.querySelector("#toggle-assistant")?.addEventListener("click", () => setAssistantOpen(!state.assistantOpen));
+  document.querySelector("#close-assistant")?.addEventListener("click", () => setAssistantOpen(false));
+  document.querySelectorAll("[data-select-case]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const nextIndex = Number(button.dataset.selectCase);
+      if (nextIndex === state.selectedCaseIndex) return;
+      state.selectedSuite = collectSuite();
+      state.selectedCaseIndex = nextIndex;
+      renderEditor();
+    })
+  );
+  const linkedDataButtonLabel = () =>
+    `${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}`;
+  const linkedDataBusyLabel = () => `${icon("loader-circle", 15)}${tr("連携中…", "Syncing…")}`;
+  const setLinkedDataButtonsBusy = (busy) => {
+    document.querySelectorAll("#open-linked-sheet, #open-linked-sheet-inline").forEach((item) => {
+      item.disabled = busy;
+      item.classList.toggle("is-busy", busy);
+      item.setAttribute("aria-busy", busy ? "true" : "false");
+      item.innerHTML = busy ? linkedDataBusyLabel() : linkedDataButtonLabel();
+    });
+    window.lucide?.createIcons();
+  };
+  const openLinkedSheet = async () => {
+    const connection =
+      state.sheetConnections.find((item) => item.status === "ready" && item.spreadsheetUrl) ||
+      state.sheetConnections.find((item) => item.spreadsheetUrl);
+    if (!connection) {
+      location.hash = "#/sheets";
+      return;
+    }
+    setLinkedDataButtonsBusy(true);
+    try {
+      await saveSuite({ silent: true });
+      const exported = await json(`/api/sheets/connections/${connection.id}/export-suite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suiteId: state.selectedSuite.id })
+      });
+      updateSheetConnection(exported.connection);
+      notify(
+        tr(
+          "連携データをSheetsへ同期しました。シートを開きます。",
+          "Synced linked data to Sheets. Opening the sheet."
+        ),
+        "success"
+      );
+      window.open(exported.connection.spreadsheetUrl || connection.spreadsheetUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setLinkedDataButtonsBusy(false);
+    }
+  };
+  document.querySelector("#open-linked-sheet")?.addEventListener("click", () => openLinkedSheet());
+  document.querySelector("#open-linked-sheet-inline")?.addEventListener("click", () => openLinkedSheet());
+  document.querySelector("#suite-default-agent")?.addEventListener("change", (event) => {
+    const agentId = event.currentTarget.value;
+    state.selectedSuite.defaultAgentId = agentId;
+    if (!agentId) {
+      document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+      return;
+    }
+    document.querySelectorAll(".case-editor [data-field='agentId']").forEach((select) => {
+      if (!select.value) select.value = agentId;
+    });
+    state.selectedSuite.cases = state.selectedSuite.cases.map((item) => ({
+      ...item,
+      agentId: item.agentId || agentId
+    }));
+    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
   });
   const pasteDialog = document.querySelector("#suite-paste-dialog");
   pasteDialog?.addEventListener("close", () => {
@@ -501,17 +844,25 @@ function bindEditor() {
     submitSuitePaste(true);
   });
   document.querySelector("#apply-suite-paste")?.addEventListener("click", () => submitSuitePaste(false));
-  document.querySelectorAll("[data-remove-case]").forEach((button) => button.addEventListener("click", () => {
-    if (confirm(tr("このテストケースを削除しますか？", "Delete this test case?"))) {
-      state.selectedSuite.cases.splice(Number(button.dataset.removeCase), 1);
+  document.querySelectorAll("[data-remove-case]").forEach((button) =>
+    button.addEventListener("click", () => {
+      if (!confirm(tr("このテストケースを削除しますか？", "Delete this test case?"))) return;
+      state.selectedSuite = collectSuite();
+      const removed = Number(button.dataset.removeCase);
+      state.selectedSuite.cases.splice(removed, 1);
+      if (state.selectedCaseIndex >= state.selectedSuite.cases.length) {
+        state.selectedCaseIndex = Math.max(0, state.selectedSuite.cases.length - 1);
+      } else if (state.selectedCaseIndex > removed) {
+        state.selectedCaseIndex -= 1;
+      }
       renderEditor();
-    }
-  }));
+    })
+  );
   document.querySelectorAll("[data-assistant-prompt]").forEach((button) => button.addEventListener("click", () => sendAssistant(button.dataset.assistantPrompt)));
-  document.querySelector("#assistant-form").addEventListener("submit", (event) => {
+  document.querySelector("#assistant-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const input = document.querySelector("#assistant-input");
-    if (input.value.trim()) sendAssistant(input.value.trim());
+    if (input?.value.trim()) sendAssistant(input.value.trim());
   });
   document.querySelector("#discard-patch")?.addEventListener("click", () => {
     state.assistantPatch = null;
@@ -520,48 +871,96 @@ function bindEditor() {
   document.querySelector("#apply-patch")?.addEventListener("click", applyPatch);
   document.querySelectorAll("input,textarea,select").forEach((input) => {
     if (input.closest("#assistant-form") || input.closest("#suite-paste-dialog")) return;
-    input.addEventListener("input", () => (document.querySelector("#save-state").textContent = tr("未保存", "Unsaved")));
+    input.addEventListener("input", () => {
+      document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+      const activeCard = document.querySelector(".case-nav-item.active");
+      if (!activeCard || !input.closest(".case-editor")) return;
+      if (input.dataset.field === "title") {
+        const title = activeCard.querySelector(".case-nav-title");
+        if (title) title.textContent = input.value.trim() || tr("無題のケース", "Untitled case");
+      }
+      if (input.dataset.field === "prompt") {
+        const prompt = activeCard.querySelector(".case-nav-prompt");
+        if (prompt) {
+          const value = input.value.trim();
+          prompt.textContent = value || tr("プロンプト未設定", "No prompt yet");
+          prompt.classList.toggle("muted", !value);
+        }
+      }
+      if (input.dataset.field === "agentId") {
+        const agent = activeCard.querySelector(".case-nav-agent");
+        const label =
+          state.agents.find((entry) => entry.id === input.value)?.displayName ||
+          input.value ||
+          tr("Data Agent未選択", "No Data Agent selected");
+        if (agent) agent.textContent = label;
+      }
+      if (input.dataset.field === "thinkingMode") {
+        const mode = activeCard.querySelector(".case-nav-mode");
+        if (mode) {
+          mode.textContent = input.value === "THINKING" ? "THINKING" : "FAST";
+          mode.classList.toggle("thinking", input.value === "THINKING");
+        }
+      }
+      if (input.dataset.field === "status") {
+        const badge = activeCard.querySelector(".case-nav-status");
+        const draft = input.value === "draft";
+        activeCard.classList.toggle("is-draft", draft);
+        if (badge) {
+          badge.className = `case-nav-status ${draft ? "draft" : "active"}`;
+          badge.textContent = draft ? tr("下書き", "Draft") : tr("実行可", "Runnable");
+        }
+      }
+    });
   });
 }
 
+function collectCaseFromCard(card, source, defaultAgentId) {
+  const previousSystem = source.expectations?.systemRequirements || source.expectations || {};
+  const previousBusiness = source.expectations?.businessRequirements || {};
+  const next = {
+    ...source,
+    expectations: {
+      schemaVersion: 2,
+      systemRequirements: { ...previousSystem },
+      businessRequirements: { ...previousBusiness }
+    }
+  };
+  card.querySelectorAll("[data-field]").forEach((input) => (next[input.dataset.field] = input.value));
+  if (!String(next.agentId || "").trim()) next.agentId = defaultAgentId;
+  const knowledgeSelect = card.querySelector("[data-knowledge]");
+  next.knowledgeSourceIds = knowledgeSelect ? [...knowledgeSelect.selectedOptions].map((option) => option.value) : [];
+  card.querySelectorAll("[data-system-expect]").forEach((input) => {
+    const key = input.dataset.systemExpect;
+    if (input.type === "checkbox") next.expectations.systemRequirements[key] = input.checked;
+    else if (key === "requiredPhrases") next.expectations.systemRequirements[key] = input.value.split(",").map((v) => v.trim()).filter(Boolean);
+    else next.expectations.systemRequirements[key] = Number(input.value || 0) * Number(input.dataset.scale || 1);
+  });
+  const accuracyCriteria = card.querySelector("[data-business-criteria]").value.trim();
+  next.expectations.businessRequirements = {
+    enabled: card.querySelector("[data-business-enabled]").checked && Boolean(accuracyCriteria),
+    accuracyCriteria,
+    passingGrade: card.querySelector("[data-business-passing-grade]").value
+  };
+  return next;
+}
+
 function collectSuite() {
-  const suite = {
+  const defaultAgentId = document.querySelector("#suite-default-agent")?.value || "";
+  const cases = [...(state.selectedSuite.cases || [])];
+  const card = document.querySelector(".case-editor");
+  if (card) {
+    const index = Number(card.dataset.caseIndex);
+    if (cases[index]) cases[index] = collectCaseFromCard(card, cases[index], defaultAgentId);
+  }
+  return {
     ...state.selectedSuite,
     name: document.querySelector("#suite-name").value,
     description: document.querySelector("#suite-description").value,
+    defaultAgentId,
     knowledgeSourceIds: [...document.querySelectorAll("[data-suite-source]:checked")].map((input) => input.value),
-    cases: []
+    cases
   };
-  document.querySelectorAll(".case-editor").forEach((card) => {
-    const source = state.selectedSuite.cases[Number(card.dataset.caseIndex)];
-    const previousSystem = source.expectations?.systemRequirements || source.expectations || {};
-    const previousBusiness = source.expectations?.businessRequirements || {};
-    const next = {
-      ...source,
-      expectations: {
-        schemaVersion: 2,
-        systemRequirements: { ...previousSystem },
-        businessRequirements: { ...previousBusiness }
-      }
-    };
-    card.querySelectorAll("[data-field]").forEach((input) => (next[input.dataset.field] = input.value));
-    const knowledgeSelect = card.querySelector("[data-knowledge]");
-    next.knowledgeSourceIds = knowledgeSelect ? [...knowledgeSelect.selectedOptions].map((option) => option.value) : [];
-    card.querySelectorAll("[data-system-expect]").forEach((input) => {
-      const key = input.dataset.systemExpect;
-      if (input.type === "checkbox") next.expectations.systemRequirements[key] = input.checked;
-      else if (key === "requiredPhrases") next.expectations.systemRequirements[key] = input.value.split(",").map((v) => v.trim()).filter(Boolean);
-      else next.expectations.systemRequirements[key] = Number(input.value || 0) * Number(input.dataset.scale || 1);
-    });
-    const accuracyCriteria = card.querySelector("[data-business-criteria]").value.trim();
-    next.expectations.businessRequirements = {
-      enabled: card.querySelector("[data-business-enabled]").checked && Boolean(accuracyCriteria),
-      accuracyCriteria,
-      passingGrade: card.querySelector("[data-business-passing-grade]").value
-    };
-    suite.cases.push(next);
-  });
-  return suite;
 }
 
 async function saveSuite({ silent = false } = {}) {
@@ -583,6 +982,7 @@ async function sendAssistant(text) {
   if (state.busy) return;
   try {
     state.selectedSuite = collectSuite();
+    state.assistantOpen = true;
     state.assistantMessages.push({ role: "user", text });
     state.busy = true;
     renderEditor();
@@ -615,16 +1015,47 @@ async function applyPatch() {
     state.selectedSuite.cases = [...cases.values()];
   }
   state.assistantPatch = null;
+  clampSelectedCaseIndex();
   renderEditor();
   await saveSuite();
 }
 
 async function runSuite(id) {
-  const suite = state.suites.find((item) => item.id === id);
+  if (!id) return notify(tr("スイートが見つかりません。", "Suite not found."));
+  if (document.querySelector("#suite-name") && state.selectedSuite?.id === id) {
+    try {
+      state.selectedSuite = collectSuite();
+    } catch {
+      // Keep the last in-memory suite if the editor form is mid-render.
+    }
+  }
+  const suite =
+    (state.selectedSuite?.id === id ? state.selectedSuite : null) ||
+    state.suites.find((item) => item.id === id) ||
+    null;
   if (!suite?.cases?.length) return notify(tr("ケースを1件以上登録してください。", "Add at least one test case."));
-  if (!confirm(tr("{name} の {count} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？", "Run {count} cases in {name}? BigQuery usage charges may apply. Continue?", { name: suite.name, count: formatLocaleNumber(suite.cases.length) }))) return;
+  const runnable = suite.cases.filter((item) => item.status !== "draft");
+  if (!runnable.length) {
+    return notify(tr("実行可のテストケースがありません。", "There are no runnable test cases."));
+  }
+  const skipped = suite.cases.length - runnable.length;
+  const message = skipped
+    ? tr(
+        "{name} の実行可 {runnable} ケースを実行します（下書き {skipped} 件はスキップ）。BigQuery利用料金が発生する可能性があります。続けますか？",
+        "Run {runnable} runnable cases in {name} ({skipped} draft cases will be skipped)? BigQuery usage charges may apply. Continue?",
+        { name: suite.name, runnable: formatLocaleNumber(runnable.length), skipped: formatLocaleNumber(skipped) }
+      )
+    : tr(
+        "{name} の {count} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？",
+        "Run {count} cases in {name}? BigQuery usage charges may apply. Continue?",
+        { name: suite.name, count: formatLocaleNumber(suite.cases.length) }
+      );
+  if (!(await askConfirm(message, { confirmLabel: tr("スイートを実行", "Run suite") }))) return;
   try {
     state.busy = true;
+    if (state.selectedSuite?.id === id) {
+      await saveSuite({ silent: true });
+    }
     const run = await json(`/api/suites/${id}/run`, { method: "POST" });
     state.suiteRuns = [run, ...state.suiteRuns.filter((item) => item.id !== run.id)];
     location.hash = `#/reports/${run.id}`;
@@ -736,8 +1167,14 @@ function renderKnowledgeDetail() {
       <td><a class="text-link" href="${esc(`https://console.cloud.google.com/storage/browser/_details/${encodeURIComponent(source.bucket)}/${String(object.name).split("/").map(encodeURIComponent).join("/")}?project=${encodeURIComponent(source.projectId || state.config?.billingProject || "")}`)}" target="_blank" rel="noreferrer">GCSで確認 ${icon("external-link", 12)}</a></td>
     </tr>`).join("");
   app.innerHTML = shell(`
-    <a class="detail-back" href="#/knowledge">${icon("arrow-left", 14)}バケット一覧へ</a>
-    ${pageHead(source.name, `gs://${source.bucket}/${source.prefix || ""}`, `<div class="head-actions"><a class="button secondary" href="${esc(gcsConsoleUrl(source))}" target="_blank" rel="noreferrer">${icon("external-link", 14)}GCSを開く</a><button class="button primary" data-detail-sync="${source.id}">${icon("refresh-cw", 14)}同期する</button></div>`)}
+    ${navHeader({
+      title: source.name,
+      subtitle: `gs://${source.bucket}/${source.prefix || ""}`,
+      backHref: "#/knowledge",
+      backLabel: tr("GCSナレッジ一覧に戻る", "Back to GCS knowledge"),
+      actions: `<a class="button secondary" href="${esc(gcsConsoleUrl(source))}" target="_blank" rel="noreferrer">${icon("external-link", 14)}${tr("GCSを開く", "Open GCS")}</a><button class="button bright" data-detail-sync="${source.id}">${icon("refresh-cw", 14)}${tr("同期する", "Sync")}</button>`
+    })}
+    ${detailBody(`
     <section class="bucket-detail-hero">
       <div class="bucket-detail-icon">${icon("bucket", 24)}</div>
       <div><span>Google Cloud プロジェクト</span><strong>${esc(source.projectId || "—")}</strong></div>
@@ -766,7 +1203,8 @@ function renderKnowledgeDetail() {
       <div><h2>このバケットを利用するテストスイート</h2><p>テスト実行時は、スイートまたはケースで選択した複数のナレッジバケットをまとめて検索します。</p></div>
       <div class="usage-suite-list">${usingSuites.map((suite) => `<a href="#/suites/${suite.id}/edit">${icon("layers-3", 14)}<span><strong>${esc(suite.name)}</strong><small>${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</small></span>${icon("arrow-right", 14)}</a>`).join("") || `<a href="#/suites">${icon("plus", 14)}テストスイートで接続先を選択する${icon("arrow-right", 14)}</a>`}</div>
     </section>
-  `, "knowledge");
+    `)}
+  `, "knowledge", "detail");
   bindKnowledgeDetail();
 }
 
@@ -1155,7 +1593,7 @@ function renderSheets() {
     .map((suite) => `<option value="${suite.id}">${esc(suite.name)} · ${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</option>`)
     .join("");
   const reportOptions = state.suiteRuns
-    .map((run) => `<option value="${run.id}">${esc(run.suiteName)} · ${fmtDate(run.createdAt)} · ${run.summary?.passRate || 0}%</option>`)
+    .map((run) => `<option value="${run.id}">${esc(suiteRunLabel(run))} · ${run.summary?.passRate || 0}%</option>`)
     .join("");
   const connections = state.sheetConnections
     .map((connection) => `
@@ -1209,7 +1647,7 @@ function renderSheets() {
       </form>
       <div class="format-note">
         <span>${icon("lock-keyhole", 17)}</span>
-        <div><strong>${tr("固定タブと列定義", "Managed tabs and columns")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> ${tr("と", "and")} <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("のみをアプリが再作成します。ユーザー作成タブは変更しません。", "are the only tabs recreated by the app. User-created tabs are left unchanged.")}</p></div>
+        <div><strong>${tr("固定タブと列定義", "Managed tabs and columns")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> / <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("はUI操作で都度書き換えます。", "are rewritten by UI actions.")} <code>${esc(state.sheetFormat?.agentsTab || "AgentEval_DataAgents")}</code> / <code>${esc(state.sheetFormat?.suitesTab || "AgentEval_Suites")}</code> ${tr("は登録済みAgent・スイートを全件表示します。ユーザー作成タブは変更しません。", "always list all registered agents and suites. User-created tabs are left unchanged.")}</p></div>
         <b>${tr("スキーマ", "Schema")} v${state.sheetFormat?.schemaVersion || 1}</b>
       </div>
     </section>
@@ -1231,22 +1669,49 @@ function bindSheets() {
     const button = event.currentTarget.querySelector("button");
     button.disabled = true;
     try {
+      const payload = Object.fromEntries(new FormData(event.currentTarget));
+      if (state.selectedSuite?.id) payload.suiteId = state.selectedSuite.id;
       const connection = await json("/api/sheets/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))
+        body: JSON.stringify(payload)
       });
       updateSheetConnection(connection);
-      notify(tr("{title} に接続しました。", "Connected to {title}.", { title: connection.title }), "success");
+      if (connection.bootstrap?.suiteBootstrapped || connection.bootstrap?.reportBootstrapped || connection.bootstrap?.catalogsBootstrapped) {
+        notify(
+          tr(
+            "{title} に接続し、管理タブ（Agent一覧 / スイート一覧含む）を同期しました。",
+            "Connected to {title} and synced managed tabs (including agent and suite catalogs).",
+            { title: connection.title }
+          ),
+          "success"
+        );
+      } else {
+        notify(tr("{title} に接続しました。", "Connected to {title}.", { title: connection.title }), "success");
+      }
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   });
   document.querySelectorAll("[data-check-sheet]").forEach((button) => button.addEventListener("click", async () => {
     button.disabled = true;
     try {
-      const connection = await json(`/api/sheets/connections/${button.dataset.checkSheet}/check`, { method: "POST" });
+      const connection = await json(`/api/sheets/connections/${button.dataset.checkSheet}/check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suiteId: state.selectedSuite?.id || undefined })
+      });
       updateSheetConnection(connection);
-      notify(tr("Google Sheets APIへの接続を確認しました。", "Google Sheets API connection verified."), "success");
+      if (connection.bootstrap?.suiteBootstrapped || connection.bootstrap?.reportBootstrapped || connection.bootstrap?.catalogsBootstrapped) {
+        notify(
+          tr(
+            "接続を確認し、Agent一覧 / スイート一覧を含む管理タブを同期しました。",
+            "Connection verified and managed tabs (including agent and suite catalogs) were synced."
+          ),
+          "success"
+        );
+      } else {
+        notify(tr("Google Sheets APIへの接続を確認しました。", "Google Sheets API connection verified."), "success");
+      }
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -1508,8 +1973,8 @@ async function migrateStorage(mode) {
 }
 
 function renderReports() {
-  const rows = state.suiteRuns.map((run) => `<tr><td><a href="#/reports/${run.id}"><strong>${esc(run.suiteName)}</strong><small>${fmtDate(run.createdAt)}</small></a></td><td>${statusPill(run.status)}</td><td><strong>${run.summary?.passRate || 0}%</strong></td><td>${run.summary?.passed || 0} / ${run.summary?.total || 0}</td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td>${fmtBytes(run.summary?.totalBytesBilled)}</td></tr>`).join("");
-  app.innerHTML = shell(`${pageHead("評価レポート", "スイートの品質、速度、BigQuery利用量をチーム共有向けにまとめます。")}<section class="table-panel"><table><thead><tr><th>テストスイート</th><th>結果</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("レポートがありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
+  const rows = state.suiteRuns.map((run) => `<tr><td><a href="#/reports/${run.id}"><strong>${esc(suiteRunLabel(run))}</strong><small>${esc(run.id)}</small></a></td><td>${statusPill(run.status)}</td><td><strong>${run.summary?.passRate || 0}%</strong></td><td>${run.summary?.passed || 0} / ${run.summary?.total || 0}</td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td>${fmtBytes(run.summary?.totalBytesBilled)}</td></tr>`).join("");
+  app.innerHTML = shell(`${pageHead("評価レポート", "スイートの品質、速度、BigQuery利用量をチーム共有向けにまとめます。")}<section class="table-panel"><table><thead><tr><th>実行ログ</th><th>結果</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("レポートがありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
 }
 
 function renderReport(report) {
@@ -1529,6 +1994,12 @@ function renderReport(report) {
     if (item) {
       const system = item.evaluation?.system || item.evaluation || {};
       const business = item.evaluation?.business;
+      if (item.status === "skipped") {
+        return `<article class="report-case skipped">
+          <header><span>${statusPill("skipped")}</span><div><strong>${esc(item.title)}</strong><small>${esc(item.caseId)}</small></div></header>
+          <p class="muted-copy">${esc(translateApiMessage(item.skipReason || "ケースのステータスが実行可ではないためスキップしました。"))}</p>
+        </article>`;
+      }
       return `<article class="report-case ${item.status}">
         <header><span>${statusPill(item.status)}</span><div><strong>${esc(item.title)}</strong><small>${esc(item.caseId)}</small></div>${gradeBadge(business)}</header>
         ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
@@ -1539,12 +2010,17 @@ function renderReport(report) {
         ${item.runId ? `<a href="#/runs/${item.runId}" class="text-link">実行トレースを見る ${icon("arrow-right", 14)}</a>` : ""}
       </article>`;
     }
-    const active = report.currentCase?.caseId === testCase.id;
+    const activeCases = report.activeCases?.length
+      ? report.activeCases
+      : report.currentCase
+        ? [report.currentCase]
+        : [];
+    const active = activeCases.find((item) => item.caseId === (testCase.id || testCase.caseId));
     const phaseLabel = {
       running: tr("Data Agentを実行中", "Running Data Agent"),
       evaluating_system: tr("システム要件を確認中", "Checking system requirements"),
       evaluating_business: tr("Geminiで回答精度を判定中", "Evaluating answer accuracy with Gemini")
-    }[report.currentCase?.phase] || tr("実行待ち", "Waiting");
+    }[active?.phase] || tr("実行待ち", "Waiting");
     return `<article class="report-case ${active ? "case-running" : "case-pending"}">
       <header>
         <span class="${active ? "live-spinner" : "case-index"}">${active ? "" : String(index + 1).padStart(2, "0")}</span>
@@ -1555,6 +2031,16 @@ function renderReport(report) {
       <div class="skeleton-layer"><strong>ビジネス要件</strong><div class="skeleton-grade"></div></div>
     </article>`;
   }).join("");
+  const runningCount = report.summary?.running ?? (report.activeCases?.length || (report.currentCase ? 1 : 0));
+  const concurrency = report.summary?.concurrency || 30;
+  const runningHeadline = runningCount > 1
+    ? tr("{count}件を並列実行中（最大{limit}）", "Running {count} cases in parallel (max {limit})", {
+      count: formatLocaleNumber(runningCount),
+      limit: formatLocaleNumber(concurrency)
+    })
+    : tr("{title}を処理しています", "Processing {title}", {
+      title: report.currentCase?.title || report.activeCases?.[0]?.title || tr("実行準備中", "Preparing run")
+    });
   const sheetExport = report.sheetExport || { status: "pending" };
   const sheetPanel = sheetExport.status === "succeeded"
     ? `<section class="sheet-export-status succeeded">${icon("sheet", 20)}<div><strong>${tr("評価レポートをGoogle Sheetsへ自動出力しました", "Evaluation report exported to Google Sheets")}</strong><p>${esc(sheetExport.spreadsheetTitle)} · ${esc(sheetExport.tabName)} · ${tr("{count}行", "{count} rows", { count: formatLocaleNumber(sheetExport.rowCount || 0) })}</p></div><a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${tr("シートを開く", "Open sheet")} ${icon("external-link", 14)}</a></section>`
@@ -1565,14 +2051,21 @@ function renderReport(report) {
         : sheetExport.status === "skipped"
           ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a></section>`
           : "";
-  const actions = `<div class="head-actions">${sheetExport.status === "succeeded" ? `<a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}シートを開く</a>` : ""}<button onclick="window.print()" class="button secondary" ${isRunning ? "disabled" : ""}>${icon("printer", 15)}印刷</button></div>`;
+  const actions = `${sheetExport.status === "succeeded" ? `<a class="button secondary" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>` : ""}<button onclick="window.print()" class="button secondary" ${isRunning ? "disabled" : ""}>${icon("printer", 15)}${tr("印刷", "Print")}</button>`;
   app.innerHTML = shell(`
-    ${pageHead(report.suiteName, `${fmtDate(report.createdAt)} · ${report.id}`, actions)}
+    ${navHeader({
+      title: suiteRunLabel(report),
+      subtitle: report.id,
+      backHref: "#/reports",
+      backLabel: tr("評価レポート一覧に戻る", "Back to evaluation reports"),
+      actions
+    })}
+    ${detailBody(`
     <section class="report-hero ${report.status}">
       <div class="overall-score"><span>${isRunning ? tr("実行進捗", "Run progress") : tr("総合スコア", "Overall score")}</span><strong>${isRunning ? completed : overallScore ?? "—"}<small>/${isRunning ? total : 100}</small></strong>${!isRunning && businessConfigured > 0 ? `<em>${tr("システム 40% + ビジネス 60%", "System 40% + business 60%")}</em>` : !isRunning ? `<em>${tr("ビジネス要件未評価のためシステムスコアを採用", "System score used because business requirements were not evaluated")}</em>` : ""}</div>
       <div class="ring score-ring system-ring" style="--progress:${systemScore};--ring-color:#65a0ff"><b>${scoreText(systemScore)}</b><span>システム要件</span></div>
       <div class="ring score-ring business-ring ${businessScore === null ? "unscored" : ""}" style="--progress:${businessScore ?? 0};--ring-color:#c084fc"><b>${scoreText(businessScore)}</b><span>ビジネス要件</span></div>
-      <div class="hero-copy">${statusPill(report.status)}<h2>${isRunning ? tr("{title}を処理しています", "Processing {title}", { title: report.currentCase?.title || tr("実行準備中", "Preparing run") }) : report.status === "passed" ? tr("すべてのケースが基準を満たしました", "All cases met the criteria") : tr("改善が必要なケースがあります", "Some cases need improvement")}</h2><p>${isRunning ? tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。", "Results appear in this report as each case completes.") : tr("{passed}件合格 / {failed}件不合格", "{passed} passed / {failed} failed", { passed: formatLocaleNumber(report.summary?.passed || 0), failed: formatLocaleNumber(report.summary?.failed || 0) })}</p></div>
+      <div class="hero-copy">${statusPill(report.status)}<h2>${isRunning ? runningHeadline : report.status === "passed" ? tr("すべてのケースが基準を満たしました", "All cases met the criteria") : tr("改善が必要なケースがあります", "Some cases need improvement")}</h2><p>${isRunning ? tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear in this report as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) }) : tr("{passed}件合格 / {failed}件不合格", "{passed} passed / {failed} failed", { passed: formatLocaleNumber(report.summary?.passed || 0), failed: formatLocaleNumber(report.summary?.failed || 0) })}</p></div>
       ${isRunning ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
     <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div><span>${tr("精度 A / B / C / D", "Accuracy A / B / C / D")}</span><strong>${report.summary?.accuracyGrades?.A || 0} / ${report.summary?.accuracyGrades?.B || 0} / ${report.summary?.accuracyGrades?.C || 0} / ${report.summary?.accuracyGrades?.D || 0}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
@@ -1580,7 +2073,8 @@ function renderReport(report) {
     ${sheetPanel}
     <div class="section-row"><div><h2>${tr("ケース別評価", "Case evaluations")}</h2><p>${isRunning ? tr("完了したケースから評価内容を表示します。", "Evaluations appear as cases complete.") : tr("失敗した条件から改善ポイントを特定できます。", "Use failed criteria to identify areas for improvement.")}</p></div><b class="live-updated">${isRunning ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
     <section class="report-cases">${cases}</section>
-  `, "reports");
+    `)}
+  `, "reports", "detail");
   if (isRunning || sheetExport.status === "exporting") {
     state.reportPollTimer = setTimeout(async () => {
       if (location.hash !== `#/reports/${report.id}`) return;
@@ -1633,23 +2127,27 @@ function renderRunDetail(run) {
           : `<details><summary>イベントデータ</summary><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></details>`;
     return `<article class="trace-event"><span class="trace-dot ${event.severity}"></span><div><header><strong>${esc(translateApiMessage(event.label))}</strong><code>${esc(event.kind)} · #${index + 1}</code></header>${body}</div></article>`;
   }).join("");
-  const breadcrumbs = context
-    ? `<nav class="breadcrumbs" aria-label="パンくず"><a href="#/suites">テストスイート</a>${icon("chevron-right", 12)}<a href="#/suites/${context.suiteId}/edit">${esc(context.suiteName)}</a>${icon("chevron-right", 12)}<a href="#/reports/${context.suiteRunId}">評価レポート</a>${icon("chevron-right", 12)}<span>${esc(context.caseTitle)}</span></nav>`
-    : `<nav class="breadcrumbs" aria-label="パンくず"><a href="#/run">テスト実行</a>${icon("chevron-right", 12)}<span>実行詳細</span></nav>`;
-  const title = context?.suiteName || run.agentLabel || "単一テスト実行";
-  const subtitle = context?.caseTitle || "単一プロンプトの実行";
-  const actions = `<div class="head-actions">${context ? `<a class="button secondary" href="#/reports/${context.suiteRunId}">${icon("arrow-left", 15)}評価レポートへ戻る</a>` : `<a class="button secondary" href="#/run">${icon("arrow-left", 15)}テスト実行へ戻る</a>`}<button onclick="window.print()" class="button secondary">${icon("printer", 15)}印刷</button></div>`;
+  const title = context?.caseTitle || run.agentLabel || tr("単一テスト実行", "Single test run");
+  const subtitle = context
+    ? (context.suiteName || tr("評価レポート", "Evaluation report"))
+    : tr("単一プロンプトの実行", "Single prompt run");
+  const backHref = context ? `#/reports/${context.suiteRunId}` : "#/run";
+  const backLabel = context
+    ? tr("評価レポートへ戻る", "Back to evaluation report")
+    : tr("テスト実行へ戻る", "Back to test run");
+  const actions = `<button onclick="window.print()" class="button secondary">${icon("printer", 15)}${tr("印刷", "Print")}</button>`;
   app.innerHTML = shell(`
-    ${breadcrumbs}
-    ${pageHead(title, subtitle, actions)}
-    <section class="run-context"><div><span>選択中のケース</span><strong>${esc(subtitle)}</strong></div><div><span>検証プロンプト</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>
+    ${navHeader({ title, subtitle, backHref, backLabel, actions })}
+    ${detailBody(`
+    <section class="run-context"><div><span>${tr("選択中のケース", "Selected case")}</span><strong>${esc(context?.caseTitle || title)}</strong></div><div><span>${tr("検証プロンプト", "Verification prompt")}</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>
     <section class="report-metrics"><div><span>${tr("結果", "Result")}</span><strong>${statusPill(run.summary.status)}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(run.summary.durationMs)}</strong></div><div><span>${tr("課金対象", "Bytes billed")}</span><strong>${fmtBytes(run.summary.totalBytesBilled)}</strong></div><div><span>${tr("SQL / ジョブ", "SQL / jobs")}</span><strong>${run.summary.sqlCount} / ${run.summary.jobCount}</strong></div></section>
     ${caseRun ? `<section class="run-evaluation-summary">
       <article><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{score}点", "{score} pts", { score: formatLocaleNumber(systemEvaluation?.score ?? 0) })}</b></div><div class="checks">${(systemEvaluation?.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></article>
       <article><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(businessEvaluation)}</div><p>${esc(businessEvaluation?.summary || "精度条件は設定されていません。")}</p>${businessEvaluation?.expectedCriteria ? `<dl><dt>期待した内容</dt><dd>${esc(businessEvaluation.expectedCriteria)}</dd><dt>回答との差分</dt><dd>${esc((businessEvaluation.discrepancies || []).join(" / ") || "なし")}</dd></dl>` : ""}</article>
     </section>` : ""}
     <section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンストレース", "Response trace")}</h2><p>${tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber(run.events.length) })} · ${esc(run.agentLabel)}</p></div></div>${events}</section>
-  `, "run");
+    `)}
+  `, context ? "reports" : "run", "detail");
 }
 
 async function route() {
@@ -1675,6 +2173,9 @@ async function route() {
         state.suitePasteText = "";
         state.suitePasteValidation = null;
         state.suitePasteError = "";
+        state.selectedCaseIndex = 0;
+        state.editorTab = "cases";
+        state.assistantOpen = false;
       }
       if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
         state.preserveEditorOnLocale = false;
@@ -1682,6 +2183,7 @@ async function route() {
         state.selectedSuite = await json(`/api/suites/${parts[1]}`);
         state.assistantMessages = [];
         state.assistantPatch = null;
+        state.selectedCaseIndex = 0;
       }
       renderEditor();
     } else renderSuites();
@@ -1738,6 +2240,18 @@ app.addEventListener("click", (event) => {
       }
     }
     setLocale(localeButton.dataset.setLocale);
+    return;
+  }
+  const runButton = event.target.closest("#run-current-suite,[data-run-suite]");
+  if (runButton) {
+    event.preventDefault();
+    runSuite(runButton.dataset.runSuite || state.selectedSuite?.id);
+    return;
+  }
+  const saveButton = event.target.closest("#save-suite");
+  if (saveButton) {
+    event.preventDefault();
+    saveSuite();
     return;
   }
   const toggle = event.target.closest("#sidebar-toggle");

@@ -112,7 +112,7 @@ Imports accept both the legacy machine-oriented English labels and the Japanese 
 
 ## Live suite execution
 
-`POST /api/suites/:id/run` creates and persists a `running` Suite Run, returns `202 Accepted` immediately, and schedules the sequential Data Agent work in the local server process. Before each case and after each evaluation, the server persists `currentCase`, `caseRuns`, cumulative summary, and timestamps. `GET /api/suite-runs/:id` is therefore a durable polling boundary used by the live report UI; navigation or browser reload does not discard already persisted progress.
+`POST /api/suites/:id/run` creates and persists a `running` Suite Run, returns `202 Accepted` immediately, and schedules Data Agent work in the local server process with bounded parallelism (default and max 30 concurrent cases via `SUITE_RUN_CONCURRENCY`). Progress is persisted through `activeCases` / `currentCase`, `caseRuns`, cumulative summary, and timestamps. `GET /api/suite-runs/:id` is therefore a durable polling boundary used by the live report UI; navigation or browser reload does not discard already persisted progress.
 
 After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The most recently used ready Sheets connection is the automatic destination. Export failure is recorded on the Run without changing the completed evaluation result.
 

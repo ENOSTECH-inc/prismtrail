@@ -64,6 +64,52 @@ npm start
 - Prefer the managed Google Sheet for bulk test-case editing. Import it before running a changed
   suite, and confirm the Suite ID and case count.
 
+## Bulk-edit test cases via Google Sheets
+
+Preferred path when the user asks to add or revise many cases:
+
+1. Confirm spreadsheet ID / connection and target suite (never invent them).
+2. Register the Data Agent if missing, then create or PATCH the suite via `/api/suites`.
+3. Push to Sheets with `POST /api/sheets/connections/:id/export-suite` and `{ "suiteId": "..." }`.
+   This overwrites the managed `AgentEval_TestSuite` tab for that connection.
+4. Or open the editor UI → **テストケース** → **Gシートで編集** (save + export, then open).
+5. Edit rows in Sheets. Sheet **Data Agent ID** values are the GCP remote id
+   (for example `agent_marketing_marts_core_adhoc_v1`), not PrismTrail local ids.
+6. Bring changes back with suite paste import (`/api/suites/import-paste`) or
+   `POST /api/sheets/connections/:id/import-suite`.
+7. Accept Sheets display formats such as `120,000 ms` / `0 bytes` when pasting; the importer
+   normalizes them.
+
+Managed tabs owned by the app:
+
+- `AgentEval_TestSuite` — active suite definition (metadata + cases)
+- `AgentEval_Report` — run report export
+- `AgentEval_DataAgents` — registered agent catalog
+- `AgentEval_Suites` — suite catalog
+
+Do not modify unrelated user tabs on the same spreadsheet.
+
+### Case status and suite runs
+
+- Each case has `status`: `active`（実行可） or `draft`（下書き）.
+- Sheets show Japanese labels `実行可` / `下書き` in the case **ステータス** column.
+- Missing status on import defaults to `active` for backward compatibility.
+- Suite evaluation skips `draft` cases and records them as `skipped` in the report.
+- A suite with zero runnable cases cannot start a run.
+
+### Mart / table coverage suites
+
+When covering agent knowledge sources (for example 1 mart = 1 case):
+
+1. Read the live Data Agent (`GET .../dataAgents/<id>`) and use published table references /
+   system instructions. Do not invent table names.
+2. Create one smoke case per table. Prefer system requirements only until real expected values
+   are known; leave business accuracy empty rather than fabricating numbers.
+3. Fact tables: period-bounded count/trend prompts with `requireSql: true` (and chart when the
+   agent instructions require visuals). Dim/master tables: count or attribute lookup prompts.
+4. Keep prompts explicit about `dataset.table` so the agent targets the intended mart.
+5. Export the suite to the user-designated spreadsheet and report Suite ID + case count.
+
 ## Handle data and integrations
 
 - Treat run traces, BigQuery job metadata, spreadsheet connections, GCS object names, and business
@@ -71,8 +117,6 @@ npm start
 - Keep local runtime data under ignored `data/` or use the configured GCS primary storage.
 - Before enabling GCS writes, confirm the exact bucket and prefix. Sync is read-only; upload is a
   separate explicit action.
-- The application owns only `AgentEval_TestSuite` and `AgentEval_Report`. Do not modify other
-  spreadsheet tabs.
 
 ## Change the code
 

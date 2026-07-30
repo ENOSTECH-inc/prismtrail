@@ -39,6 +39,19 @@ test("summarizes suite cases", () => {
   assert.equal(summary.totalBytesBilled, 60);
 });
 
+test("skipped cases do not affect pass rate and still finish the suite", () => {
+  const summary = summarizeSuiteRun([
+    { status: "passed", evaluation: { score: 100 } },
+    { status: "skipped", evaluation: { status: "skipped", score: null, checks: [] } },
+    { status: "failed", evaluation: { score: 0 } }
+  ]);
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.skipped, 1);
+  assert.equal(summary.evaluated, 2);
+  assert.equal(summary.completed, 3);
+  assert.equal(summary.passRate, 50);
+});
+
 test("summarizes system and business scores separately and weights the overall score", () => {
   const summary = summarizeSuiteRun([
     {
