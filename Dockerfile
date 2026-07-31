@@ -12,9 +12,12 @@ RUN npm ci --omit=dev --no-audit --no-fund
 COPY --chown=node:node public ./public
 COPY --chown=node:node lib ./lib
 COPY --chown=node:node fixtures ./fixtures
+COPY --chown=node:node assets ./assets
 COPY --chown=node:node server.mjs ./
 
-RUN mkdir -p /app/data && chown node:node /app/data
+RUN mkdir -p /app/data /app/assets/fonts \
+  && node --input-type=module -e "import { ensureNotoSansJpFont } from './lib/pdf-font.mjs'; await ensureNotoSansJpFont();" \
+  && chown -R node:node /app/data /app/assets
 
 USER node
 

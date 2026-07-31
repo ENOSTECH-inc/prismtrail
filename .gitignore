@@ -3,6 +3,11 @@
 node_modules/
 data/
 work/
+assets/fonts/*.ttf
+assets/fonts/*.otf
+assets/fonts/*.ttc
+assets/fonts/*.download
+!assets/fonts/.gitkeep
 *.png
 !public/assets/
 !public/assets/prismtrail-mark.png
