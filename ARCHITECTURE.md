@@ -67,7 +67,7 @@ The suite report shows both the average score and hard pass rate. A Data Agent m
 
 ## AI editor
 
-The right-side assistant sends only the suite definition, registered agent summaries, and recent conversation turns to Vertex AI. It does not send raw BigQuery rows, access tokens, or run traces.
+The UI supports an Algolia-style command palette (`Ctrl/⌘K`, or the search control in the sidebar / case list) powered by Fuse.js. It fuzzy-searches cases (title, id, prompt), suites, reports, agents, and main pages, with keyboard navigation and recent selections.
 
 Vertex AI returns structured JSON with a message and a constrained suite patch. The UI always previews the proposal, and the user explicitly applies or discards it before the suite is saved.
 
@@ -99,24 +99,37 @@ The local server calls Google Sheets API v4 with the same short-lived ADC access
 
 Exports use schema version 2; schema version 1 remains import-compatible:
 
-- `AgentEval_TestSuite`: editable suite metadata and case rows
+- `AgentEval_TestSuite`: editable suite metadata and case rows (including free-form case `memo`, which is not used for scoring)
 - `AgentEval_Report`: read-only exported suite-run results
 
-Version 2 separates deterministic `systemRequirements` from natural-language `businessRequirements`. The latter is judged by the configured Vertex AI judge model and stored as A/B/C/D with an independent reason, evidence, discrepancy list, model, and audit metadata. A/B pass by default; judge infrastructure failures become `review_required`, never a fabricated D grade.
+Version 2 separates deterministic `systemRequirements` from checklist-style `businessRequirements`. Store checks as `criteriaItems` (Sheets column uses `;` separators; `accuracyCriteria` remains a joined compatibility string). The Vertex AI judge scores each item as sun/cloud/rain (☀️/☁️/☔️) in one call, using the full Conversational Analytics `Message` stream JSON plus compact official schema notes—not final text alone. The server derives A/B/C/D from mark weights (sun=1, cloud=0.5, rain=0: all sun→A, ratio≥0.9→B, ≥0.5→C, else D) and keeps per-item reasons. A/B pass by default; judge infrastructure failures become `review_required`, never a fabricated D grade. `requiredPhrases` matches final-response text only; `requiredSqlTables` matches identifiers in generated SQL, matched queries, and BigQuery job query text (not the answer prose).
 
 Exports preserve the tab ID by clearing and rewriting only the fixed tab, then rebuilding a complete presentation layer: Japanese display headers, metadata panels, hidden gridlines, frozen rows/ID column, filters, banding, semantic number formats, data validation, conditional formatting, and the report score chart. Existing charts, banding, conditional formats, merges, and validations owned by the fixed tab are removed before the new definition is applied, preventing duplicate formatting across repeated exports.
 
-Imports accept both the legacy machine-oriented English labels and the Japanese display labels, request unformatted cell values so unit-bearing number formats round-trip safely, ignore empty checkbox template rows, and still validate data types, registered Data Agent IDs, and the 50-case limit before calling the normal `normalizeSuite` path. A matching `suite_id` updates the local suite; otherwise the import creates a new local suite.
+Imports accept both the legacy machine-oriented English labels and the Japanese display labels, request unformatted cell values so unit-bearing number formats round-trip safely, ignore empty checkbox template rows, and still validate data types, registered Data Agent IDs, and the 120-case limit before calling the normal `normalizeSuite` path. A matching `suite_id` updates the local suite; otherwise the import creates a new local suite.
 
-`POST /api/suites/import-paste` provides a lower-friction update path for cell ranges copied from Google Sheets. It accepts TSV or RFC-style quoted CSV up to 500,000 characters. A complete managed sheet resolves the destination from its embedded suite ID; a case table or case rows require an explicit existing target suite. The server reconstructs the fixed schema, validates field types, Data Agent and knowledge references, and the 50-case limit, then atomically saves through the normal suite store. It never creates a new suite and performs no write on validation failure.
+`POST /api/suites/import-paste` provides a lower-friction update path for cell ranges copied from Google Sheets. It accepts TSV or RFC-style quoted CSV up to 500,000 characters. A complete managed sheet resolves the destination from its embedded suite ID; a case table or case rows require an explicit existing target suite. The server reconstructs the fixed schema, validates field types, Data Agent and knowledge references, and the 120-case limit, then atomically saves through the normal suite store. It never creates a new suite and performs no write on validation failure.
 
 ## Live suite execution
 
-`POST /api/suites/:id/run` creates and persists a `running` Suite Run, returns `202 Accepted` immediately, and schedules Data Agent work in the local server process with bounded parallelism (default and max 30 concurrent cases via `SUITE_RUN_CONCURRENCY`). Progress is persisted through `activeCases` / `currentCase`, `caseRuns`, cumulative summary, and timestamps. `GET /api/suite-runs/:id` is therefore a durable polling boundary used by the live report UI; navigation or browser reload does not discard already persisted progress.
+`POST /api/suites/:id/run` creates and persists a `running` Suite Run, returns `202 Accepted` immediately, and schedules Data Agent work in the local server process with bounded parallelism (default and max 30 concurrent cases via `SUITE_RUN_CONCURRENCY`). An optional JSON body `{ "caseIds": ["case_…"] }` runs only those cases (used by the editor’s single-case run); omitted `caseIds` runs the full suite. A second run of the same suite is rejected with `409` while status is `running` or `cancelling`. Progress is persisted through `activeCases` / `currentCase`, `caseRuns`, cumulative summary, and timestamps. `GET /api/suite-runs/:id` is therefore a durable polling boundary used by the live report UI; navigation or browser reload does not discard already persisted progress.
 
-After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The most recently used ready Sheets connection is the automatic destination. Export failure is recorded on the Run without changing the completed evaluation result.
+`POST /api/suite-runs/:id/cancel` aborts the in-process controller for a live run (status becomes `cancelling`, then `cancelled`). Already finished case results are kept; in-flight Data Agent calls are aborted via `AbortSignal`; cases that never started are recorded as `cancelled`. If the process restarted and the in-memory controller is gone, cancel force-finalizes the persisted run as `cancelled` so the suite is not stuck behind a 409.
+
+Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The most recently used ready Sheets connection is the automatic destination. Export failure is recorded on the Run without changing the completed evaluation result.
 
 SQL evidence is normalized across three valid execution paths: a `data.generated_sql` event, a verified `data.matched_query` carrying `exampleQuery.sqlQuery`, or a BigQuery query job. This prevents the verified-query reuse path from failing `requireSql`. Run detail responses also resolve their originating Suite Run and case by stored context or reverse lookup, allowing old and new runs to render the same breadcrumb and back-navigation contract. Completed Suite Runs with the legacy false-negative SQL check are corrected in the API view without mutating the original trace.
+
+## PDF export
+
+QA-oriented PDF downloads are generated server-side with pdfme (`@pdfme/generator`) and an embedded Noto Sans JP font (`assets/fonts/`, downloaded on first use or during Docker build). Layout follows a TestRail-inspired report pattern: navy header bands, large headline pass-rate metrics, status pie / grade stacked-bar charts (SVG via `@pdfme/schemas` Svg), count+percentage tables, and a scannable case index.
+
+- Case specs: `GET /api/suites/:id/export/case-pdf?caseId=` (one case) and `GET /api/suites/:id/export/cases-pdf` (all cases as one multi-page PDF)
+- Suite-run reports: `GET /api/suite-runs/:id/export/pdf` (Runs Summary cover + case detail pages). Partial / single-case runs (`partialRun` or `?caseId=`) omit the cover and export case detail only. Case pages include result banner, system/business check tables, and a short evidence preview (answer / sample table / chart note).
+
+Live (`running` / `cancelling`) suite runs return `409`. The UI exposes download buttons on the suite case editor and the evaluation report detail page; browser print remains available as a fallback.
+
+Each PDF page includes a clickable link back into the app (base URL defaults to `http://127.0.0.1:4318`, overridable via `PRISMTRAIL_APP_BASE_URL`). Case specs open `#/suites/:suiteId/edit/:caseId`; suite-run covers open `#/reports/:suiteRunId`; case result pages open `#/runs/:runId` when a run id exists. Links are attached as PDF URI annotations after pdfme generation.
 
 ## Deployment boundary
 

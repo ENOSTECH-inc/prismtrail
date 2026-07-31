@@ -43,6 +43,7 @@ docker compose ps
 ```
 
 The UI is available at `http://127.0.0.1:4318` unless `APP_PORT` changes it.
+Use `Ctrl/⌘K` (or the search control) for Algolia-style quick search across cases, suites, reports, and pages.
 
 Use direct Node.js startup only for development:
 
@@ -55,14 +56,29 @@ npm start
 
 - Register existing agents by full resource name:
   `projects/<project>/locations/<location>/dataAgents/<id>`.
-- Put execution constraints such as SQL, chart, duration, billed bytes, and required phrases under
-  system requirements.
-- Put expected values, periods, units, and tolerances in the natural-language business
-  requirement. Do not enable a business requirement without a verifiable expectation.
+- Put execution constraints such as SQL, chart, duration, billed bytes, required phrases, and
+  required SQL tables under system requirements.
+- `requiredPhrases` checks the final answer text. `requiredSqlTables` checks generated/matched SQL
+  (and job query text) for table identifiers; it does not look at answer prose.
+- Put expected values, periods, units, and tolerances as a `;`-separated business checklist
+  (`criteriaItems`). Do not enable business scoring without at least one verifiable item.
+- The judge receives the full Data Agent `Message` JSON plus schema notes and returns
+  sun/cloud/rain per item; the server computes A/B/C/D from those marks.
 - Treat A/B as passing by default. Preserve C/D as accuracy failures and judge infrastructure
   errors as review-required rather than fabricating a grade.
 - Prefer the managed Google Sheet for bulk test-case editing. Import it before running a changed
   suite, and confirm the Suite ID and case count.
+- Case `memo` is free-form reference text (model/metrics notes). It is stored and synced to Sheets,
+  but is not used by evaluation scoring.
+- Prefer suite evaluation over ad-hoc `/api/runs` when the user cares about pass/fail criteria.
+- From the suite editor, **このケースを実行** runs one case via `POST /api/suites/:id/run` with `{ "caseIds": [...] }`, then opens the evaluation detail (`#/reports/:id`) with a live skeleton until results appear; **スイートを実行** still runs the full suite and opens the same report page.
+- For stakeholder handoff, prefer PDF export over screenshots:
+  - Suite editor → **このケースをPDF** / **全ケースをPDF** (case specification, TestRail case-print style)
+  - Evaluation report → **PDF出力** (full run: Runs Summary cover with status pie + case index, then case details)
+  - Single-case / partial runs export **case detail only** (no suite cover page)
+  - Endpoints live under `/api/suites/:id/export/*-pdf` and `/api/suite-runs/:id/export/pdf`
+  - Generation uses pdfme on the server with Noto Sans JP; SVG pie/bar charts are embedded for at-a-glance status
+  - PDFs include a clickable link to open the case editor or run/report page (`http://127.0.0.1:4318` by default)
 
 ## Bulk-edit test cases via Google Sheets
 
@@ -96,6 +112,9 @@ Do not modify unrelated user tabs on the same spreadsheet.
 - Missing status on import defaults to `active` for backward compatibility.
 - Suite evaluation skips `draft` cases and records them as `skipped` in the report.
 - A suite with zero runnable cases cannot start a run.
+- The same suite cannot start a second run while status is `running` or `cancelling`.
+- `POST /api/suite-runs/:id/cancel` stops a live run; unfinished cases become `cancelled`.
+- Google Sheets writes are serialized per spreadsheet so parallel suite completions cannot corrupt managed tabs.
 
 ### Mart / table coverage suites
 
