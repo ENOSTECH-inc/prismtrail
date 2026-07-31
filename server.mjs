@@ -22,10 +22,12 @@ import {
   appendContextEvaluation,
   composeEvaluation,
   evaluateRun,
+  formatCriteriaItems,
+  parseCriteriaItems,
   summarizeSuiteRun
 } from "./lib/evaluate.mjs";
 import { JsonStore } from "./lib/json-store.mjs";
-import { createAsyncMutex, mapWithConcurrency } from "./lib/concurrency.mjs";
+import { createAsyncMutex, createKeyedAsyncMutex, mapWithConcurrency } from "./lib/concurrency.mjs";
 import { RunStore } from "./lib/store.mjs";
 import {
   createStorageBackend,
@@ -40,6 +42,8 @@ import {
   isIndexableObject,
   searchChunks
 } from "./lib/knowledge.mjs";
+import { ensureNotoSansJpFont } from "./lib/pdf-font.mjs";
+import { pdfFilename, renderCaseSpecPdf, renderSuiteRunPdf, isPartialSuiteRun } from "./lib/pdf-reports.mjs";
 import {
   AGENTS_SHEET,
   bootstrapManagedSheets,
@@ -51,10 +55,12 @@ import {
   REPORT_SHEET,
   SUITE_SHEET,
   SUITES_SHEET,
+  MAX_SUITE_CASES,
   normalizeSuiteAgentRefs,
   prepareSuiteForSheetExport,
   isCaseRunnable,
   normalizeCaseStatus,
+  selectSuiteCasesForRun,
   writeCatalogSheets,
   writeReportSheet,
   writeSuiteSheet
@@ -174,10 +180,15 @@ const primaryStorage = new SwitchableStorageBackend(initialBackend);
 const runStore = new RunStore(primaryStorage, "runs");
 const agentStore = new JsonStore(primaryStorage, "agents");
 const suiteStore = new JsonStore(primaryStorage, "suites");
+const suiteVersionStore = new JsonStore(primaryStorage, "suite-versions");
 const suiteRunStore = new JsonStore(primaryStorage, "suite-runs");
 const sheetConnectionStore = new JsonStore(primaryStorage, "sheet-connections");
 const knowledgeSourceStore = new JsonStore(primaryStorage, "knowledge-sources");
 const knowledgeIndexStore = new JsonStore(primaryStorage, "knowledge-indexes");
+/** Serialize Google Sheets mutations per spreadsheet to avoid interleaved clear/rewrite. */
+const withSpreadsheetLock = createKeyedAsyncMutex();
+/** In-process abort controllers for live suite runs (lost on process restart). */
+const suiteRunControllers = new Map();
 const port = Number(process.env.PORT || 4318);
 const host = process.env.HOST || "127.0.0.1";
 const SUITE_RUN_MAX_CONCURRENCY = 30;
@@ -186,6 +197,27 @@ function suiteRunConcurrency() {
   const raw = Number(process.env.SUITE_RUN_CONCURRENCY ?? SUITE_RUN_MAX_CONCURRENCY);
   if (!Number.isFinite(raw) || raw < 1) return SUITE_RUN_MAX_CONCURRENCY;
   return Math.min(SUITE_RUN_MAX_CONCURRENCY, Math.floor(raw));
+}
+
+function isSuiteRunActive(run) {
+  return run?.status === "running" || run?.status === "cancelling";
+}
+
+function isAbortError(error) {
+  return (
+    error?.name === "AbortError" ||
+    /aborted|AbortError/i.test(String(error?.message || ""))
+  );
+}
+
+function cancelledCaseResult(testCase) {
+  return {
+    caseId: testCase.id,
+    title: testCase.title,
+    status: "cancelled",
+    skipReason: "実行が中止されたためスキップしました。",
+    evaluation: { status: "cancelled", score: null, checks: [] }
+  };
 }
 
 const config = {
@@ -214,6 +246,7 @@ const staticFiles = {
   "/styles.css": ["styles.css", "text/css; charset=utf-8"],
   "/assets/prismtrail-mark.png": ["assets/prismtrail-mark.png", "image/png"],
   "/vendor/lucide.min.js": ["../node_modules/lucide/dist/umd/lucide.min.js", "text/javascript; charset=utf-8"],
+  "/vendor/fuse.min.mjs": ["../node_modules/fuse.js/dist/fuse.min.mjs", "text/javascript; charset=utf-8"],
   "/vendor/vega.min.js": ["../node_modules/vega/build/vega.min.js", "text/javascript; charset=utf-8"],
   "/vendor/vega-lite.min.js": ["../node_modules/vega-lite/build/vega-lite.min.js", "text/javascript; charset=utf-8"],
   "/vendor/vega-embed.min.js": ["../node_modules/vega-embed/build/vega-embed.min.js", "text/javascript; charset=utf-8"]
@@ -247,6 +280,17 @@ function sendJson(response, status, body) {
     "Cache-Control": "no-store"
   });
   response.end(JSON.stringify(body));
+}
+
+function sendPdf(response, bytes, filename) {
+  const body = Buffer.from(bytes);
+  response.writeHead(200, {
+    ...securityHeaders("application/pdf"),
+    "Cache-Control": "no-store",
+    "Content-Length": String(body.length),
+    "Content-Disposition": `attachment; filename="${filename}"`
+  });
+  response.end(body);
 }
 
 function requestedStorageConfig(body = {}) {
@@ -326,12 +370,165 @@ function objectId(prefix) {
   return `${prefix}_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
 }
 
+const SUITE_UPDATE_METHODS = new Set([
+  "ui_create",
+  "ui_edit",
+  "sheet_paste",
+  "sheet_import",
+  "restore"
+]);
+
+function normalizeUpdateMethod(value, fallback = "ui_edit") {
+  const method = String(value || "").trim();
+  return SUITE_UPDATE_METHODS.has(method) ? method : fallback;
+}
+
+let cachedUpdatedBy = { value: "", expiresAt: 0 };
+
+async function resolveUpdatedBy() {
+  const now = Date.now();
+  if (cachedUpdatedBy.value && cachedUpdatedBy.expiresAt > now) {
+    return cachedUpdatedBy.value;
+  }
+  let value = "local";
+  try {
+    const { GoogleAuth } = await import("google-auth-library");
+    const auth = new GoogleAuth({
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"]
+    });
+    const credentials = await auth.getCredentials();
+    if (credentials?.client_email) value = credentials.client_email;
+    else if (credentials?.refresh_token || credentials?.type === "authorized_user") {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+      const binary = process.env.GCLOUD_BIN || "gcloud";
+      const { stdout } = await execFileAsync(binary, ["config", "get-value", "account"], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024
+      });
+      const account = String(stdout || "").trim();
+      if (account && account !== "(unset)") value = account;
+    }
+  } catch {
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+      const binary = process.env.GCLOUD_BIN || "gcloud";
+      const { stdout } = await execFileAsync(binary, ["config", "get-value", "account"], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024
+      });
+      const account = String(stdout || "").trim();
+      if (account && account !== "(unset)") value = account;
+    } catch {
+      // Keep local fallback when ADC account cannot be resolved.
+    }
+  }
+  cachedUpdatedBy = { value, expiresAt: now + 5 * 60_000 };
+  return value;
+}
+
+function suiteVersionProjection(version) {
+  return {
+    id: version.id,
+    suiteId: version.suiteId,
+    createdAt: version.createdAt,
+    updateMethod: version.updateMethod,
+    updatedBy: version.updatedBy,
+    caseCount: Array.isArray(version.snapshot?.cases) ? version.snapshot.cases.length : 0,
+    suiteName: version.snapshot?.name || "",
+    suiteUpdatedAt: version.snapshot?.updatedAt || version.createdAt
+  };
+}
+
+async function listSuiteVersions(suiteId) {
+  const versions = (await suiteVersionStore.list()).filter((item) => item.suiteId === suiteId);
+  return versions.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+async function recordSuiteVersion(suite, { updateMethod, updatedBy } = {}) {
+  const method = normalizeUpdateMethod(updateMethod);
+  const actor = String(updatedBy || (await resolveUpdatedBy()) || "local").trim() || "local";
+  const version = {
+    schemaVersion: 1,
+    id: objectId("suite_version"),
+    suiteId: suite.id,
+    createdAt: new Date().toISOString(),
+    updateMethod: method,
+    updatedBy: actor,
+    snapshot: structuredClone(suite)
+  };
+  await suiteVersionStore.save(version);
+  return version;
+}
+
+async function saveSuiteWithHistory(suite, { updateMethod, updatedBy } = {}) {
+  const saved = await suiteStore.save(suite);
+  await recordSuiteVersion(saved, { updateMethod, updatedBy });
+  return saved;
+}
+
+async function deleteSuiteVersions(suiteId) {
+  const versions = await listSuiteVersions(suiteId);
+  await Promise.all(versions.map((version) => suiteVersionStore.delete(version.id)));
+}
+
+function normalizeListField(value, { max = 10 } = {}) {
+  if (!Array.isArray(value)) return [];
+  return value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, max);
+}
+
+/**
+ * Full Conversational Analytics response JSON for the business judge, plus a compact
+ * schema crib from the official Message / SystemMessage docs.
+ * https://cloud.google.com/gemini/docs/conversational-analytics-api/reference/rest/v1alpha/Message
+ */
+function buildBusinessJudgeEvidence(run = {}) {
+  const messages = Array.isArray(run.rawMessages)
+    ? run.rawMessages
+    : (run.events || []).map((event) => event.raw).filter(Boolean);
+  if (!messages.length) return "";
+  const payload = {
+    schemaNotes: {
+      docs: "https://cloud.google.com/gemini/docs/conversational-analytics-api/reference/rest/v1alpha/Message",
+      message:
+        "Message { timestamp, messageId, userMessage | systemMessage }. Each streamed item is one Message.",
+      userMessage: "UserMessage { text | inlineContext }",
+      systemMessage: {
+        text: "TextMessage { parts[], textType: FINAL_RESPONSE|THOUGHT|PROGRESS|..., citations? }",
+        schema: "SchemaMessage { query | result } — datasource / schema resolution",
+        data: {
+          query: "DataQuery — retrieval plan",
+          generatedSql: "string SQL used to fetch data",
+          result: "DataResult { name, schema, data[], formattedData[] }",
+          bigQueryJob: "BigQueryJob metadata (jobId, projectId, location, ...)",
+          matchedQuery: "MatchedQuery — reused example query (may include sqlQuery)"
+        },
+        analysis: "AnalysisMessage — Python / advanced analysis",
+        chart: "ChartMessage { query | result (Vega / chart blob) }",
+        error: "ErrorMessage",
+        exampleQueries: "ExampleQueries",
+        clarification: "ClarificationMessage — follow-up questions when the agent needs input"
+      },
+      judgingHint:
+        "Prefer FINAL_RESPONSE text, data.generatedSql / matchedQuery.sqlQuery, data.result rows, and chart presence when scoring checklist items."
+    },
+    messages
+  };
+  return JSON.stringify(payload).slice(0, 100_000);
+}
+
 function normalizeExpectations(value = {}) {
   const system = value.systemRequirements || value;
   const business = value.businessRequirements || {};
-  const accuracyCriteria = String(
-    business.accuracyCriteria ?? value.accuracyCriteria ?? ""
-  ).trim().slice(0, 5000);
+  const requiredPhrases = normalizeListField(system.requiredPhrases);
+  const requiredSqlTables = normalizeListField(system.requiredSqlTables);
+  const criteriaItems = parseCriteriaItems(
+    business.criteriaItems ?? business.accuracyCriteria ?? value.accuracyCriteria
+  );
+  const accuracyCriteria = formatCriteriaItems(criteriaItems).slice(0, 5000);
   return {
     schemaVersion: 2,
     systemRequirements: {
@@ -339,12 +536,12 @@ function normalizeExpectations(value = {}) {
       requireChart: Boolean(system.requireChart),
       maxDurationMs: Math.max(0, Number(system.maxDurationMs || 0)),
       maxBytesBilled: Math.max(0, Number(system.maxBytesBilled || 0)),
-      requiredPhrases: Array.isArray(system.requiredPhrases)
-        ? system.requiredPhrases.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 10)
-        : []
+      requiredPhrases,
+      requiredSqlTables
     },
     businessRequirements: {
-      enabled: business.enabled !== false && Boolean(accuracyCriteria),
+      enabled: business.enabled !== false && criteriaItems.length > 0,
+      criteriaItems,
       accuracyCriteria,
       passingGrade: ["A", "B", "C", "D"].includes(business.passingGrade)
         ? business.passingGrade
@@ -355,9 +552,8 @@ function normalizeExpectations(value = {}) {
     requireChart: Boolean(system.requireChart),
     maxDurationMs: Math.max(0, Number(system.maxDurationMs || 0)),
     maxBytesBilled: Math.max(0, Number(system.maxBytesBilled || 0)),
-    requiredPhrases: Array.isArray(system.requiredPhrases)
-      ? system.requiredPhrases.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 10)
-      : []
+    requiredPhrases,
+    requiredSqlTables
   };
 }
 
@@ -375,7 +571,7 @@ function normalizeSuite(body, existing = {}) {
     knowledgeSourceIds: Array.isArray(body.knowledgeSourceIds)
       ? body.knowledgeSourceIds.map(String).filter(Boolean).slice(0, 20)
       : existing.knowledgeSourceIds || [],
-    cases: cases.slice(0, 50).map((item, index) => ({
+    cases: cases.slice(0, MAX_SUITE_CASES).map((item, index) => ({
       id: /^[a-zA-Z0-9_-]+$/.test(String(item.id || "")) ? String(item.id) : `case_${index + 1}_${randomUUID().slice(0, 6)}`,
       title: String(item.title || `テストケース ${index + 1}`).trim().slice(0, 160),
       prompt: String(item.prompt || "").trim().slice(0, 5000),
@@ -385,6 +581,7 @@ function normalizeSuite(body, existing = {}) {
         : [],
       thinkingMode: item.thinkingMode === "THINKING" ? "THINKING" : "FAST",
       status: normalizeCaseStatus(item.status, { fallback: "active" }),
+      memo: String(item.memo ?? "").trim().slice(0, 20000),
       expectations: normalizeExpectations(item.expectations)
     })),
     createdAt: existing.createdAt || now,
@@ -577,9 +774,10 @@ async function resolveRunContext(runId) {
 }
 
 async function runDetailView(run) {
+  const isLive = run?.summary?.status === "running";
   return {
     ...run,
-    summary: correctedRunSummary(run),
+    summary: isLive ? run.summary : correctedRunSummary(run),
     context: run.context || await resolveRunContext(run.id)
   };
 }
@@ -686,12 +884,14 @@ async function connectAndBootstrapSheet({
   const suite = await resolveBootstrapSuite(suiteId);
   const agents = await agentStore.list();
   const suites = await suiteStore.list();
-  const bootstrap = await bootstrapManagedSheets(spreadsheetId, {
-    suite,
-    agents,
-    suites,
-    forceOperational
-  });
+  const bootstrap = await withSpreadsheetLock(spreadsheetId, () =>
+    bootstrapManagedSheets(spreadsheetId, {
+      suite,
+      agents,
+      suites,
+      forceOperational
+    })
+  );
   const remote = bootstrap.spreadsheet;
   const bootstrapped =
     bootstrap.suiteBootstrapped || bootstrap.reportBootstrapped || bootstrap.catalogsBootstrapped;
@@ -749,7 +949,9 @@ async function syncReadySheetCatalogs() {
   const results = [];
   for (const connection of connections) {
     try {
-      const catalog = await writeCatalogSheets(connection.spreadsheetId, { agents, suites });
+      const catalog = await withSpreadsheetLock(connection.spreadsheetId, () =>
+        writeCatalogSheets(connection.spreadsheetId, { agents, suites })
+      );
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
         ...connection,
@@ -821,6 +1023,21 @@ async function validateSuiteReferences(suite) {
   };
 }
 
+function runningRunSummary() {
+  return {
+    status: "running",
+    eventCount: 0,
+    errorCount: 0,
+    sqlCount: 0,
+    chartCount: 0,
+    jobCount: 0,
+    durationMs: 0,
+    totalBytesProcessed: 0,
+    totalBytesBilled: 0,
+    totalSlotMs: 0
+  };
+}
+
 async function executeRun(body) {
   const question = String(body.question || "").trim();
   const agent = String(body.agent || config.agent).trim();
@@ -829,15 +1046,16 @@ async function executeRun(body) {
   if (question.length < 5 || question.length > 5000) throw new Error("質問は5〜5000文字で指定してください。");
   if (!validateAgentResource(agent)) throw new Error("Data Agent resource nameの形式が正しくありません。");
 
-  const id = objectId("run");
-  const createdAt = new Date().toISOString();
+  const id = body.id || objectId("run");
+  const createdAt = body.createdAt || new Date().toISOString();
   console.log(`[run] ${id} ${thinkingMode} ${question.slice(0, 120)}`);
   const result = await chatWithDataAgent({
     billingProject: config.billingProject,
     location: parseAgentResource(agent)?.location || config.location,
     dataAgent: agent,
     question,
-    thinkingMode
+    thinkingMode,
+    signal: body.signal
   });
   const events = normalizeMessages(result.messages);
   const jobs = await fetchJobDetails(events, result.token);
@@ -856,6 +1074,60 @@ async function executeRun(body) {
     jobs,
     summary
   });
+}
+
+/** Start a single-prompt run and return immediately; completion updates the stored run. */
+async function startSingleRun(body) {
+  const question = String(body.question || "").trim();
+  const agent = String(body.agent || config.agent).trim();
+  const agentLabel = String(body.agentLabel || config.agentLabel).trim();
+  const thinkingMode = body.thinkingMode === "THINKING" ? "THINKING" : "FAST";
+  if (question.length < 5 || question.length > 5000) throw new Error("質問は5〜5000文字で指定してください。");
+  if (!validateAgentResource(agent)) throw new Error("Data Agent resource nameの形式が正しくありません。");
+
+  const id = objectId("run");
+  const createdAt = new Date().toISOString();
+  const pending = {
+    schemaVersion: 1,
+    id,
+    createdAt,
+    question,
+    agent,
+    agentLabel,
+    context: body.context || null,
+    request: null,
+    rawMessages: [],
+    events: [],
+    jobs: [],
+    summary: runningRunSummary()
+  };
+  await runStore.save(pending);
+  setImmediate(() => {
+    executeRun({ ...body, id, createdAt, question, agent, agentLabel, thinkingMode })
+      .catch(async (error) => {
+        console.error(`[run] ${id} ${error.stack || error.message}`);
+        await runStore.save({
+          ...pending,
+          fatalError: error.message,
+          events: [
+            {
+              kind: "error",
+              phase: "unknown",
+              severity: "error",
+              label: error.message,
+              payload: { message: error.message }
+            }
+          ],
+          summary: {
+            ...runningRunSummary(),
+            status: "failed",
+            eventCount: 1,
+            errorCount: 1
+          }
+        });
+      });
+  });
+  return pending;
 }
 
 async function createSuiteRun(suite) {
@@ -908,7 +1180,9 @@ async function autoExportSuiteRun(suiteRun) {
     };
   }
   try {
-    const result = await writeReportSheet(connection.spreadsheetId, suiteRun);
+    const result = await withSpreadsheetLock(connection.spreadsheetId, () =>
+      writeReportSheet(connection.spreadsheetId, suiteRun)
+    );
     const now = new Date().toISOString();
     const updated = await sheetConnectionStore.save({
       ...connection,
@@ -939,12 +1213,13 @@ async function autoExportSuiteRun(suiteRun) {
   }
 }
 
-async function processSuiteRun(suite, suiteRun) {
+async function processSuiteRun(suite, suiteRun, abortController) {
   const agents = new Map((await agentStore.list()).map((agent) => [agent.id, agent]));
   const concurrency = suiteRunConcurrency();
   const withLock = createAsyncMutex();
   const caseRunById = new Map();
   const activeCases = new Map();
+  const signal = abortController.signal;
 
   const orderedCaseRuns = () =>
     suite.cases.map((item) => caseRunById.get(item.id)).filter(Boolean);
@@ -978,7 +1253,7 @@ async function processSuiteRun(suite, suiteRun) {
       suiteRun.summary.completed = suiteRun.caseRuns.length;
       suiteRun.summary.running = active.length;
       suiteRun.summary.concurrency = concurrency;
-      suiteRun.status = "running";
+      if (suiteRun.status !== "cancelling") suiteRun.status = "running";
       suiteRun.updatedAt = new Date().toISOString();
       await suiteRunStore.save(suiteRun);
     });
@@ -990,154 +1265,171 @@ async function processSuiteRun(suite, suiteRun) {
   };
   await suiteRunStore.save(suiteRun);
 
-  await mapWithConcurrency(suite.cases, concurrency, async (testCase, caseIndex) => {
-    if (!isCaseRunnable(testCase)) {
-      await recordCaseResult({
-        caseId: testCase.id,
-        title: testCase.title,
-        status: "skipped",
-        skipReason: "ケースのステータスが実行可ではないためスキップしました。",
-        evaluation: { status: "skipped", score: null, checks: [] }
-      });
-      return;
-    }
-
-    await setCasePhase(testCase, caseIndex, "running");
-    const agent = agents.get(testCase.agentId);
-    if (!agent) {
-      await recordCaseResult({
-        caseId: testCase.id,
-        title: testCase.title,
-        status: "failed",
-        error: "選択されたData Agentが登録されていません。",
-        evaluation: { status: "failed", score: 0, checks: [] }
-      });
-      return;
-    }
-
-    try {
-      const selectedKnowledgeSourceIds = testCase.knowledgeSourceIds?.length
-        ? testCase.knowledgeSourceIds
-        : suite.knowledgeSourceIds || [];
-      const retrieved = await retrieveKnowledge(testCase.prompt, selectedKnowledgeSourceIds);
-      const run = await executeRun({
-        question: testCase.prompt,
-        agent: agent.resourceName,
-        agentLabel: agent.displayName,
-        thinkingMode: testCase.thinkingMode,
-        context: {
-          suiteRunId: suiteRun.id,
-          suiteId: suite.id,
-          suiteName: suite.name,
-          caseId: testCase.id,
-          caseTitle: testCase.title
-        }
-      });
-      await setCasePhase(testCase, caseIndex, "evaluating_system");
-      let evaluation = evaluateRun(run, testCase.expectations);
-      if (retrieved.context) {
-        const responseText = (run.events || [])
-          .filter((event) => event.kind === "text.final_response")
-          .flatMap((event) => event.payload?.parts || [])
-          .join("\n");
-        let judge;
-        try {
-          judge = await judgeResponseWithContext({
-            project: config.vertexProject,
-            location: config.vertexLocation,
-            model: config.vertexModel,
-            question: testCase.prompt,
-            responseText,
-            knowledgeContext: retrieved.context
-          });
-        } catch (error) {
-          judge = {
-            passed: false,
-            score: 0,
-            reason: `ナレッジ根拠判定を完了できませんでした: ${error.message}`,
-            citations: [],
-            evaluationError: true
-          };
-        }
-        evaluation = appendContextEvaluation(evaluation, judge);
+  await mapWithConcurrency(
+    suite.cases,
+    concurrency,
+    async (testCase, caseIndex) => {
+      if (signal.aborted) {
+        await recordCaseResult(cancelledCaseResult(testCase));
+        return;
       }
-      const businessRequirements = testCase.expectations?.businessRequirements || {};
-      if (businessRequirements.enabled && businessRequirements.accuracyCriteria) {
-        await setCasePhase(testCase, caseIndex, "evaluating_business");
-        const finalText = (run.events || [])
-          .filter((event) => event.kind === "text.final_response")
-          .flatMap((event) => event.payload?.parts || [])
-          .join("\n");
-        const dataEvidence = (run.events || [])
-          .filter((event) => event.kind === "data.result")
-          .slice(0, 5)
-          .map((event) => JSON.stringify(event.payload))
-          .join("\n")
-          .slice(0, 40_000);
-        const answerEvidence = [
-          finalText ? `FINAL_RESPONSE:\n${finalText}` : "",
-          dataEvidence ? `DATA_RESULT:\n${dataEvidence}` : ""
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        let accuracyJudge;
-        if (!answerEvidence) {
-          accuracyJudge = {
-            evaluationError: true,
-            reason: "精度を判定できる最終回答またはデータ結果がありません。"
-          };
-        } else {
+
+      if (!isCaseRunnable(testCase)) {
+        await recordCaseResult({
+          caseId: testCase.id,
+          title: testCase.title,
+          status: "skipped",
+          skipReason: "ケースのステータスが実行可ではないためスキップしました。",
+          evaluation: { status: "skipped", score: null, checks: [] }
+        });
+        return;
+      }
+
+      await setCasePhase(testCase, caseIndex, "running");
+      const agent = agents.get(testCase.agentId);
+      if (!agent) {
+        await recordCaseResult({
+          caseId: testCase.id,
+          title: testCase.title,
+          status: "failed",
+          error: "選択されたData Agentが登録されていません。",
+          evaluation: { status: "failed", score: 0, checks: [] }
+        });
+        return;
+      }
+
+      try {
+        if (signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+        const selectedKnowledgeSourceIds = testCase.knowledgeSourceIds?.length
+          ? testCase.knowledgeSourceIds
+          : suite.knowledgeSourceIds || [];
+        const retrieved = await retrieveKnowledge(testCase.prompt, selectedKnowledgeSourceIds);
+        const run = await executeRun({
+          question: testCase.prompt,
+          agent: agent.resourceName,
+          agentLabel: agent.displayName,
+          thinkingMode: testCase.thinkingMode,
+          signal,
+          context: {
+            suiteRunId: suiteRun.id,
+            suiteId: suite.id,
+            suiteName: suite.name,
+            caseId: testCase.id,
+            caseTitle: testCase.title
+          }
+        });
+        if (signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+        await setCasePhase(testCase, caseIndex, "evaluating_system");
+        let evaluation = evaluateRun(run, testCase.expectations);
+        if (retrieved.context) {
+          const responseText = (run.events || [])
+            .filter((event) => event.kind === "text.final_response")
+            .flatMap((event) => event.payload?.parts || [])
+            .join("\n");
+          let judge;
           try {
-            accuracyJudge = await judgeBusinessAccuracy({
+            judge = await judgeResponseWithContext({
               project: config.vertexProject,
               location: config.vertexLocation,
-              model: config.vertexJudgeModel,
+              model: config.vertexModel,
               question: testCase.prompt,
-              accuracyCriteria: businessRequirements.accuracyCriteria,
-              answerEvidence
+              responseText,
+              knowledgeContext: retrieved.context
             });
           } catch (error) {
-            accuracyJudge = {
-              evaluationError: true,
-              reason: `Vertex AIによる精度判定を完了できませんでした: ${error.message}`
+            judge = {
+              passed: false,
+              score: 0,
+              reason: `ナレッジ根拠判定を完了できませんでした: ${error.message}`,
+              citations: [],
+              evaluationError: true
             };
           }
+          evaluation = appendContextEvaluation(evaluation, judge);
         }
-        evaluation = composeEvaluation(evaluation, accuracyJudge, businessRequirements);
-      } else {
-        evaluation = composeEvaluation(evaluation, null, businessRequirements);
+        const businessRequirements = testCase.expectations?.businessRequirements || {};
+        const criteriaItems = parseCriteriaItems(
+          businessRequirements.criteriaItems ?? businessRequirements.accuracyCriteria
+        );
+        if (businessRequirements.enabled && criteriaItems.length) {
+          if (signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+          await setCasePhase(testCase, caseIndex, "evaluating_business");
+          const answerEvidence = buildBusinessJudgeEvidence(run);
+          let accuracyJudge;
+          if (!answerEvidence) {
+            accuracyJudge = {
+              evaluationError: true,
+              reason: "精度を判定できる Data Agent レスポンスがありません。"
+            };
+          } else {
+            try {
+              accuracyJudge = await judgeBusinessAccuracy({
+                project: config.vertexProject,
+                location: config.vertexLocation,
+                model: config.vertexJudgeModel,
+                question: testCase.prompt,
+                criteriaItems,
+                answerEvidence
+              });
+            } catch (error) {
+              accuracyJudge = {
+                evaluationError: true,
+                reason: `Vertex AIによる精度判定を完了できませんでした: ${error.message}`
+              };
+            }
+          }
+          evaluation = composeEvaluation(evaluation, accuracyJudge, {
+            ...businessRequirements,
+            criteriaItems,
+            accuracyCriteria: formatCriteriaItems(criteriaItems)
+          });
+        } else {
+          evaluation = composeEvaluation(evaluation, null, businessRequirements);
+        }
+        await recordCaseResult({
+          caseId: testCase.id,
+          title: testCase.title,
+          agentId: agent.id,
+          status: evaluation.status,
+          runId: run.id,
+          runSummary: run.summary,
+          knowledge: {
+            sourceIds: selectedKnowledgeSourceIds,
+            retrievedChunks: retrieved.matches.map((chunk) => ({
+              sourceId: chunk.sourceId,
+              objectName: chunk.objectName,
+              chunkIndex: chunk.chunkIndex,
+              score: chunk.score
+            }))
+          },
+          evaluation
+        });
+      } catch (error) {
+        if (signal.aborted || isAbortError(error)) {
+          await recordCaseResult(cancelledCaseResult(testCase));
+          return;
+        }
+        await recordCaseResult({
+          caseId: testCase.id,
+          title: testCase.title,
+          agentId: agent.id,
+          status: "failed",
+          error: error.message,
+          evaluation: { status: "failed", score: 0, checks: [] }
+        });
       }
-      await recordCaseResult({
-        caseId: testCase.id,
-        title: testCase.title,
-        agentId: agent.id,
-        status: evaluation.status,
-        runId: run.id,
-        runSummary: run.summary,
-        knowledge: {
-          sourceIds: selectedKnowledgeSourceIds,
-          retrievedChunks: retrieved.matches.map((chunk) => ({
-            sourceId: chunk.sourceId,
-            objectName: chunk.objectName,
-            chunkIndex: chunk.chunkIndex,
-            score: chunk.score
-          }))
-        },
-        evaluation
-      });
-    } catch (error) {
-      await recordCaseResult({
-        caseId: testCase.id,
-        title: testCase.title,
-        agentId: agent.id,
-        status: "failed",
-        error: error.message,
-        evaluation: { status: "failed", score: 0, checks: [] }
-      });
-    }
-  });
+    },
+    { signal }
+  );
 
-  suiteRun.status = summarizeSuiteRun(suiteRun.caseRuns).status;
+  for (const testCase of suite.cases) {
+    if (!caseRunById.has(testCase.id)) {
+      await recordCaseResult(cancelledCaseResult(testCase));
+    }
+  }
+
+  const wasCancelled = signal.aborted || suiteRun.status === "cancelling";
+  suiteRun.status = wasCancelled ? "cancelled" : summarizeSuiteRun(suiteRun.caseRuns).status;
   suiteRun.completedAt = new Date().toISOString();
   suiteRun.updatedAt = suiteRun.completedAt;
   suiteRun.currentCase = null;
@@ -1146,35 +1438,104 @@ async function processSuiteRun(suite, suiteRun) {
   suiteRun.summary.completed = suiteRun.caseRuns.length;
   suiteRun.summary.running = 0;
   suiteRun.summary.concurrency = concurrency;
+  if (wasCancelled) suiteRun.summary.status = "cancelled";
   suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.completedAt };
   await suiteRunStore.save(suiteRun);
-  await suiteStore.save({ ...suite, lastRunAt: suiteRun.completedAt, updatedAt: suiteRun.completedAt });
+  const existingSuite = await suiteStore.get(suite.id).catch(() => null);
+  if (existingSuite) {
+    await suiteStore.save({
+      ...existingSuite,
+      lastRunAt: suiteRun.completedAt,
+      updatedAt: suiteRun.completedAt
+    });
+  }
   suiteRun.sheetExport = await autoExportSuiteRun(suiteRun);
   suiteRun.updatedAt = new Date().toISOString();
   await suiteRunStore.save(suiteRun);
   return suiteRun;
 }
 
-async function startSuiteRun(suite) {
-  const suiteRun = await createSuiteRun(suite);
+async function startSuiteRun(suite, { caseIds } = {}) {
+  const activeRun = (await suiteRunStore.list()).find(
+    (run) => run.suiteId === suite.id && isSuiteRunActive(run)
+  );
+  if (activeRun) {
+    const error = new Error(
+      "このスイートはすでに実行中です。完了または中止してから再実行してください。"
+    );
+    error.status = 409;
+    throw error;
+  }
+  const runSuite = selectSuiteCasesForRun(suite, caseIds);
+  const suiteRun = await createSuiteRun(runSuite);
+  if (Array.isArray(caseIds) && caseIds.length) {
+    suiteRun.selectedCaseIds = runSuite.cases.map((item) => item.id);
+    suiteRun.partialRun = true;
+    await suiteRunStore.save(suiteRun);
+  }
+  const abortController = new AbortController();
+  suiteRunControllers.set(suiteRun.id, abortController);
   setImmediate(() => {
-    processSuiteRun(suite, suiteRun).catch(async (error) => {
-      const now = new Date().toISOString();
-      suiteRun.status = "failed";
-      suiteRun.fatalError = error.message;
-      suiteRun.currentCase = null;
-      suiteRun.activeCases = [];
-      suiteRun.completedAt = now;
-      suiteRun.updatedAt = now;
-      suiteRun.sheetExport = {
-        status: "skipped",
-        message: "実行処理が中断されたため、Google Sheetsへ出力していません。"
-      };
-      await suiteRunStore.save(suiteRun);
-      console.error(`[suite-run] ${suiteRun.id} ${error.stack || error.message}`);
-    });
+    processSuiteRun(runSuite, suiteRun, abortController)
+      .catch(async (error) => {
+        const now = new Date().toISOString();
+        suiteRun.status = abortController.signal.aborted ? "cancelled" : "failed";
+        suiteRun.fatalError = abortController.signal.aborted ? undefined : error.message;
+        suiteRun.currentCase = null;
+        suiteRun.activeCases = [];
+        suiteRun.completedAt = now;
+        suiteRun.updatedAt = now;
+        suiteRun.sheetExport = {
+          status: "skipped",
+          message: abortController.signal.aborted
+            ? "実行が中止されたため、Google Sheetsへ出力していません。"
+            : "実行処理が中断されたため、Google Sheetsへ出力していません。"
+        };
+        await suiteRunStore.save(suiteRun);
+        console.error(`[suite-run] ${suiteRun.id} ${error.stack || error.message}`);
+      })
+      .finally(() => {
+        suiteRunControllers.delete(suiteRun.id);
+      });
   });
   return suiteRun;
+}
+
+async function cancelSuiteRun(suiteRunId) {
+  const suiteRun = await suiteRunStore.get(suiteRunId);
+  if (!isSuiteRunActive(suiteRun)) {
+    const error = new Error("実行中のスイート評価だけ中止できます。");
+    error.status = 409;
+    throw error;
+  }
+  const controller = suiteRunControllers.get(suiteRun.id);
+  const now = new Date().toISOString();
+  if (!controller) {
+    // Orphaned after process restart: finalize locally so the suite can run again.
+    suiteRun.status = "cancelled";
+    suiteRun.cancelRequestedAt = now;
+    suiteRun.completedAt = now;
+    suiteRun.updatedAt = now;
+    suiteRun.currentCase = null;
+    suiteRun.activeCases = [];
+    suiteRun.summary = {
+      ...(suiteRun.summary || {}),
+      status: "cancelled",
+      running: 0
+    };
+    suiteRun.sheetExport = {
+      status: "skipped",
+      message: "サーバー再起動後の実行だったため、中止として確定し Google Sheets へは出力していません。"
+    };
+    await suiteRunStore.save(suiteRun);
+    return slimSuiteRun(suiteRun);
+  }
+  if (!controller.signal.aborted) controller.abort();
+  suiteRun.status = "cancelling";
+  suiteRun.cancelRequestedAt = now;
+  suiteRun.updatedAt = now;
+  await suiteRunStore.save(suiteRun);
+  return slimSuiteRun(suiteRun);
 }
 
 async function seedData() {
@@ -1198,7 +1559,7 @@ async function seedData() {
   }
   const suites = await suiteStore.list();
   if (!suites.length && validateAgentResource(config.agent)) {
-    await suiteStore.save(
+    await saveSuiteWithHistory(
       normalizeSuite({
         name: "TPC-DS 実業務リグレッション",
         description: "可視化、異常検知、集計の代表的な業務質問をまとめて評価します。",
@@ -1223,7 +1584,8 @@ async function seedData() {
             expectations: { requireSql: true, maxDurationMs: 120000 }
           }
         ]
-      })
+      }),
+      { updateMethod: "ui_create", updatedBy: "system" }
     );
   }
 }
@@ -1405,7 +1767,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/runs") {
-      sendJson(response, 201, await executeRun(await readJson(request)));
+      sendJson(response, 202, await runDetailView(await startSingleRun(await readJson(request))));
       return;
     }
 
@@ -1574,7 +1936,7 @@ const server = createServer(async (request, response) => {
           agentsTab: AGENTS_SHEET,
           suitesTab: SUITES_SHEET,
           schemaVersion: 2,
-          maxCases: 50
+          maxCases: MAX_SUITE_CASES
         }
       });
       return;
@@ -1620,10 +1982,13 @@ const server = createServer(async (request, response) => {
       const suite = await suiteStore.get(String(body.suiteId || ""));
       const agents = await agentStore.list();
       const prepared = prepareSuiteForSheetExport(suite, agents);
-      const result = await writeSuiteSheet(connection.spreadsheetId, prepared, { agents });
-      await writeCatalogSheets(connection.spreadsheetId, {
-        agents,
-        suites: await suiteStore.list()
+      const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+        const suiteResult = await writeSuiteSheet(connection.spreadsheetId, prepared, { agents });
+        await writeCatalogSheets(connection.spreadsheetId, {
+          agents,
+          suites: await suiteStore.list()
+        });
+        return suiteResult;
       });
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
@@ -1650,14 +2015,25 @@ const server = createServer(async (request, response) => {
     );
     if (request.method === "POST" && sheetImportSuiteMatch) {
       const connection = await sheetConnectionStore.get(sheetImportSuiteMatch[1]);
-      const imported = await readSuiteSheet(connection.spreadsheetId);
-      const references = await validateSuiteReferences(imported.suite);
-      const existing = await findLocalSuite(references.suite.sourceSuiteId || imported.suite.sourceSuiteId);
-      const suite = await suiteStore.save(normalizeSuite(references.suite, existing || {}));
-      await writeCatalogSheets(connection.spreadsheetId, {
-        agents: await agentStore.list(),
-        suites: await suiteStore.list()
-      });
+      const { imported, suite, existing } = await withSpreadsheetLock(
+        connection.spreadsheetId,
+        async () => {
+          const importedSuite = await readSuiteSheet(connection.spreadsheetId);
+          const references = await validateSuiteReferences(importedSuite.suite);
+          const existingSuite = await findLocalSuite(
+            references.suite.sourceSuiteId || importedSuite.suite.sourceSuiteId
+          );
+          const saved = await saveSuiteWithHistory(
+            normalizeSuite(references.suite, existingSuite || {}),
+            { updateMethod: "sheet_import" }
+          );
+          await writeCatalogSheets(connection.spreadsheetId, {
+            agents: await agentStore.list(),
+            suites: await suiteStore.list()
+          });
+          return { imported: importedSuite, suite: saved, existing: existingSuite };
+        }
+      );
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
         ...connection,
@@ -1684,10 +2060,13 @@ const server = createServer(async (request, response) => {
       const report = await correctedSuiteRunView(
         await suiteRunStore.get(String(body.suiteRunId || ""))
       );
-      const result = await writeReportSheet(connection.spreadsheetId, report);
-      await writeCatalogSheets(connection.spreadsheetId, {
-        agents: await agentStore.list(),
-        suites: await suiteStore.list()
+      const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+        const reportResult = await writeReportSheet(connection.spreadsheetId, report);
+        await writeCatalogSheets(connection.spreadsheetId, {
+          agents: await agentStore.list(),
+          suites: await suiteStore.list()
+        });
+        return reportResult;
       });
       const now = new Date().toISOString();
       const updated = await sheetConnectionStore.save({
@@ -1753,7 +2132,7 @@ const server = createServer(async (request, response) => {
         sendJson(response, 200, { suite, mode: "validated", validation });
         return;
       }
-      await suiteStore.save(suite);
+      await saveSuiteWithHistory(suite, { updateMethod: "sheet_paste" });
       sendJson(response, 200, {
         suite,
         mode: "updated",
@@ -1767,7 +2146,9 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/suites") {
-      const suite = await suiteStore.save(normalizeSuite(await readJson(request)));
+      const suite = await saveSuiteWithHistory(normalizeSuite(await readJson(request)), {
+        updateMethod: "ui_create"
+      });
       syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
       sendJson(response, 201, suite);
       return;
@@ -1779,7 +2160,9 @@ const server = createServer(async (request, response) => {
     }
     if ((request.method === "PATCH" || request.method === "PUT") && suiteMatch) {
       const existing = await suiteStore.get(suiteMatch[1]);
-      const suite = await suiteStore.save(normalizeSuite(await readJson(request), existing));
+      const body = await readJson(request);
+      const updateMethod = normalizeUpdateMethod(body.updateMethod, "ui_edit");
+      const suite = await saveSuiteWithHistory(normalizeSuite(body, existing), { updateMethod });
       syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
       sendJson(response, 200, suite);
       return;
@@ -1787,7 +2170,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "DELETE" && suiteMatch) {
       const suite = await suiteStore.get(suiteMatch[1]);
       const activeRun = (await suiteRunStore.list()).find(
-        (run) => run.suiteId === suite.id && run.status === "running"
+        (run) => run.suiteId === suite.id && isSuiteRunActive(run)
       );
       if (activeRun) {
         const error = new Error("実行中のスイートは削除できません。完了してから削除してください。");
@@ -1795,13 +2178,104 @@ const server = createServer(async (request, response) => {
         throw error;
       }
       await suiteStore.delete(suite.id);
+      await deleteSuiteVersions(suite.id);
       syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
       sendJson(response, 200, { deleted: true, id: suite.id, name: suite.name });
       return;
     }
+    const suiteVersionsMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/versions$/
+    );
+    if (request.method === "GET" && suiteVersionsMatch) {
+      await suiteStore.get(suiteVersionsMatch[1]);
+      const versions = await listSuiteVersions(suiteVersionsMatch[1]);
+      sendJson(response, 200, { versions: versions.map(suiteVersionProjection) });
+      return;
+    }
+    const suiteVersionMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/versions\/([a-zA-Z0-9_-]+)$/
+    );
+    if (request.method === "GET" && suiteVersionMatch) {
+      await suiteStore.get(suiteVersionMatch[1]);
+      const version = await suiteVersionStore.get(suiteVersionMatch[2]);
+      if (version.suiteId !== suiteVersionMatch[1]) {
+        const error = new Error("指定の履歴が見つかりません。");
+        error.status = 404;
+        throw error;
+      }
+      sendJson(response, 200, version);
+      return;
+    }
+    const suiteVersionRestoreMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/versions\/([a-zA-Z0-9_-]+)\/restore$/
+    );
+    if (request.method === "POST" && suiteVersionRestoreMatch) {
+      const existing = await suiteStore.get(suiteVersionRestoreMatch[1]);
+      const version = await suiteVersionStore.get(suiteVersionRestoreMatch[2]);
+      if (version.suiteId !== existing.id) {
+        const error = new Error("指定の履歴が見つかりません。");
+        error.status = 404;
+        throw error;
+      }
+      const snapshot = version.snapshot || {};
+      const restored = await saveSuiteWithHistory(
+        normalizeSuite(
+          {
+            ...snapshot,
+            id: existing.id,
+            createdAt: existing.createdAt,
+            lastRunAt: existing.lastRunAt
+          },
+          existing
+        ),
+        { updateMethod: "restore" }
+      );
+      syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+      sendJson(response, 200, { suite: restored, restoredFrom: suiteVersionProjection(version) });
+      return;
+    }
     const suiteRunMatch = url.pathname.match(/^\/api\/suites\/([a-zA-Z0-9_-]+)\/run$/);
     if (request.method === "POST" && suiteRunMatch) {
-      sendJson(response, 202, slimSuiteRun(await startSuiteRun(await suiteStore.get(suiteRunMatch[1]))));
+      const body = await readJson(request).catch(() => ({}));
+      sendJson(
+        response,
+        202,
+        slimSuiteRun(
+          await startSuiteRun(await suiteStore.get(suiteRunMatch[1]), {
+            caseIds: body?.caseIds
+          })
+        )
+      );
+      return;
+    }
+
+    const suiteCasePdfMatch = url.pathname.match(/^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/case-pdf$/);
+    if (request.method === "GET" && suiteCasePdfMatch) {
+      const suite = await suiteStore.get(suiteCasePdfMatch[1]);
+      const caseId = String(url.searchParams.get("caseId") || "").trim();
+      const testCase = (suite.cases || []).find((item) => item.id === caseId);
+      if (!testCase) {
+        const error = new Error("指定のテストケースが見つかりません。");
+        error.status = 404;
+        throw error;
+      }
+      const agents = await agentStore.list();
+      const pdf = await renderCaseSpecPdf({ suite, cases: [testCase], agents });
+      sendPdf(response, pdf, pdfFilename("case", testCase.id || caseId));
+      return;
+    }
+
+    const suiteCasesPdfMatch = url.pathname.match(/^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/cases-pdf$/);
+    if (request.method === "GET" && suiteCasesPdfMatch) {
+      const suite = await suiteStore.get(suiteCasesPdfMatch[1]);
+      if (!(suite.cases || []).length) {
+        const error = new Error("出力対象のテストケースがありません。");
+        error.status = 400;
+        throw error;
+      }
+      const agents = await agentStore.list();
+      const pdf = await renderCaseSpecPdf({ suite, cases: suite.cases, agents });
+      sendPdf(response, pdf, pdfFilename("cases", suite.id));
       return;
     }
 
@@ -1814,6 +2288,48 @@ const server = createServer(async (request, response) => {
       });
       return;
     }
+    const reportPdfMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/export\/pdf$/);
+    if (request.method === "GET" && reportPdfMatch) {
+      const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportPdfMatch[1])));
+      const caseId = String(url.searchParams.get("caseId") || "").trim();
+      const caseIds = caseId
+        ? [caseId]
+        : isPartialSuiteRun(report)
+          ? (report.selectedCaseIds?.length
+            ? report.selectedCaseIds
+            : (report.suiteSnapshot?.cases || report.caseRuns || [])
+                .map((item) => item.id || item.caseId)
+                .filter(Boolean)
+                .slice(0, 1))
+          : null;
+      const targetCaseIds = caseIds?.length ? new Set(caseIds) : null;
+      const runIds = (report.caseRuns || [])
+        .filter((item) => item.runId && (!targetCaseIds || targetCaseIds.has(item.caseId)))
+        .map((item) => item.runId);
+      const runsById = {};
+      for (const runId of runIds) {
+        try {
+          runsById[runId] = await runStore.get(runId);
+        } catch {
+          // Preview is best-effort; evaluation meta still exports without the run body.
+        }
+      }
+      const agents = await agentStore.list();
+      const pdf = await renderSuiteRunPdf({
+        report,
+        caseIds,
+        agents,
+        runsById
+      });
+      sendPdf(
+        response,
+        pdf,
+        caseIds?.length === 1
+          ? pdfFilename("run-case", caseIds[0])
+          : pdfFilename("run", report.id)
+      );
+      return;
+    }
     const reportMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && reportMatch) {
       sendJson(
@@ -1821,6 +2337,11 @@ const server = createServer(async (request, response) => {
         200,
         slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportMatch[1])))
       );
+      return;
+    }
+    const cancelMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/cancel$/);
+    if (request.method === "POST" && cancelMatch) {
+      sendJson(response, 202, await cancelSuiteRun(cancelMatch[1]));
       return;
     }
 
@@ -1846,7 +2367,9 @@ const server = createServer(async (request, response) => {
       reply.retrieved = retrieved.matches.map(({ text, ...metadata }) => metadata);
       if (body.applyPatch && reply.patch) {
         const suite = await suiteStore.get(String(body.suite?.id || ""));
-        reply.updatedSuite = await suiteStore.save(mergeAssistantPatch(suite, reply.patch));
+        reply.updatedSuite = await saveSuiteWithHistory(mergeAssistantPatch(suite, reply.patch), {
+          updateMethod: "ui_edit"
+        });
       }
       sendJson(response, 200, reply);
       return;
@@ -1867,12 +2390,16 @@ await Promise.all([
   runStore.ensure(),
   agentStore.ensure(),
   suiteStore.ensure(),
+  suiteVersionStore.ensure(),
   suiteRunStore.ensure(),
   sheetConnectionStore.ensure(),
   knowledgeSourceStore.ensure(),
   knowledgeIndexStore.ensure()
 ]);
 await seedData();
+ensureNotoSansJpFont().catch((error) => {
+  console.warn(`[pdf] ${error.message}`);
+});
 server.listen(port, host, () => {
   console.log(`PrismTrail is running at http://${host}:${port}`);
   console.log(`Agent: ${config.agent}`);

@@ -57,6 +57,14 @@ const UI_COPY_PAIRS = [
   ["詳細を見る", "View details"],
   ["編集する", "Edit"],
   ["実行中", "Running"],
+  ["中止", "Cancelled"],
+  ["中止中", "Cancelling"],
+  ["中止中…", "Stopping…"],
+  ["中止待ち", "Waiting to stop"],
+  ["実行を中止", "Stop run"],
+  ["実行を中止しています", "Stopping the run"],
+  ["実行を中止しました", "Run cancelled"],
+  ["実行の中止を開始しました。", "Started cancelling the run."],
   ["実行待ち", "Waiting"],
   ["テストスイート", "Test suites"],
   ["テストケース", "Test cases"],
@@ -104,6 +112,14 @@ const UI_COPY_PAIRS = [
   ["下書きのケースは評価レポート実行時にスキップされます。", "Draft cases are skipped when a suite evaluation runs."],
   ["実行可のテストケースがありません。", "There are no runnable test cases."],
   ["ケースのステータスが実行可ではないためスキップしました。", "Skipped because the case status is not runnable."],
+  ["実行が中止されたためスキップしました。", "Skipped because the run was cancelled."],
+  ["実行中のスイート評価だけ中止できます。", "Only a running suite evaluation can be cancelled."],
+  ["このスイートはすでに実行中です。完了または中止してから再実行してください。", "This suite is already running. Wait for it to finish or cancel it before running again."],
+  ["この実行の中止ハンドルが見つかりません。サーバー再起動後の実行は中止できない場合があります。", "No cancel handle was found for this run. Runs started before a server restart may not be cancellable."],
+  ["実行が中止されたため、Google Sheetsへ出力していません。", "Google Sheets export was skipped because the run was cancelled."],
+  ["進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled."],
+  ["完了済み {completed} 件の結果を保持し、未実行ケースは中止しました。", "Kept {completed} finished results and cancelled remaining cases."],
+  ["実行中のスイート評価を中止しますか？進行中のケースは打ち切られ、未着手のケースは中止として記録されます。", "Stop this suite evaluation? In-flight cases will be aborted and remaining cases will be marked cancelled."],
   [/^ケースのステータスは「実行可」または「下書き」で指定してください: (.+)$/, "Case status must be Runnable or Draft: $1"],
   ["実行可のテストケースがありません。ケースのステータスを「実行可」にしてください。", "There are no runnable test cases. Set case status to Runnable."],
   ["Gシートで編集", "Edit in Sheets"],
@@ -435,7 +451,8 @@ const UI_DYNAMIC_RULES = [
   [/^(.+) に(\d+)行を書き出しました。$/, "Exported $2 rows to $1.", /^Exported (\d+) rows to (.+)\.$/, "$2 に$1行を書き出しました。"],
   [/^進捗の更新に失敗しました: (.+)$/, "Could not update progress: $1", /^Could not update progress: (.+)$/, "進捗の更新に失敗しました: $1"],
   [/^(.+) は4MBを超えています。$/, "$1 exceeds 4 MB.", /^(.+) exceeds 4 MB\.$/, "$1 は4MBを超えています。"],
-  [/^回答に「(.+)」を含む$/, "Response includes “$1”", /^Response includes “(.+)”$/, "回答に「$1」を含む"]
+  [/^回答に「(.+)」を含む$/, "Response includes “$1”", /^Response includes “(.+)”$/, "回答に「$1」を含む"],
+  [/^SQLがテーブル「(.+)」を参照$/, "SQL references table “$1”", /^SQL references table “(.+)”$/, "SQLがテーブル「$1」を参照"]
 ];
 
 export function translateUiText(text, locale = "en") {
@@ -487,7 +504,7 @@ const EXACT_API_MESSAGES = new Map([
   ["貼り付けデータにセルがありません。", "The pasted data does not contain any cells."],
   ["ケース表だけを貼り付ける場合は、更新対象のテストスイートを選択してください。", "Select the test suite to update when pasting only the case table."],
   ["GoogleスプレッドシートのURLまたはSpreadsheet IDを指定してください。", "Enter a Google Sheets URL or spreadsheet ID."],
-  ["1スイートに取り込めるテストケースは50件までです。", "A suite can import up to 50 test cases."],
+  ["1スイートに取り込めるテストケースは120件までです。", "A suite can import up to 120 test cases."],
   ["Google Cloud access tokenを取得できませんでした。gcloud auth application-default loginを確認してください。", "Could not obtain a Google Cloud access token. Run or verify gcloud auth application-default login."],
   ["提案を生成できませんでした。", "Could not generate suggestions."]
 ]);
