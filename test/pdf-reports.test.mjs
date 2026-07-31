@@ -90,7 +90,7 @@ const report = {
 test("builds case-spec inputs with checklist and system lines", () => {
   const inputs = buildCaseSpecInputs({ suite, cases: suite.cases, agents });
   assert.equal(inputs.length, 1);
-  assert.match(inputs[0].docType, /TEST CASE SPECIFICATION/i);
+  assert.match(inputs[0].docType, /テストケース仕様書/);
   assert.equal(inputs[0].title, "月次売上");
   assert.match(inputs[0].metaTable, /デモAgent/);
   assert.match(inputs[0].systemTable, /SQL必須/);
@@ -117,13 +117,13 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.match(batch[2].resultBanner, /PASS|FAIL|合格|不合格/);
   assert.match(batch[3].evidenceBlock, /回答|結果テーブル|チャート/);
   assert.match(batch[2].systemPieSvg, /<svg/);
-  assert.equal(batch[0].pageLabel, "1 / 4");
-  assert.equal(batch[3].pageLabel, "4 / 4");
+  assert.equal(batch[0].pageLabel, "1 / 4 ページ");
+  assert.equal(batch[3].pageLabel, "4 / 4 ページ");
 
   const one = buildSuiteRunInputs({ report, caseIds: ["case_1"], agents });
   assert.equal(one.length, 2);
   assert.equal(one[0].summaryTable, undefined);
-  assert.match(one[0].docType, /個別実行|SINGLE-CASE/i);
+  assert.match(one[0].docType, /個別テスト結果/);
 
   const partial = buildSuiteRunInputs({
     report: { ...report, partialRun: true, selectedCaseIds: ["case_1"] },
