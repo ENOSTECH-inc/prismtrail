@@ -209,6 +209,11 @@ The primary-storage abstraction supports:
 - **Local JSON** — single-workstation development
 - **Google Cloud Storage** — portable shared system data under a configured bucket and prefix
 
+Local startup also recommends GCS as the intended primary destination. Until a bucket is
+configured, the app remains available on a temporary local fallback and opens the settings flow
+with GCS selected. Testing a destination shows the registered object count, size, latest updates,
+and representative records before settings are saved or data is copied.
+
 GCS writes use generation preconditions so stale clients cannot silently overwrite newer objects.
 Migration validates and copies data before switching; it does not delete the source.
 

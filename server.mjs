@@ -75,6 +75,16 @@ const storageNamespaces = [
   "knowledge-sources",
   "knowledge-indexes"
 ];
+const STORAGE_SCHEMA_VERSION = 1;
+const storageNamespaceLabels = {
+  runs: "単体テスト実行",
+  agents: "Data Agent",
+  suites: "テストスイート",
+  "suite-runs": "スイート実行",
+  "sheet-connections": "Google Sheets接続",
+  "knowledge-sources": "GCSナレッジ",
+  "knowledge-indexes": "ナレッジ索引"
+};
 
 function storageConfigInput(value = {}) {
   return {
@@ -90,6 +100,8 @@ function publicStorageConfig(value, backend, extra = {}) {
   return {
     driver: description.provider,
     defaultDriver: "gcs",
+    recommendedDriver: "gcs",
+    configured: value.configured !== false,
     projectId: description.projectId || "",
     bucket: description.bucket || "",
     prefix: description.prefix || "",
@@ -98,6 +110,7 @@ function publicStorageConfig(value, backend, extra = {}) {
     lastSyncedAt: value.lastSyncedAt || null,
     objectCount: extra.objectCount ?? null,
     sizeBytes: extra.sizeBytes ?? null,
+    overview: extra.overview || null,
     revision: Number(value.revision || 1),
     updatedAt: value.updatedAt || null
   };
@@ -106,19 +119,21 @@ function publicStorageConfig(value, backend, extra = {}) {
 async function readStorageConfig() {
   try {
     const stored = JSON.parse(await readFile(storageConfigPath, "utf8"));
-    return { ...stored, driver: stored.driver || stored.provider };
+    return { ...stored, driver: stored.driver || stored.provider, configured: true };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
-    const driver =
-      process.env.PRIMARY_STORAGE_DRIVER ||
-      (process.env.PRIMARY_STORAGE_BUCKET ? "gcs" : "local");
+    const explicitlyConfigured = Boolean(
+      process.env.PRIMARY_STORAGE_BUCKET || process.env.PRIMARY_STORAGE_DRIVER === "local"
+    );
+    const driver = process.env.PRIMARY_STORAGE_DRIVER || "gcs";
     return {
-      schemaVersion: 1,
+      schemaVersion: STORAGE_SCHEMA_VERSION,
       driver,
       projectId: process.env.PRIMARY_STORAGE_PROJECT || "",
       bucket: process.env.PRIMARY_STORAGE_BUCKET || "",
       prefix: process.env.PRIMARY_STORAGE_PREFIX || "agent-eval/system-data/",
       localPath: dataDirectory,
+      configured: explicitlyConfigured,
       revision: 1,
       updatedAt: null
     };
@@ -151,6 +166,7 @@ try {
     ...storageConfig,
     driver: "local",
     localPath: dataDirectory,
+    preferredDriver: "gcs",
     fallbackReason: error.message
   };
 }
@@ -245,18 +261,45 @@ function requestedStorageConfig(body = {}) {
   return { driver: "gcs", ...normalized };
 }
 
-async function storageStats(backend = primaryStorage.backend) {
-  let objectCount = 0;
-  let sizeBytes = 0;
-  for (const namespace of storageNamespaces) {
-    const values = await backend.list(namespace);
-    objectCount += values.length;
-    sizeBytes += values.reduce(
-      (total, value) => total + Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`),
-      0
-    );
-  }
-  return { objectCount, sizeBytes };
+function storagePreviewItem(value = {}) {
+  const label = String(
+    value.name ||
+    value.title ||
+    value.suiteName ||
+    value.label ||
+    value.spreadsheetTitle ||
+    value.bucket ||
+    value.id ||
+    ""
+  ).slice(0, 160);
+  return {
+    id: String(value.id || "").slice(0, 160),
+    label,
+    status: value.status ? String(value.status).slice(0, 80) : null,
+    updatedAt: value.updatedAt || value.completedAt || value.createdAt || null
+  };
+}
+
+async function storageOverview(backend = primaryStorage.backend) {
+  const namespaces = await Promise.all(storageNamespaces.map(async (namespace) => {
+    const details = await backend.inspect(namespace, { sampleLimit: 3 });
+    return {
+      namespace,
+      label: storageNamespaceLabels[namespace] || namespace,
+      count: details.count,
+      sizeBytes: details.sizeBytes,
+      latestUpdatedAt: details.latestUpdatedAt,
+      samples: details.samples.map(storagePreviewItem)
+    };
+  }));
+  const objectCount = namespaces.reduce((total, item) => total + item.count, 0);
+  const sizeBytes = namespaces.reduce((total, item) => total + item.sizeBytes, 0);
+  return {
+    objectCount,
+    sizeBytes,
+    isEmpty: objectCount === 0,
+    namespaces
+  };
 }
 
 async function readJson(request) {
@@ -1200,8 +1243,16 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/storage/config") {
-      const stats = await storageStats();
-      sendJson(response, 200, publicStorageConfig(storageConfig, primaryStorage.backend, stats));
+      const overview = await storageOverview();
+      sendJson(
+        response,
+        200,
+        publicStorageConfig(storageConfig, primaryStorage.backend, {
+          ...overview,
+          status: storageConfig.configured === false ? "setup_required" : "ready",
+          overview
+        })
+      );
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/storage/test") {
@@ -1210,11 +1261,13 @@ const server = createServer(async (request, response) => {
         const candidateConfig = requestedStorageConfig(body);
         const candidate = backendFromConfig(candidateConfig);
         const details = await candidate.validate();
+        const overview = await storageOverview(candidate);
         sendJson(response, 200, {
           ok: true,
           message: "プライマリーストレージへ接続できました。",
           identity: details.authSource || (candidate.provider === "local" ? "local-process" : null),
-          details
+          details,
+          overview
         });
       } catch (error) {
         sendJson(response, 200, {
@@ -1237,8 +1290,9 @@ const server = createServer(async (request, response) => {
       await candidate.validate();
       const now = new Date().toISOString();
       const nextConfig = {
-        schemaVersion: 1,
+        schemaVersion: STORAGE_SCHEMA_VERSION,
         ...candidateConfig,
+        configured: true,
         revision: Number(storageConfig.revision || 1) + 1,
         lastSyncedAt: storageConfig.lastSyncedAt || null,
         updatedAt: now
@@ -1246,8 +1300,12 @@ const server = createServer(async (request, response) => {
       await saveStorageConfig(nextConfig);
       primaryStorage.use(candidate);
       storageConfig = nextConfig;
-      const stats = await storageStats(candidate);
-      sendJson(response, 200, publicStorageConfig(storageConfig, candidate, stats));
+      const overview = await storageOverview(candidate);
+      sendJson(
+        response,
+        200,
+        publicStorageConfig(storageConfig, candidate, { ...overview, overview })
+      );
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/storage/migrate") {
@@ -1276,12 +1334,14 @@ const server = createServer(async (request, response) => {
         namespaces: storageNamespaces,
         dryRun: false
       });
+      const destinationOverview = await storageOverview(destination);
       const completedAt = new Date().toISOString();
       let responseConfig = publicStorageConfig(storageConfig, primaryStorage.backend);
       if (mode === "copy_and_switch") {
         const nextConfig = {
-          schemaVersion: Number(SHEET_SCHEMA_VERSION),
+          schemaVersion: STORAGE_SCHEMA_VERSION,
           ...targetConfig,
+          configured: true,
           revision: Number(storageConfig.revision || 1) + 1,
           lastSyncedAt: completedAt,
           updatedAt: completedAt
@@ -1289,7 +1349,10 @@ const server = createServer(async (request, response) => {
         await saveStorageConfig(nextConfig);
         primaryStorage.use(destination);
         storageConfig = nextConfig;
-        responseConfig = publicStorageConfig(nextConfig, destination);
+        responseConfig = publicStorageConfig(nextConfig, destination, {
+          ...destinationOverview,
+          overview: destinationOverview
+        });
       } else {
         storageConfig = {
           ...storageConfig,
@@ -1298,7 +1361,11 @@ const server = createServer(async (request, response) => {
           updatedAt: completedAt
         };
         await saveStorageConfig(storageConfig);
-        responseConfig = publicStorageConfig(storageConfig, primaryStorage.backend);
+        const currentOverview = await storageOverview(primaryStorage.backend);
+        responseConfig = publicStorageConfig(storageConfig, primaryStorage.backend, {
+          ...currentOverview,
+          overview: currentOverview
+        });
       }
       sendJson(response, 200, {
         ok: true,
@@ -1307,7 +1374,7 @@ const server = createServer(async (request, response) => {
             ? "データをコピーし、プライマリーストレージを切り替えました。"
             : "プライマリーストレージから移行先へデータを同期しました。",
         config: responseConfig,
-        target: { ...targetConfig, validation },
+        target: { ...targetConfig, validation, overview: destinationOverview },
         migration: {
           copiedFiles: migration.copied,
           copiedBytes: migration.copiedBytes,

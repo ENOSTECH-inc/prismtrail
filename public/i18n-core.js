@@ -277,6 +277,8 @@ const UI_COPY_PAIRS = [
   ["設定", "Settings"],
   ["システムデータの保存先を設定し、端末が変わっても同じ評価環境を利用できます。", "Configure system storage so the same evaluation environment can be used across devices."],
   ["現在のプライマリーストレージ", "Current primary storage"],
+  ["GCS接続を設定してください", "Configure a GCS connection"],
+  ["ローカル起動時も、チームで共有できるGCSを基本の保存先として利用します。", "Local runs also use team-shareable GCS as the primary storage destination."],
   ["保存先", "Storage destination"],
   ["保存データ", "Stored data"],
   ["保存方式", "Storage type"],
