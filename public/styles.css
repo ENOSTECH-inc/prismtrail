@@ -153,7 +153,28 @@ h1,h2,p { margin-top: 0; }
 .button.sheet-link { color: #087657; border: 1px solid #b7e2d5; background: #eaf8f3; }
 .nav-toolbar .button.sheet-link,.editor-toolbar .button.sheet-link { color: #dff8ef; border-color: #2c6859; background: #173c38; }
 .button.sheet-link.is-busy { cursor: wait; opacity: .92; }
+.button.is-busy,
+.button.sheet-link.is-busy { cursor: wait; opacity: .92; }
+.button.is-busy svg,
 .button.sheet-link.is-busy svg { animation: live-spin .8s linear infinite; }
+.text-link.is-busy { cursor: wait; opacity: .72; pointer-events: none; }
+.text-link.is-busy svg { animation: live-spin .8s linear infinite; }
+.route-progress { position: fixed; inset: 0 0 auto; z-index: 120; height: 3px; pointer-events: none; background: transparent; overflow: hidden; }
+.route-progress i { display: block; height: 100%; width: 35%; border-radius: 999px; background: linear-gradient(90deg, #6e91ff, #55d3a2); transform: translateX(-120%); }
+.route-progress.is-active i { animation: route-progress-slide 1s ease-in-out infinite; }
+@keyframes route-progress-slide {
+  0% { transform: translateX(-120%); }
+  50% { transform: translateX(160%); }
+  100% { transform: translateX(320%); }
+}
+.busy-overlay { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; background: rgba(17, 29, 51, .28); backdrop-filter: blur(2px); }
+.busy-overlay[hidden] { display: none !important; }
+.busy-card { display: inline-flex; align-items: center; gap: 12px; min-width: 180px; padding: 14px 18px; color: #1d2b44; border: 1px solid #d7deea; border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
+.busy-card strong { font-size: 12px; font-weight: 700; }
+body.is-routing #app,
+body.is-app-busy #app { cursor: progress; }
+body.is-app-busy .sidebar a,
+body.is-app-busy .button:not(.is-busy) { pointer-events: none; }
 .editor-columns { height: calc(100vh - 61px); display: grid; grid-template-columns: minmax(0,1fr); }
 .editor-columns.has-cases { grid-template-columns: 268px minmax(0,1fr); }
 .editor-columns.assistant-open { grid-template-columns: minmax(0,1fr) minmax(340px,32%); }

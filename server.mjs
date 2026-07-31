@@ -1605,6 +1605,17 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/storage/config") {
+      const lite = url.searchParams.get("lite") === "1" || url.searchParams.get("overview") === "0";
+      if (lite) {
+        sendJson(
+          response,
+          200,
+          publicStorageConfig(storageConfig, primaryStorage.backend, {
+            status: storageConfig.configured === false ? "setup_required" : "ready"
+          })
+        );
+        return;
+      }
       const overview = await storageOverview();
       sendJson(
         response,
@@ -2142,7 +2153,18 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/suites") {
-      sendJson(response, 200, { suites: await suiteStore.list() });
+      const suites = (await suiteStore.list()).map((suite) => ({
+        ...suite,
+        // List/search only need lightweight case fields; full bodies load on editor open.
+        cases: (suite.cases || []).map((item) => ({
+          id: item.id,
+          title: item.title,
+          status: item.status,
+          agentId: item.agentId,
+          prompt: item.prompt
+        }))
+      }));
+      sendJson(response, 200, { suites });
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/suites") {
@@ -2280,11 +2302,10 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/suite-runs") {
-      const suiteRuns = await Promise.all(
-        (await suiteRunStore.list()).map((run) => correctedSuiteRunView(run))
-      );
+      // List view only needs projection fields — skip per-case SQL correction
+      // (that re-fetches run bodies and is very expensive on GCS).
       sendJson(response, 200, {
-        suiteRuns: suiteRuns.map(suiteRunProjection)
+        suiteRuns: (await suiteRunStore.list()).map(suiteRunProjection)
       });
       return;
     }

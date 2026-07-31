@@ -100,6 +100,64 @@ function notify(message, kind = "error") {
   notify.timer = setTimeout(() => (toast.hidden = true), 7000);
 }
 
+const routeProgress = document.querySelector("#route-progress");
+const busyOverlay = document.querySelector("#busy-overlay");
+const busyOverlayLabel = document.querySelector("#busy-overlay-label");
+let routeProgressDepth = 0;
+let busyOverlayDepth = 0;
+
+function setRouteProgress(active) {
+  if (!routeProgress) return;
+  routeProgressDepth = Math.max(0, routeProgressDepth + (active ? 1 : -1));
+  const on = routeProgressDepth > 0;
+  routeProgress.hidden = !on;
+  routeProgress.setAttribute("aria-hidden", on ? "false" : "true");
+  routeProgress.classList.toggle("is-active", on);
+  document.body.classList.toggle("is-routing", on);
+}
+
+function setBusyOverlay(active, label = "") {
+  if (!busyOverlay) return;
+  busyOverlayDepth = Math.max(0, busyOverlayDepth + (active ? 1 : -1));
+  const on = busyOverlayDepth > 0;
+  if (active && label && busyOverlayLabel) busyOverlayLabel.textContent = label;
+  busyOverlay.hidden = !on;
+  document.body.classList.toggle("is-app-busy", on);
+}
+
+async function withRouteProgress(task) {
+  setRouteProgress(true);
+  try {
+    return await task();
+  } finally {
+    setRouteProgress(false);
+  }
+}
+
+async function withButtonBusy(button, busyLabel, task, { overlay = false } = {}) {
+  if (!button) return task();
+  if (button.dataset.busy === "1") return undefined;
+  const originalHtml = button.innerHTML;
+  button.dataset.busy = "1";
+  button.disabled = true;
+  button.classList.add("is-busy");
+  button.setAttribute("aria-busy", "true");
+  button.innerHTML = `${icon("loader-circle", 15)}${esc(busyLabel)}`;
+  refreshIcons();
+  if (overlay) setBusyOverlay(true, busyLabel);
+  try {
+    return await task();
+  } finally {
+    if (overlay) setBusyOverlay(false);
+    button.dataset.busy = "0";
+    button.disabled = false;
+    button.classList.remove("is-busy");
+    button.setAttribute("aria-busy", "false");
+    button.innerHTML = originalHtml;
+    refreshIcons();
+  }
+}
+
 /** In-app confirm — native window.confirm can be silently blocked by the browser. */
 function askConfirm(message, { confirmLabel = tr("続ける", "Continue"), cancelLabel = tr("キャンセル", "Cancel") } = {}) {
   return new Promise((resolve) => {
@@ -1695,39 +1753,35 @@ function bindEditor() {
     const testCase = state.selectedSuite?.cases?.[state.selectedCaseIndex];
     if (!suiteId || !testCase?.id) return;
     const button = document.querySelector("#export-case-pdf");
-    if (button) button.disabled = true;
-    try {
-      await saveSuite({ silent: true });
-      const filename = await downloadPdf(
-        `/api/suites/${suiteId}/export/case-pdf?caseId=${encodeURIComponent(testCase.id)}`,
-        `prismtrail-case-${testCase.id}.pdf`
-      );
-      notify(tr("PDFをダウンロードしました: {name}", "Downloaded PDF: {name}", { name: filename }), "success");
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      if (button) button.disabled = false;
-      refreshIcons();
-    }
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        await saveSuite({ silent: true });
+        const filename = await downloadPdf(
+          `/api/suites/${suiteId}/export/case-pdf?caseId=${encodeURIComponent(testCase.id)}`,
+          `prismtrail-case-${testCase.id}.pdf`
+        );
+        notify(tr("PDFをダウンロードしました: {name}", "Downloaded PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
   });
   document.querySelector("#export-cases-pdf")?.addEventListener("click", async () => {
     const suiteId = state.selectedSuite?.id;
     if (!suiteId || !(state.selectedSuite?.cases || []).length) return;
     const button = document.querySelector("#export-cases-pdf");
-    if (button) button.disabled = true;
-    try {
-      await saveSuite({ silent: true });
-      const filename = await downloadPdf(
-        `/api/suites/${suiteId}/export/cases-pdf`,
-        `prismtrail-suite-${suiteId}-cases.pdf`
-      );
-      notify(tr("全ケースのPDFをダウンロードしました: {name}", "Downloaded all-cases PDF: {name}", { name: filename }), "success");
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      if (button) button.disabled = false;
-      refreshIcons();
-    }
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        await saveSuite({ silent: true });
+        const filename = await downloadPdf(
+          `/api/suites/${suiteId}/export/cases-pdf`,
+          `prismtrail-suite-${suiteId}-cases.pdf`
+        );
+        notify(tr("全ケースのPDFをダウンロードしました: {name}", "Downloaded all-cases PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
   });
   document.querySelector("#start-manually")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#paste-cases")?.addEventListener("click", openSuitePaste);
@@ -3258,43 +3312,39 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
   `, "reports", "detail");
   document.querySelector("#export-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-report-pdf");
-    if (button) button.disabled = true;
-    try {
-      const pdfPath =
-        isPartial && focusCaseId
-          ? `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(focusCaseId)}`
-          : `/api/suite-runs/${report.id}/export/pdf`;
-      const filename = await downloadPdf(
-        pdfPath,
-        isPartial && focusCaseId
-          ? `prismtrail-run-case-${focusCaseId}.pdf`
-          : `prismtrail-run-${report.id}.pdf`
-      );
-      notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      if (button && !isLive) button.disabled = false;
-      refreshIcons();
-    }
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        const pdfPath =
+          isPartial && focusCaseId
+            ? `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(focusCaseId)}`
+            : `/api/suite-runs/${report.id}/export/pdf`;
+        const filename = await downloadPdf(
+          pdfPath,
+          isPartial && focusCaseId
+            ? `prismtrail-run-case-${focusCaseId}.pdf`
+            : `prismtrail-run-${report.id}.pdf`
+        );
+        notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
   });
   document.querySelectorAll("[data-export-case-run-pdf]").forEach((button) =>
     button.addEventListener("click", async () => {
       const caseId = button.dataset.exportCaseRunPdf;
       if (!caseId) return;
-      button.disabled = true;
-      try {
-        const filename = await downloadPdf(
-          `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(caseId)}`,
-          `prismtrail-run-case-${caseId}.pdf`
-        );
-        notify(tr("ケースPDFをダウンロードしました: {name}", "Downloaded case PDF: {name}", { name: filename }), "success");
-      } catch (error) {
-        notify(error.message);
-      } finally {
-        button.disabled = false;
-        refreshIcons();
-      }
+      await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+        try {
+          const filename = await downloadPdf(
+            `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(caseId)}`,
+            `prismtrail-run-case-${caseId}.pdf`
+          );
+          notify(tr("ケースPDFをダウンロードしました: {name}", "Downloaded case PDF: {name}", { name: filename }), "success");
+        } catch (error) {
+          notify(error.message);
+        }
+      }, { overlay: true });
     })
   );
   if (!isLive && evidenceByCaseId == null && (report.caseRuns || []).some((item) => item.runId)) {
@@ -3346,10 +3396,26 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
 }
 
 function renderSingleRun() {
+  const recent = state.runs.slice(0, 8);
   app.innerHTML = shell(`
     ${pageHead("テスト実行", "ひとつのプロンプトをすぐに試し、レスポンストレースを確認します。")}
-    <section class="single-run-layout"><form id="single-run-form" class="form-panel"><label>対象Data Agent<select id="single-agent">${state.agents.map((a) => `<option value="${a.id}">${esc(a.displayName)}</option>`).join("")}</select></label><label>検証プロンプト<textarea id="single-prompt" rows="7" required placeholder="分析したい内容を入力してください"></textarea></label><div class="form-row"><label>思考モード<select id="single-mode"><option>FAST</option><option>THINKING</option></select></label><button id="single-run-submit" class="button primary" type="submit">${icon("play", 15)}テストを実行</button></div></form><aside class="recent-panel"><h2>最近の実行</h2>${state.runs.slice(0, 8).map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("") || empty("履歴なし", "実行結果がここに並びます。")}</aside></section>
+    <section class="single-run-layout"><form id="single-run-form" class="form-panel"><label>対象Data Agent<select id="single-agent">${state.agents.map((a) => `<option value="${a.id}">${esc(a.displayName)}</option>`).join("")}</select></label><label>検証プロンプト<textarea id="single-prompt" rows="7" required placeholder="分析したい内容を入力してください"></textarea></label><div class="form-row"><label>思考モード<select id="single-mode"><option>FAST</option><option>THINKING</option></select></label><button id="single-run-submit" class="button primary" type="submit">${icon("play", 15)}テストを実行</button></div></form><aside class="recent-panel"><h2>最近の実行</h2><div id="recent-runs-list">${recent.map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("") || `<div class="loading-line">${tr("履歴を読み込み中…", "Loading history…")}</div>`}</div></aside></section>
   `, "run");
+  if (!state.runs.length) {
+    json("/api/runs")
+      .then((payload) => {
+        state.runs = payload.runs || [];
+        if (location.hash !== "#/run") return;
+        const list = document.querySelector("#recent-runs-list");
+        if (!list) return;
+        list.innerHTML = state.runs.slice(0, 8).map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("")
+          || empty("履歴なし", "実行結果がここに並びます。");
+      })
+      .catch((error) => {
+        const list = document.querySelector("#recent-runs-list");
+        if (list) list.innerHTML = empty(tr("履歴を読み込めませんでした", "Could not load history"), translateApiMessage(error.message));
+      });
+  }
   document.querySelector("#single-run-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const agent = state.agents.find((a) => a.id === document.querySelector("#single-agent").value);
@@ -3437,67 +3503,75 @@ async function route() {
   clearTimeout(state.reportPollTimer);
   state.reportPollTimer = null;
   const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
-  try {
-    if (parts[0] === "knowledge" && parts[1]) {
-      state.selectedKnowledgeDetail = await json(`/api/knowledge-sources/${parts[1]}`);
-      renderKnowledgeDetail();
-    }
-    else if (parts[0] === "knowledge") renderKnowledge();
-    else if (parts[0] === "sheets") renderSheets();
-    else if (parts[0] === "agents") renderAgents();
-    else if (parts[0] === "settings") renderSettings();
-    else if (parts[0] === "run") renderSingleRun();
-    else if (parts[0] === "reports" && parts[1]) renderReport(await json(`/api/suite-runs/${parts[1]}`));
-    else if (parts[0] === "reports") renderReports();
-    else if (parts[0] === "runs" && parts[1]) renderRunDetail(await json(`/api/runs/${parts[1]}`));
-    else if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
-      const deepCaseId = parts[3] ? decodeURIComponent(parts[3]) : "";
-      if (state.selectedSuite?.id !== parts[1]) {
-        state.suitePasteOpen = false;
-        state.suitePasteText = "";
-        state.suitePasteValidation = null;
-        state.suitePasteError = "";
-        state.selectedCaseIndex = 0;
-        state.editorTab = "cases";
-        state.assistantOpen = false;
-        state.suiteVersions = [];
-        state.selectedSuiteVersionId = null;
-        state.selectedSuiteVersion = null;
+  await withRouteProgress(async () => {
+    try {
+      if (parts[0] === "knowledge" && parts[1]) {
+        state.selectedKnowledgeDetail = await json(`/api/knowledge-sources/${parts[1]}`);
+        renderKnowledgeDetail();
       }
-      if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
-        state.preserveEditorOnLocale = false;
-      } else {
-        state.selectedSuite = await json(`/api/suites/${parts[1]}`);
-        state.assistantMessages = [];
-        state.assistantPatch = null;
-        state.selectedCaseIndex = 0;
-      }
-      if (deepCaseId && state.selectedSuite?.cases) {
-        const index = state.selectedSuite.cases.findIndex((item) => item.id === deepCaseId);
-        if (index >= 0) {
-          state.selectedCaseIndex = index;
-          state.editorTab = "cases";
+      else if (parts[0] === "knowledge") renderKnowledge();
+      else if (parts[0] === "sheets") renderSheets();
+      else if (parts[0] === "agents") renderAgents();
+      else if (parts[0] === "settings") {
+        if (!state.storageConfig?.overview) {
+          state.storageConfig = await json("/api/storage/config").catch(() => state.storageConfig);
         }
+        renderSettings();
       }
-      renderEditor();
-    } else renderSuites();
-    refreshIcons();
-  } catch (error) {
-    notify(error.message);
-  }
+      else if (parts[0] === "run") renderSingleRun();
+      else if (parts[0] === "reports" && parts[1]) renderReport(await json(`/api/suite-runs/${parts[1]}`));
+      else if (parts[0] === "reports") renderReports();
+      else if (parts[0] === "runs" && parts[1]) renderRunDetail(await json(`/api/runs/${parts[1]}`));
+      else if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
+        const deepCaseId = parts[3] ? decodeURIComponent(parts[3]) : "";
+        if (state.selectedSuite?.id !== parts[1]) {
+          state.suitePasteOpen = false;
+          state.suitePasteText = "";
+          state.suitePasteValidation = null;
+          state.suitePasteError = "";
+          state.selectedCaseIndex = 0;
+          state.editorTab = "cases";
+          state.assistantOpen = false;
+          state.suiteVersions = [];
+          state.selectedSuiteVersionId = null;
+          state.selectedSuiteVersion = null;
+        }
+        if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
+          state.preserveEditorOnLocale = false;
+        } else {
+          state.selectedSuite = await json(`/api/suites/${parts[1]}`);
+          state.assistantMessages = [];
+          state.assistantPatch = null;
+          state.selectedCaseIndex = 0;
+        }
+        if (deepCaseId && state.selectedSuite?.cases) {
+          const index = state.selectedSuite.cases.findIndex((item) => item.id === deepCaseId);
+          if (index >= 0) {
+            state.selectedCaseIndex = index;
+            state.editorTab = "cases";
+          }
+        }
+        renderEditor();
+      } else renderSuites();
+      refreshIcons();
+    } catch (error) {
+      notify(error.message);
+    }
+  });
 }
 
 async function initialize() {
+  setBusyOverlay(true, tr("データを読み込み中…", "Loading data…"));
+  setRouteProgress(true);
   try {
-    const [config, agents, knowledgeSources, suites, suiteRuns, runs, sheetConnections, storageConfig] = await Promise.all([
+    const [config, agents, knowledgeSources, suites, suiteRuns, sheetConnections, storageConfig] = await Promise.all([
       json("/api/config"),
       json("/api/agents"),
       json("/api/knowledge-sources"),
       json("/api/suites"),
       json("/api/suite-runs"),
-      json("/api/runs"),
       json("/api/sheets/connections"),
-      json("/api/storage/config").catch(() => null)
+      json("/api/storage/config?lite=1").catch(() => null)
     ]);
     Object.assign(state, {
       config,
@@ -3505,15 +3579,26 @@ async function initialize() {
       knowledgeSources: knowledgeSources.sources,
       suites: suites.suites,
       suiteRuns: suiteRuns.suiteRuns,
-      runs: runs.runs,
+      runs: state.runs || [],
       sheetConnections: sheetConnections.connections,
       sheetFormat: sheetConnections.format,
       storageConfig
     });
     if (!location.hash) location.hash = "#/suites";
     await route();
+    // Single-run history is secondary — load after first paint so GCS cold start feels lighter.
+    json("/api/runs")
+      .then((payload) => {
+        state.runs = payload.runs || [];
+      })
+      .catch(() => {
+        /* keep empty; run page can retry */
+      });
   } catch (error) {
     app.innerHTML = empty(tr("起動できませんでした", "Could not start the application"), translateApiMessage(error.message));
+  } finally {
+    setBusyOverlay(false);
+    setRouteProgress(false);
   }
 }
 
