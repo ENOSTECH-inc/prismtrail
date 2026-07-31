@@ -19,20 +19,26 @@ Domain JSON is persisted through a switchable primary-storage interface. Local s
 `validate`, and `describe` boundary. Existing stores therefore remain unaware of the selected
 backend.
 
-GCS is the recommended/default choice in the settings UI for shared use. A fresh installation
-still starts on local storage when no bucket has been configured, so the application remains
-bootable and existing data is never implicitly moved.
+GCS is the recommended/default choice in the settings UI, including for local application runs.
+A fresh installation temporarily boots from local storage when no bucket has been configured,
+shows a `setup_required` state, and preselects GCS in the settings form. This keeps the
+application bootable without silently treating the temporary local fallback as the intended
+shared destination.
 
 The settings API exposes four operations:
 
 - read the active bootstrap configuration and storage statistics
-- validate a proposed local or GCS destination
+- validate a proposed local or GCS destination and preview its registered data
 - update an already prepared destination
 - copy or synchronize all namespaces, optionally switching only after a successful copy
 
 Migration first validates the destination, performs a dry-run conflict scan, copies without
 deleting the source, persists bootstrap settings atomically, and switches the in-process backend
 last. A failed validation or copy leaves the current backend active.
+
+Destination previews use object metadata for counts, bytes, and latest update timestamps, then
+download at most three representative JSON objects per namespace for display labels. This avoids
+loading complete knowledge indexes merely to explain what will become visible after switching.
 
 GCS objects are written with generation preconditions. Reads cache the observed generation and
 subsequent writes use `ifGenerationMatch`; a concurrent modification returns a storage conflict

@@ -37,6 +37,21 @@ test("local backend remains compatible with collection/id.json data", async (con
   assert.deepEqual(await store.list(), []);
 });
 
+test("local storage inspection returns a bounded registered-data preview", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-eval-storage-preview-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const backend = new LocalStorageBackend(root);
+  await backend.save("agents", { id: "agent_1", name: "Sales Agent" });
+  await backend.save("agents", { id: "agent_2", name: "Finance Agent" });
+
+  const preview = await backend.inspect("agents", { sampleLimit: 1 });
+
+  assert.equal(preview.count, 2);
+  assert.ok(preview.sizeBytes > 0);
+  assert.equal(preview.samples.length, 1);
+  assert.ok(["agent_1", "agent_2"].includes(preview.samples[0].id));
+});
+
 test("migration previews, copies, and refuses different values with the same id", async (context) => {
   const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "agent-eval-source-"));
   const destinationRoot = await mkdtemp(path.join(os.tmpdir(), "agent-eval-destination-"));
@@ -119,4 +134,37 @@ test("GCS surfaces a generation race as a storage conflict", async () => {
     backend.save("suites", { id: "suite_1", name: "stale edit" }),
     { code: "EEXIST", status: 412 }
   );
+});
+
+test("GCS storage inspection counts metadata and downloads only bounded samples", async () => {
+  const calls = [];
+  const responses = [
+    new Response(JSON.stringify({
+      items: [
+        { name: "shared/agents/agent_1.json", size: "120", updated: "2026-07-30T00:00:00Z" },
+        { name: "shared/agents/agent_2.json", size: "80", updated: "2026-07-31T00:00:00Z" },
+        { name: "shared/agents/not-managed.txt", size: "500", updated: "2026-07-31T00:00:00Z" }
+      ]
+    }), { status: 200 }),
+    new Response(JSON.stringify({ generation: "9" }), { status: 200 }),
+    new Response(JSON.stringify({ id: "agent_2", name: "Finance Agent" }), { status: 200 })
+  ];
+  const backend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket", prefix: "shared/" },
+    {
+      tokenProvider: async () => ({ token: "test-token", source: "test" }),
+      fetchImpl: async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return responses.shift();
+      }
+    }
+  );
+
+  const preview = await backend.inspect("agents", { sampleLimit: 1 });
+
+  assert.equal(preview.count, 2);
+  assert.equal(preview.sizeBytes, 200);
+  assert.equal(preview.latestUpdatedAt, "2026-07-31T00:00:00Z");
+  assert.deepEqual(preview.samples, [{ id: "agent_2", name: "Finance Agent" }]);
+  assert.equal(calls.length, 3);
 });

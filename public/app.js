@@ -137,6 +137,7 @@ function statusPill(status) {
     skipped: tr("スキップ", "Skipped"),
     warning: tr("注意", "Warning"),
     ready: tr("接続済み", "Connected"),
+    setup_required: tr("GCS設定が必要", "GCS setup required"),
     unchecked: tr("未確認", "Unchecked"),
     error: tr("エラー", "Error"),
     draft: tr("下書き", "Draft"),
@@ -1774,6 +1775,31 @@ function storageDriverLabel(driver) {
   return driver === "local" ? "ローカルファイル" : "Google Cloud Storage";
 }
 
+function renderStorageOverview(overview, { candidate = false, destination = "" } = {}) {
+  if (!overview) return "";
+  const populated = (overview.namespaces || []).filter((item) => item.count > 0);
+  return `
+    <section class="storage-preview-panel">
+      <header>
+        <div>
+          <span>${candidate ? tr("接続先プレビュー", "Destination preview") : tr("保存データ概要", "Stored data overview")}</span>
+          <h3>${tr("登録済みデータ", "Registered data")}</h3>
+          ${destination ? `<code>${esc(destination)}</code>` : ""}
+        </div>
+        <strong>${tr("{count}件", "{count} items", { count: formatLocaleNumber(overview.objectCount || 0) })} · ${fmtBytes(overview.sizeBytes || 0)}</strong>
+      </header>
+      ${overview.isEmpty
+        ? `<div class="storage-preview-empty">${icon("database-zap", 18)}<div><strong>${tr("まだデータは登録されていません", "No data is registered yet")}</strong><p>${tr("新しい共有保存先として利用できます。", "This destination is ready to use as new shared storage.")}</p></div></div>`
+        : `<div class="storage-preview-grid">${populated.map((item) => `
+            <article>
+              <div><strong>${esc(item.label)}</strong><span>${tr("{count}件", "{count} items", { count: formatLocaleNumber(item.count) })}</span></div>
+              <small>${item.latestUpdatedAt ? tr("最終更新 {date}", "Last updated {date}", { date: fmtDate(item.latestUpdatedAt) }) : tr("更新日時なし", "No update date")}</small>
+              ${(item.samples || []).length ? `<ul>${item.samples.map((sample) => `<li title="${esc(sample.id)}">${esc(sample.label || sample.id)}</li>`).join("")}</ul>` : ""}
+            </article>`).join("")}</div>`}
+      ${candidate ? `<div class="storage-preview-impact">${icon("info", 15)}<p>${tr("「設定を保存」すると、この登録済みデータがアプリに反映されます。現在の保存先のデータも引き継ぐ場合は、下の「データをコピーして切り替え」を使用してください。", "Saving the settings makes this registered data available in the app. To carry over data from the current destination, use “Copy data and switch” below.")}</p></div>` : ""}
+    </section>`;
+}
+
 function renderSettings() {
   const config = state.storageConfig || {
     driver: "gcs",
@@ -1782,7 +1808,7 @@ function renderSettings() {
     prefix: "agent-eval/"
   };
   const draft = state.storageDraft || {
-    driver: config.driver,
+    driver: config.configured === false ? config.recommendedDriver || "gcs" : config.driver,
     projectId: config.projectId || state.config?.billingProject || "",
     bucket: config.bucket || "",
     prefix: config.prefix || "",
@@ -1793,6 +1819,7 @@ function renderSettings() {
   const status = config.status || "unchecked";
   const statusCopy = {
     ready: ["利用可能", "保存先へのアクセスを確認できています。"],
+    setup_required: ["GCS接続を設定してください", "ローカル起動時も、チームで共有できるGCSを基本の保存先として利用します。"],
     error: ["接続エラー", config.error || "保存先に接続できません。設定と権限を確認してください。"],
     unchecked: ["未確認", "接続テストを実行して、接続先と認証を確認してください。"]
   }[status] || ["確認が必要", "現在の接続状態を確認してください。"];
@@ -1802,7 +1829,7 @@ function renderSettings() {
     ${pageHead("設定", "システムデータの保存先を設定し、端末が変わっても同じ評価環境を利用できます。")}
     <section class="settings-status ${esc(status)}">
       <span class="settings-status-icon">${icon(status === "ready" ? "shield-check" : status === "error" ? "circle-alert" : "shield-question", 22)}</span>
-      <div><span>現在のプライマリーストレージ</span><h2>${esc(storageDriverLabel(config.driver))}</h2><p>${esc(statusCopy[1])}</p></div>
+      <div><span>現在のプライマリーストレージ</span><h2>${esc(status === "setup_required" ? tr("GCS未接続（一時ローカル）", "GCS not connected (temporary local)") : storageDriverLabel(config.driver))}</h2><p>${esc(statusCopy[1])}</p></div>
       <div class="settings-status-meta">
         ${statusPill(status)}
         <dl>
@@ -1848,6 +1875,12 @@ function renderSettings() {
           <label class="span-2">保存フォルダ<input name="localPath" value="${esc(draft.localPath || "./data")}" autocomplete="off" placeholder="./data"><small class="field-help">Docker利用時は、コンテナにマウントされたパスを指定してください。</small></label>
         </div>
         ${test ? `<div class="storage-test-result ${test.ok ? "success" : "error"}">${icon(test.ok ? "check-circle-2" : "circle-alert", 16)}<div><strong>${test.ok ? "接続できました" : "接続できませんでした"}</strong><p>${esc(test.message || (test.ok ? "接続先と認証を確認しました。" : "設定と権限を確認してください。"))}</p>${test.identity ? `<code>${esc(test.identity)}</code>` : ""}</div></div>` : ""}
+        ${test?.ok ? renderStorageOverview(test.overview, {
+          candidate: true,
+          destination: test.details?.provider === "gcs"
+            ? `gs://${test.details.bucket}/${test.details.prefix || ""}`
+            : test.details?.rootDirectory || ""
+        }) : ""}
         <div class="settings-actions">
           <button id="test-storage" class="button secondary" type="button">${icon("plug-zap", 15)}接続をテスト</button>
           <button id="save-storage" class="button primary" type="submit">${icon("save", 15)}設定を保存</button>
@@ -1899,7 +1932,11 @@ function bindStorageSettings() {
     refreshIcons();
   }
 
-  form.querySelectorAll("input").forEach((input) => input.addEventListener("input", reflectStorageChoice));
+  form.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => {
+    state.storageTestResult = null;
+    document.querySelectorAll(".storage-test-result,.storage-preview-panel").forEach((element) => element.remove());
+    reflectStorageChoice();
+  }));
   confirmation.addEventListener("change", () => (migrateButton.disabled = !confirmation.checked));
   reflectStorageChoice();
 
