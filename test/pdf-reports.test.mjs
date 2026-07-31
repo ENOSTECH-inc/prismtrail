@@ -95,6 +95,8 @@ test("builds case-spec inputs with checklist and system lines", () => {
   assert.match(inputs[0].metaTable, /デモAgent/);
   assert.match(inputs[0].systemTable, /SQL必須/);
   assert.match(inputs[0].businessTable, /売上が数値/);
+  assert.equal(inputs[0].specSystemHead0, "項目");
+  assert.equal(inputs[0].specCriteriaHead1, "受入基準");
   assert.match(inputs[0].openLink, /ケースを開く/);
   assert.equal(inputs[0].openLinkUrl, caseEditorUrl("suite_demo", "case_1"));
 });
@@ -112,10 +114,12 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.match(batch[1].caseIndexTable, /月次売上/);
   assert.equal(batch[2]._pageKind, "case-overview");
   assert.equal(batch[3]._pageKind, "case-detail");
-  assert.match(batch[3].businessTable, /OK|一部|NG/);
+  assert.match(batch[3].businessTable, /適合|一部適合|不適合/);
+  assert.equal(batch[2].systemChecksHead0, "判定");
+  assert.equal(batch[3].businessHeadReason, "判定根拠");
   assert.equal(batch[2].openLinkUrl, runDetailUrl("run_1"));
   assert.match(batch[2].resultBanner, /PASS|FAIL|合格|不合格/);
-  assert.match(batch[3].evidenceBlock, /回答|結果テーブル|チャート/);
+  assert.match(batch[3].evidenceBlock, /回答|結果テーブル|図表/);
   assert.match(batch[2].systemPieSvg, /<svg/);
   assert.equal(batch[0].pageLabel, "1 / 4 ページ");
   assert.equal(batch[3].pageLabel, "4 / 4 ページ");
@@ -156,8 +160,9 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.equal(partial[0].summaryTable, undefined);
   assert.match(partial[1].evidenceBlock, /120万円/);
   assert.match(partial[1].evidenceBlock, /結果テーブル/);
-  assert.match(partial[1].evidenceBlock, /チャート: あり/);
-  assert.match(partial[0].systemTable, /OK|NG/);
+  assert.match(partial[1].evidenceBlock, /図表: あり/);
+  assert.match(partial[0].systemTable, /適合|不適合/);
+  assert.equal(partial[1].evidenceDataHead0, "month");
 });
 
 test("paginates long acceptance criteria before PDF rendering", () => {
@@ -208,7 +213,45 @@ test("paginates long acceptance criteria before PDF rendering", () => {
   assert.equal(reportInputs.length, 5);
   assert.match(reportInputs[3].sectionBusiness, /1 \/ 2/);
   assert.match(reportInputs[4].sectionBusiness, /2 \/ 2/);
-  assert.equal(reportInputs[4]._businessItems[0].criterion, "判定項目 5");
+  assert.equal(reportInputs[4]._businessItems[0].criterion, "判定項目 4");
+  assert.equal(reportInputs[4]._businessItems[1].criterion, "判定項目 5");
+});
+
+test("renders zero-evaluation and skipped cases without a misleading pass rate", () => {
+  const skippedReport = {
+    ...report,
+    status: "passed",
+    summary: {
+      ...report.summary,
+      score: 99,
+      systemScore: 99,
+      businessScore: 99,
+      passed: 0,
+      total: 1
+    },
+    caseRuns: [
+      {
+        caseId: "case_1",
+        title: "月次売上",
+        status: "skipped",
+        runId: null,
+        runSummary: { durationMs: 0, totalBytesBilled: 0, sqlCount: 0, chartCount: 0 },
+        evaluation: {
+          score: null,
+          system: { status: "skipped", score: null, checks: [] },
+          business: { status: "not_configured", grade: null, score: null, itemResults: [] }
+        }
+      }
+    ]
+  };
+  const inputs = buildSuiteRunInputs({ report: skippedReport, agents });
+  assert.equal(inputs[0].passRateValue, "—");
+  assert.equal(inputs[0].overallScoreValue, "—");
+  assert.match(inputs[0].gateDecision, /判定不能/);
+  assert.match(inputs[0].footer, /JST/);
+  assert.equal(inputs[2]._notEvaluated, true);
+  assert.match(inputs[2].notEvaluatedRow1Col1, /下書き|実行対象|除外/);
+  assert.match(inputs[2].notEvaluatedRow2Col1, /合格率の分母から除外/);
 });
 
 test("app deep-link helpers use the fixed local base URL", () => {

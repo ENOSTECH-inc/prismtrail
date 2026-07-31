@@ -146,7 +146,7 @@ function makeEvaluation({
       checks: [
         { id: "sql", passed: true, label: "SQLが生成され、実行に成功した" },
         { id: "table", passed: true, label: "必須SQLテーブルを参照した" },
-        { id: "chart", passed: !failedCheck, label: "指定されたチャートが生成された" },
+        { id: "chart", passed: !failedCheck, label: "指定された図表が生成された" },
         { id: "latency", passed: true, label: "最大実行時間以内に完了した" },
         { id: "budget", passed: true, label: "課金上限以内で完了した" }
       ]
@@ -304,7 +304,7 @@ const report = {
         grade: null,
         businessScore: null,
         businessStatus: "review_required",
-        summary: "ビジネス判定モデルが一時的に利用できなかったため、人による確認が必要です。",
+        summary: "業務判定モデルが一時的に利用できなかったため、人による確認が必要です。",
         items: []
       })
     },
@@ -392,10 +392,22 @@ const casePdf = await renderCaseSpecPdf({
   agents
 });
 const reportPdf = await renderSuiteRunPdf({ report, agents, runsById });
+const singleCasePdf = await renderSuiteRunPdf({
+  report,
+  caseIds: [cases[0].id],
+  agents,
+  runsById
+});
 
 const casePath = path.join(outputDir, "prismtrail-case-spec-sample.pdf");
 const reportPath = path.join(outputDir, "prismtrail-suite-run-sample.pdf");
-await Promise.all([writeFile(casePath, casePdf), writeFile(reportPath, reportPdf)]);
+const singleCasePath = path.join(outputDir, "prismtrail-single-case-result-sample.pdf");
+await Promise.all([
+  writeFile(casePath, casePdf),
+  writeFile(reportPath, reportPdf),
+  writeFile(singleCasePath, singleCasePdf)
+]);
 
 console.log(casePath);
 console.log(reportPath);
+console.log(singleCasePath);
