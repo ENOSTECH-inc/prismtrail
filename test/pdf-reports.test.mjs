@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PDFDocument } from "@pdfme/pdf-lib";
 import {
   buildCaseSpecInputs,
   buildSuiteRunInputs,
@@ -89,7 +90,7 @@ const report = {
 test("builds case-spec inputs with checklist and system lines", () => {
   const inputs = buildCaseSpecInputs({ suite, cases: suite.cases, agents });
   assert.equal(inputs.length, 1);
-  assert.match(inputs[0].docType, /テストケース仕様書|Test Case Specification/);
+  assert.match(inputs[0].docType, /TEST CASE SPECIFICATION/i);
   assert.equal(inputs[0].title, "月次売上");
   assert.match(inputs[0].metaTable, /デモAgent/);
   assert.match(inputs[0].systemTable, /SQL必須/);
@@ -100,25 +101,29 @@ test("builds case-spec inputs with checklist and system lines", () => {
 
 test("builds suite-run cover plus case pages, or a single case page", () => {
   const batch = buildSuiteRunInputs({ report, agents });
-  assert.equal(batch.length, 3); // cover + overview + detail
+  assert.equal(batch.length, 4); // cover + case index + overview + detail
   assert.ok(batch[0].summaryTable);
   assert.match(batch[0].heroMetric, /%/);
   assert.match(batch[0].statusPieSvg, /<svg/);
   assert.match(batch[0].gradeBarSvg, /<svg/);
   assert.match(batch[0].caseIndexTable, /月次売上/);
   assert.equal(batch[0].openLinkUrl, suiteRunReportUrl("suite_run_1"));
-  assert.equal(batch[1]._pageKind, "case-overview");
-  assert.equal(batch[2]._pageKind, "case-detail");
-  assert.match(batch[2].businessTable, /OK|一部|NG/);
-  assert.equal(batch[1].openLinkUrl, runDetailUrl("run_1"));
-  assert.match(batch[1].resultBanner, /PASS|FAIL|合格|不合格/);
-  assert.match(batch[2].evidenceBlock, /回答|結果テーブル|チャート/);
-  assert.match(batch[1].systemPieSvg, /<svg/);
+  assert.equal(batch[1]._pageKind, "index");
+  assert.match(batch[1].caseIndexTable, /月次売上/);
+  assert.equal(batch[2]._pageKind, "case-overview");
+  assert.equal(batch[3]._pageKind, "case-detail");
+  assert.match(batch[3].businessTable, /OK|一部|NG/);
+  assert.equal(batch[2].openLinkUrl, runDetailUrl("run_1"));
+  assert.match(batch[2].resultBanner, /PASS|FAIL|合格|不合格/);
+  assert.match(batch[3].evidenceBlock, /回答|結果テーブル|チャート/);
+  assert.match(batch[2].systemPieSvg, /<svg/);
+  assert.equal(batch[0].pageLabel, "1 / 4");
+  assert.equal(batch[3].pageLabel, "4 / 4");
 
   const one = buildSuiteRunInputs({ report, caseIds: ["case_1"], agents });
   assert.equal(one.length, 2);
   assert.equal(one[0].summaryTable, undefined);
-  assert.match(one[0].docType, /個別実行|Single-case/);
+  assert.match(one[0].docType, /個別実行|SINGLE-CASE/i);
 
   const partial = buildSuiteRunInputs({
     report: { ...report, partialRun: true, selectedCaseIds: ["case_1"] },
@@ -155,6 +160,57 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.match(partial[0].systemTable, /OK|NG/);
 });
 
+test("paginates long acceptance criteria before PDF rendering", () => {
+  const manyCriteria = Array.from({ length: 6 }, (_, index) => `受入基準 ${index + 1}`);
+  const specInputs = buildCaseSpecInputs({
+    suite,
+    cases: [
+      {
+        ...suite.cases[0],
+        expectations: {
+          ...suite.cases[0].expectations,
+          businessRequirements: {
+            ...suite.cases[0].expectations.businessRequirements,
+            criteriaItems: manyCriteria
+          }
+        }
+      }
+    ],
+    agents
+  });
+  assert.equal(specInputs.length, 2);
+  assert.match(specInputs[0].sectionBusiness, /1 \/ 2/);
+  assert.match(specInputs[1].businessBlock, /受入基準 6/);
+
+  const manyResults = Array.from({ length: 5 }, (_, index) => ({
+    criterion: `判定項目 ${index + 1}`,
+    mark: index === 4 ? "rain" : "sun",
+    reason: `根拠 ${index + 1}`
+  }));
+  const reportInputs = buildSuiteRunInputs({
+    report: {
+      ...report,
+      caseRuns: [
+        {
+          ...report.caseRuns[0],
+          evaluation: {
+            ...report.caseRuns[0].evaluation,
+            business: {
+              ...report.caseRuns[0].evaluation.business,
+              itemResults: manyResults
+            }
+          }
+        }
+      ]
+    },
+    agents
+  });
+  assert.equal(reportInputs.length, 5);
+  assert.match(reportInputs[3].sectionBusiness, /1 \/ 2/);
+  assert.match(reportInputs[4].sectionBusiness, /2 \/ 2/);
+  assert.equal(reportInputs[4]._businessItems[0].criterion, "判定項目 5");
+});
+
 test("app deep-link helpers use the fixed local base URL", () => {
   assert.equal(
     caseEditorUrl("suite_1", "case_a"),
@@ -178,6 +234,8 @@ test("renderCaseSpecPdf returns a PDF byte stream", async () => {
   const latin1 = bytes.toString("latin1");
   assert.match(latin1, /\/URI/);
   assert.match(latin1, /127\.0\.0\.1:4318\/#\/suites\/suite_demo\/edit\/case_1/);
+  const document = await PDFDocument.load(bytes);
+  assert.equal(document.getPageCount(), 1);
 });
 
 test("renderSuiteRunPdf returns a PDF and rejects live runs", async () => {
@@ -186,6 +244,8 @@ test("renderSuiteRunPdf returns a PDF and rejects live runs", async () => {
   assert.equal(Buffer.from(pdf).subarray(0, 4).toString("utf8"), "%PDF");
   assert.match(latin1, /\/URI/);
   assert.match(latin1, /127\.0\.0\.1:4318\/#\/runs\/run_1/);
+  const document = await PDFDocument.load(pdf);
+  assert.equal(document.getPageCount(), 4);
 
   await assert.rejects(
     () => renderSuiteRunPdf({ report: { ...report, status: "running" }, agents }),
