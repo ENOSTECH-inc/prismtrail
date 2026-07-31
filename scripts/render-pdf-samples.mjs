@@ -32,7 +32,9 @@ const cases = [
         criteriaItems: [
           "2026年6月の売上高が1億2,450万円と回答されている",
           "前年同月比が+8.4%であることが明記されている",
-          "主要な増加要因としてエンタープライズ契約の更新が説明されている"
+          "主要な増加要因としてエンタープライズ契約の更新が説明されている",
+          "売上高の定義が請求確定額（税抜）であることが示されている",
+          "キャンセル済み取引を集計対象から除外している"
         ]
       }
     }
@@ -304,7 +306,7 @@ const report = {
         grade: null,
         businessScore: null,
         businessStatus: "review_required",
-        summary: "業務判定モデルが一時的に利用できなかったため、人による確認が必要です。",
+        summary: "ビジネス判定モデルが一時的に利用できなかったため、人による確認が必要です。",
         items: []
       })
     },
@@ -333,9 +335,19 @@ const runsById = {
         kind: "text.final_response",
         payload: {
           parts: [
-            "2026年6月の売上高は1億2,450万円で、前年同月比は+8.4%でした。主な増加要因はエンタープライズ契約の更新と新規大型案件の稼働です。売上の定義は請求確定額（税抜）で、キャンセル済み取引を除外しています。"
+            "# 2026年6月 売上結果\n\n**売上高は1億2,450万円**で、前年同月比は**+8.4%**でした。\n\n## 主な増加要因\n\n- エンタープライズ契約の更新\n- 新規大型案件の稼働\n\n## 集計条件\n\n売上の定義は請求確定額（税抜）で、キャンセル済み取引を除外しています。"
           ]
         }
+      },
+      {
+        kind: "data.generated_sql",
+        payload:
+          "SELECT month, SUM(net_revenue) AS revenue\nFROM marts_core.monthly_revenue\nWHERE month BETWEEN '2026-04' AND '2026-06'\nGROUP BY month\nORDER BY month"
+      },
+      {
+        kind: "data.generated_sql",
+        payload:
+          "SELECT month, SAFE_DIVIDE(revenue - prior_year_revenue, prior_year_revenue) AS yoy\nFROM marts_core.monthly_revenue_comparison\nWHERE month = '2026-06'"
       },
       {
         kind: "data.result",
@@ -348,7 +360,28 @@ const runsById = {
           ]
         }
       },
-      { kind: "chart.result", payload: { mark: "bar", title: "月次売上高と前年同月比" } }
+      {
+        kind: "chart.result",
+        payload: {
+          vegaConfig: {
+            $schema: "https://vega.github.io/schema/vega-lite/v6.json",
+            title: "月次売上高",
+            mark: { type: "bar", cornerRadiusTopLeft: 3, cornerRadiusTopRight: 3 },
+            data: {
+              values: [
+                { month: "2026-04", revenue: 108.42 },
+                { month: "2026-05", revenue: 115.8 },
+                { month: "2026-06", revenue: 124.5 }
+              ]
+            },
+            encoding: {
+              x: { field: "month", type: "ordinal", title: "対象月" },
+              y: { field: "revenue", type: "quantitative", title: "売上高（百万円）" },
+              color: { value: "#2563A8" }
+            }
+          }
+        }
+      }
     ]
   },
   run_customers_01: {
@@ -357,6 +390,11 @@ const runsById = {
       {
         kind: "text.final_response",
         payload: { parts: ["2026年6月の月次アクティブ顧客数は2,184社です。"] }
+      },
+      {
+        kind: "data.generated_sql",
+        payload:
+          "SELECT COUNT(DISTINCT billing_account_id) AS active_customers\nFROM marts_core.customer_activity\nWHERE activity_date >= DATE '2026-06-01'\n  AND activity_date < DATE '2026-07-01'"
       }
     ]
   },
@@ -370,6 +408,11 @@ const runsById = {
             "2026年第2四半期のロゴチャーン率は2.3%です。四半期末の顧客数を分母に算出しました。"
           ]
         }
+      },
+      {
+        kind: "data.generated_sql",
+        payload:
+          "SELECT SAFE_DIVIDE(churned_customers, ending_customers) AS logo_churn_rate\nFROM marts_core.quarterly_customer_churn\nWHERE fiscal_quarter = '2026-Q2'"
       }
     ]
   },
@@ -379,6 +422,39 @@ const runsById = {
       {
         kind: "text.final_response",
         payload: { parts: ["今四半期の営業パイプラインをステージ別に集計しました。"] }
+      },
+      {
+        kind: "data.generated_sql",
+        payload:
+          "SELECT stage, COUNT(*) AS opportunities, SUM(expected_amount) AS pipeline_amount\nFROM marts_core.sales_pipeline\nWHERE fiscal_quarter = '2026-Q3'\nGROUP BY stage"
+      },
+      {
+        kind: "data.generated_sql",
+        payload:
+          "SELECT stage, SAFE_DIVIDE(SUM(expected_amount), SUM(SUM(expected_amount)) OVER ()) AS share\nFROM marts_core.sales_pipeline\nWHERE fiscal_quarter = '2026-Q3'\nGROUP BY stage"
+      },
+      {
+        kind: "chart.result",
+        payload: {
+          vegaConfig: {
+            $schema: "https://vega.github.io/schema/vega-lite/v6.json",
+            title: "営業パイプライン",
+            mark: "bar",
+            data: {
+              values: [
+                { stage: "提案", amount: 340 },
+                { stage: "評価", amount: 220 },
+                { stage: "交渉", amount: 145 },
+                { stage: "最終確認", amount: 80 }
+              ]
+            },
+            encoding: {
+              y: { field: "stage", type: "nominal", title: "商談ステージ" },
+              x: { field: "amount", type: "quantitative", title: "金額（百万円）" },
+              color: { value: "#0F6B3D" }
+            }
+          }
+        }
       }
     ]
   }

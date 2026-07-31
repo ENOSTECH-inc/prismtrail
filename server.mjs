@@ -2311,7 +2311,7 @@ const server = createServer(async (request, response) => {
         try {
           runsById[runId] = await runStore.get(runId);
         } catch {
-          // Preview is best-effort; evaluation meta still exports without the run body.
+          // The PDF renderer rejects the export below because SQL, answers, and charts are mandatory.
         }
       }
       const agents = await agentStore.list();
