@@ -20,6 +20,7 @@
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "setup": "node bin/prismtrail.mjs",
+    "report:samples": "node scripts/render-pdf-samples.mjs",
     "test": "node --test"
   },
   "dependencies": {

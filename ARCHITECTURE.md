@@ -122,7 +122,9 @@ SQL evidence is normalized across three valid execution paths: a `data.generated
 
 ## PDF export
 
-QA-oriented PDF downloads are generated server-side with pdfme (`@pdfme/generator`) and an embedded Noto Sans JP font (`assets/fonts/`, downloaded on first use or during Docker build). Layout follows a TestRail-inspired report pattern: navy header bands, large headline pass-rate metrics, status pie / grade stacked-bar charts (SVG via `@pdfme/schemas` Svg), count+percentage tables, and a scannable case index.
+QA-oriented PDF downloads are generated server-side with pdfme (`@pdfme/generator`) and an embedded Noto Sans JP font (`assets/fonts/`, downloaded on first use or during Docker build). The print-safe report system follows a TestRail-style decision flow: executive quality-gate summary, KPI cards, status and business-grade distributions, explicitly paginated test-result indexes, then case-level outcome, deterministic checks, business acceptance criteria, and evidence. Color is reserved for hierarchy and result state.
+
+PDF layouts do not rely on renderer-driven table pagination. Every logical report page is composed on a fixed A4 grid and large collections are chunked before rendering. This keeps headers, rows, and footers together and makes page counts deterministic. `npm run report:samples` generates representative case-spec and suite-run PDFs under `output/pdf/` for visual regression review; tests also assert that each logical input produces exactly one PDF page.
 
 - Case specs: `GET /api/suites/:id/export/case-pdf?caseId=` (one case) and `GET /api/suites/:id/export/cases-pdf` (all cases as one multi-page PDF)
 - Suite-run reports: `GET /api/suite-runs/:id/export/pdf` (Runs Summary cover + case detail pages). Partial / single-case runs (`partialRun` or `?caseId=`) omit the cover and export case detail only. Case pages include result banner, system/business check tables, and a short evidence preview (answer / sample table / chart note).
