@@ -95,8 +95,10 @@ test("migration previews, copies, and refuses different values with the same id"
 test("GCS writes use generation preconditions after a read", async () => {
   const calls = [];
   const responses = [
-    new Response(JSON.stringify({ generation: "7" }), { status: 200 }),
-    new Response(JSON.stringify({ id: "suite_1", name: "before" }), { status: 200 }),
+    new Response(JSON.stringify({ id: "suite_1", name: "before" }), {
+      status: 200,
+      headers: { "x-goog-generation": "7" }
+    }),
     new Response(JSON.stringify({ generation: "8" }), { status: 200 })
   ];
   const backend = new GcsStorageBackend(
@@ -112,14 +114,17 @@ test("GCS writes use generation preconditions after a read", async () => {
 
   assert.equal((await backend.get("suites", "suite_1")).name, "before");
   await backend.save("suites", { id: "suite_1", name: "after" });
-  assert.match(calls[2].url, /ifGenerationMatch=7/);
-  assert.equal(calls[2].options.headers.Authorization, "Bearer test-token");
+  assert.match(calls[0].url, /alt=media/);
+  assert.match(calls[1].url, /ifGenerationMatch=7/);
+  assert.equal(calls[1].options.headers.Authorization, "Bearer test-token");
 });
 
 test("GCS surfaces a generation race as a storage conflict", async () => {
   const responses = [
-    new Response(JSON.stringify({ generation: "7" }), { status: 200 }),
-    new Response(JSON.stringify({ id: "suite_1" }), { status: 200 }),
+    new Response(JSON.stringify({ id: "suite_1" }), {
+      status: 200,
+      headers: { "x-goog-generation": "7" }
+    }),
     new Response("generation mismatch", { status: 412 })
   ];
   const backend = new GcsStorageBackend(
@@ -146,8 +151,10 @@ test("GCS storage inspection counts metadata and downloads only bounded samples"
         { name: "shared/agents/not-managed.txt", size: "500", updated: "2026-07-31T00:00:00Z" }
       ]
     }), { status: 200 }),
-    new Response(JSON.stringify({ generation: "9" }), { status: 200 }),
-    new Response(JSON.stringify({ id: "agent_2", name: "Finance Agent" }), { status: 200 })
+    new Response(JSON.stringify({ id: "agent_2", name: "Finance Agent" }), {
+      status: 200,
+      headers: { "x-goog-generation": "9" }
+    })
   ];
   const backend = new GcsStorageBackend(
     { bucket: "portable-test-bucket", prefix: "shared/" },
@@ -166,5 +173,6 @@ test("GCS storage inspection counts metadata and downloads only bounded samples"
   assert.equal(preview.sizeBytes, 200);
   assert.equal(preview.latestUpdatedAt, "2026-07-31T00:00:00Z");
   assert.deepEqual(preview.samples, [{ id: "agent_2", name: "Finance Agent" }]);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].url, /alt=media/);
 });

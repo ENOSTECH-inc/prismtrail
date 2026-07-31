@@ -18,8 +18,15 @@
     <script src="/vendor/vega-embed.min.js"></script>
   </head>
   <body>
+    <div id="route-progress" class="route-progress" hidden aria-hidden="true"><i></i></div>
     <div id="app"></div>
     <div id="toast" class="toast" hidden aria-live="polite"></div>
+    <div id="busy-overlay" class="busy-overlay" hidden>
+      <div class="busy-card" role="status" aria-live="polite">
+        <span class="live-spinner" aria-hidden="true"></span>
+        <strong id="busy-overlay-label">Loading…</strong>
+      </div>
+    </div>
     <script type="module" src="/app.js"></script>
   </body>
 </html>
