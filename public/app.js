@@ -679,10 +679,52 @@ function localeSelector(compact = false) {
   </div>`;
 }
 
+function storageModeSummary(config = state.storageConfig) {
+  const driver = config?.driver || (config?.status === "setup_required" ? "local" : null);
+  const isLocal = driver === "local" || config?.status === "setup_required";
+  if (!config && !driver) {
+    return {
+      mode: "unknown",
+      isLocal: false,
+      label: tr("保存先確認中", "Checking storage"),
+      detail: tr("読み込み中", "Loading"),
+      title: tr("プライマリーストレージの状態を確認しています", "Checking primary storage status")
+    };
+  }
+  if (isLocal) {
+    const temporary = config?.status === "setup_required" || config?.configured === false;
+    const detail = temporary
+      ? tr("一時ローカル", "Temporary local")
+      : String(config?.localPath || "").replace(/^\/app\//, "/") || tr("ローカルファイル", "Local files");
+    return {
+      mode: "local",
+      isLocal: true,
+      label: tr("Localモード", "Local mode"),
+      detail,
+      title: temporary
+        ? tr("プライマリーストレージ: Localモード（GCS未接続のため一時ローカル）", "Primary storage: Local mode (temporary local; GCS not connected)")
+        : tr("プライマリーストレージ: Localモード（{path}）", "Primary storage: Local mode ({path})", {
+          path: config?.localPath || detail
+        })
+    };
+  }
+  const bucket = config?.bucket ? `gs://${config.bucket}/${config.prefix || ""}`.replace(/\/+$/, "/") : "";
+  return {
+    mode: "storage",
+    isLocal: false,
+    label: tr("Storageモード", "Storage mode"),
+    detail: bucket || config?.projectId || "Google Cloud Storage",
+    title: tr("プライマリーストレージ: Storageモード（{destination}）", "Primary storage: Storage mode ({destination})", {
+      destination: bucket || config?.projectId || "GCS"
+    })
+  };
+}
+
 function shell(content, active = "suites", mode = false) {
   if (mode === true || mode === "editor") return content;
   const collapsed = state.sidebarCollapsed;
   const mainClass = mode === "detail" ? "main detail-mode" : "main";
+  const storage = storageModeSummary();
   return `
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
@@ -715,8 +757,12 @@ function shell(content, active = "suites", mode = false) {
           </section>
         </nav>
         <div class="sidebar-foot">
-          <div class="sidebar-auth">
-            <span class="live-dot"></span>
+          <a class="sidebar-status storage-mode ${storage.mode}" href="#/settings" title="${esc(storage.title)}" aria-label="${esc(storage.title)}">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span class="auth-copy"><strong>${esc(storage.label)}</strong><small>${esc(storage.detail)}</small></span>
+          </a>
+          <div class="sidebar-status sidebar-auth" title="Google Cloud ADC">
+            <span class="live-dot" aria-hidden="true"></span>
             <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(state.config?.billingProject || tr("接続確認中", "Checking connection"))}</small></span>
           </div>
           ${localeSelector(collapsed)}
