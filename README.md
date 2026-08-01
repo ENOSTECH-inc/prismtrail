@@ -195,7 +195,7 @@ of being converted into a fabricated D grade.
 
 Share a spreadsheet with the ADC identity and connect it from the application. The app owns only:
 
-- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases
+- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including newline-separated provenance URLs
 - `AgentEval_Report` — read-only suite-run summary and case results
 
 The app clears and rewrites those fixed tabs while preserving their sheet IDs. It does not modify

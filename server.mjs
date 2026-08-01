@@ -32,6 +32,7 @@ import { RunStore } from "./lib/store.mjs";
 import { McpTokenManager, MCP_SCOPES } from "./lib/mcp-auth.mjs";
 import { createMcpHttpHandler } from "./lib/mcp-server.mjs";
 import { createPrismTrailMcpTools } from "./lib/mcp-tools.mjs";
+import { normalizeRelatedUrls } from "./lib/related-urls.mjs";
 import {
   createStorageBackend,
   LocalStorageBackend,
@@ -56,6 +57,7 @@ import {
   pastedTextToSuiteInput,
   readSuiteSheet,
   REPORT_SHEET,
+  SHEET_SCHEMA_VERSION,
   SUITE_SHEET,
   SUITES_SHEET,
   MAX_SUITE_CASES,
@@ -252,7 +254,7 @@ const config = {
     reportTab: REPORT_SHEET,
     agentsTab: AGENTS_SHEET,
     suitesTab: SUITES_SHEET,
-    schemaVersion: 2
+    schemaVersion: Number(SHEET_SCHEMA_VERSION)
   }
 };
 
@@ -601,6 +603,7 @@ function normalizeSuite(body, existing = {}) {
         : [],
       thinkingMode: item.thinkingMode === "THINKING" ? "THINKING" : "FAST",
       status: normalizeCaseStatus(item.status, { fallback: "active" }),
+      relatedUrls: normalizeRelatedUrls(item.relatedUrls),
       memo: String(item.memo ?? "").trim().slice(0, 20000),
       expectations: normalizeExpectations(item.expectations)
     })),
@@ -1862,7 +1865,7 @@ const mcpOperations = {
   async listSheetConnections() {
     return {
       connections: (await sheetConnectionStore.list()).map(sheetConnectionProjection),
-      format: { suiteTab: SUITE_SHEET, reportTab: REPORT_SHEET, agentsTab: AGENTS_SHEET, suitesTab: SUITES_SHEET, schemaVersion: 2, maxCases: MAX_SUITE_CASES }
+      format: { suiteTab: SUITE_SHEET, reportTab: REPORT_SHEET, agentsTab: AGENTS_SHEET, suitesTab: SUITES_SHEET, schemaVersion: Number(SHEET_SCHEMA_VERSION), maxCases: MAX_SUITE_CASES }
     };
   },
   async connectSheet({ spreadsheetUrl, suiteId, forceOperational = false }) {
@@ -2375,7 +2378,7 @@ const server = createServer(async (request, response) => {
           reportTab: REPORT_SHEET,
           agentsTab: AGENTS_SHEET,
           suitesTab: SUITES_SHEET,
-          schemaVersion: 2,
+          schemaVersion: Number(SHEET_SCHEMA_VERSION),
           maxCases: MAX_SUITE_CASES
         }
       });
@@ -2792,36 +2795,6 @@ const server = createServer(async (request, response) => {
     const cancelMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/cancel$/);
     if (request.method === "POST" && cancelMatch) {
       sendJson(response, 202, await cancelSuiteRun(cancelMatch[1]));
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/assistant") {
-      const body = await readJson(request);
-      const latestMessage = Array.isArray(body.messages)
-        ? body.messages.filter((message) => message.role !== "assistant").at(-1)?.text || ""
-        : "";
-      const sourceIds = [
-        ...(body.suite?.knowledgeSourceIds || []),
-        ...(body.suite?.cases || []).flatMap((item) => item.knowledgeSourceIds || [])
-      ];
-      const retrieved = await retrieveKnowledge(latestMessage, sourceIds, 6);
-      const reply = await generateSuiteAssistantReply({
-        project: config.vertexProject,
-        location: config.vertexLocation,
-        model: config.vertexModel,
-        suite: body.suite,
-        agents: await agentStore.list(),
-        messages: Array.isArray(body.messages) ? body.messages : [],
-        knowledgeContext: retrieved.context
-      });
-      reply.retrieved = retrieved.matches.map(({ text, ...metadata }) => metadata);
-      if (body.applyPatch && reply.patch) {
-        const suite = await suiteStore.get(String(body.suite?.id || ""));
-        reply.updatedSuite = await saveSuiteWithHistory(mergeAssistantPatch(suite, reply.patch), {
-          updateMethod: "ui_edit"
-        });
-      }
-      sendJson(response, 200, reply);
       return;
     }
 

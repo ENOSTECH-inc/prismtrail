@@ -75,6 +75,7 @@ test("suite format round-trips through fixed rows", () => {
         agentId: "agent_1",
         thinkingMode: "THINKING",
         knowledgeSourceIds: ["knowledge_2"],
+        relatedUrls: ["https://example.com/slack/thread-1", "https://example.com/tickets/42"],
         memo: "参照: sales_fact の売上定義",
         expectations: {
           requireSql: true,
@@ -95,7 +96,8 @@ test("suite format round-trips through fixed rows", () => {
   };
   const rows = suiteToRows(source);
   assert.equal(SUITE_DISPLAY_HEADERS[12], "ビジネス要件チェック（;区切り）");
-  assert.equal(SUITE_DISPLAY_HEADERS[14], "メモ");
+  assert.equal(SUITE_DISPLAY_HEADERS[14], "関連URL（1行1件）");
+  assert.equal(SUITE_DISPLAY_HEADERS[15], "メモ");
   assert.match(rows[10][1], /コピー範囲/);
   assert.deepEqual(rows[11], SUITE_DISPLAY_HEADERS);
   assert.equal(rows[6][0], "接続先Data Agent ID");
@@ -117,6 +119,10 @@ test("suite format round-trips through fixed rows", () => {
     "2026年6月の売上は65,200円; 単位が円"
   );
   assert.deepEqual(parsed.cases[0].knowledgeSourceIds, ["knowledge_2"]);
+  assert.deepEqual(parsed.cases[0].relatedUrls, [
+    "https://example.com/slack/thread-1",
+    "https://example.com/tickets/42"
+  ]);
   assert.equal(parsed.cases[0].memo, "参照: sales_fact の売上定義");
 });
 
@@ -142,6 +148,29 @@ test("legacy accuracy header remains import-compatible", () => {
     rowsToSuiteInput(rows).cases[0].expectations.businessRequirements.accuracyCriteria,
     "売上は65,200円"
   );
+});
+
+test("schema v2 rows without related URLs remain import-compatible", () => {
+  const rows = suiteToRows({
+    id: "suite_v2",
+    name: "既存スイート",
+    cases: [{
+      id: "case_1",
+      title: "既存ケース",
+      prompt: "既存の質問",
+      agentId: "agent_1",
+      memo: "既存メモ",
+      expectations: {}
+    }]
+  });
+  rows[1][1] = "2";
+  const relatedUrlsIndex = rows[11].indexOf("関連URL（1行1件）");
+  assert.ok(relatedUrlsIndex >= 0);
+  rows[11].splice(relatedUrlsIndex, 1);
+  rows[12].splice(relatedUrlsIndex, 1);
+  const parsed = rowsToSuiteInput(rows);
+  assert.deepEqual(parsed.cases[0].relatedUrls, []);
+  assert.equal(parsed.cases[0].memo, "既存メモ");
 });
 
 test("suite import rejects a changed header contract", () => {
