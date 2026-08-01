@@ -33,6 +33,12 @@ The default Docker Compose configuration publishes the service only on `127.0.0.
 that binding or expose the service to an untrusted network without adding TLS, authentication,
 authorization, request auditing, and workload identity.
 
+The `/mcp` endpoint requires a dedicated bearer token, but this does not convert the rest of the
+local application into an authenticated network service. Token administration is restricted to a
+localhost Host by default. Remote deployments must protect every `/api` route at the same trusted
+reverse-proxy boundary. MCP tokens are scoped, expiring, revocable, rate-limited, stored only as
+hashes, and excluded from primary-storage migration. Delete tools are not part of the MCP allow-list.
+
 ## Sensitive data
 
 The following files and values must never be committed:

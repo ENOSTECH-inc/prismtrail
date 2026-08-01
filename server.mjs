@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -29,6 +29,9 @@ import {
 import { JsonStore } from "./lib/json-store.mjs";
 import { createAsyncMutex, createKeyedAsyncMutex, mapWithConcurrency } from "./lib/concurrency.mjs";
 import { RunStore } from "./lib/store.mjs";
+import { McpTokenManager, MCP_SCOPES } from "./lib/mcp-auth.mjs";
+import { createMcpHttpHandler } from "./lib/mcp-server.mjs";
+import { createPrismTrailMcpTools } from "./lib/mcp-tools.mjs";
 import {
   createStorageBackend,
   LocalStorageBackend,
@@ -71,6 +74,12 @@ const publicDirectory = path.join(__dirname, "public");
 const dataDirectory = path.resolve(process.env.PRIMARY_STORAGE_LOCAL_PATH || path.join(__dirname, "data"));
 const storageConfigPath = path.resolve(
   process.env.PRIMARY_STORAGE_CONFIG_PATH || path.join(dataDirectory, "storage-config.json")
+);
+const mcpTokenPath = path.resolve(
+  process.env.MCP_TOKEN_STORE_PATH || path.join(dataDirectory, ".credentials", "mcp-tokens.json")
+);
+const mcpAuditPath = path.resolve(
+  process.env.MCP_AUDIT_LOG_PATH || path.join(dataDirectory, ".credentials", "mcp-audit.ndjson")
 );
 const storageNamespaces = [
   "runs",
@@ -185,6 +194,7 @@ const suiteRunStore = new JsonStore(primaryStorage, "suite-runs");
 const sheetConnectionStore = new JsonStore(primaryStorage, "sheet-connections");
 const knowledgeSourceStore = new JsonStore(primaryStorage, "knowledge-sources");
 const knowledgeIndexStore = new JsonStore(primaryStorage, "knowledge-indexes");
+const mcpTokenManager = new McpTokenManager(mcpTokenPath);
 /** Serialize Google Sheets mutations per spreadsheet to avoid interleaved clear/rewrite. */
 const withSpreadsheetLock = createKeyedAsyncMutex();
 /** In-process abort controllers for live suite runs (lost on process restart). */
@@ -192,6 +202,14 @@ const suiteRunControllers = new Map();
 const port = Number(process.env.PORT || 4318);
 const host = process.env.HOST || "127.0.0.1";
 const SUITE_RUN_MAX_CONCURRENCY = 30;
+const storageSwitchConfirmations = new Map();
+
+async function writeMcpAudit(event) {
+  await mkdir(path.dirname(mcpAuditPath), { recursive: true, mode: 0o700 });
+  const record = { timestamp: new Date().toISOString(), ...event };
+  await appendFile(mcpAuditPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(mcpAuditPath, 0o600);
+}
 
 function suiteRunConcurrency() {
   const raw = Number(process.env.SUITE_RUN_CONCURRENCY ?? SUITE_RUN_MAX_CONCURRENCY);
@@ -346,12 +364,12 @@ async function storageOverview(backend = primaryStorage.backend) {
   };
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = 8 * 1024 * 1024) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 8 * 1024 * 1024) throw new Error("Request body is too large");
+    if (size > maxBytes) throw new Error("Request body is too large");
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
@@ -375,7 +393,9 @@ const SUITE_UPDATE_METHODS = new Set([
   "ui_edit",
   "sheet_paste",
   "sheet_import",
-  "restore"
+  "restore",
+  "mcp_create",
+  "mcp_edit"
 ]);
 
 function normalizeUpdateMethod(value, fallback = "ui_edit") {
@@ -1590,14 +1610,423 @@ async function seedData() {
   }
 }
 
+function pageItems(items, { cursor = 0, limit = 50 } = {}, max = 100) {
+  const start = Math.max(0, Number(cursor) || 0);
+  const size = Math.min(max, Math.max(1, Number(limit) || 50));
+  const values = items.slice(start, start + size);
+  return { items: values, nextCursor: start + values.length < items.length ? start + values.length : null, total: items.length };
+}
+
+function assertExpectedUpdatedAt(existing, expectedUpdatedAt) {
+  if (!expectedUpdatedAt || String(existing.updatedAt) !== String(expectedUpdatedAt)) {
+    const error = new Error("スイートは別の操作で更新されています。再取得してからやり直してください。");
+    error.status = 409;
+    error.details = { expectedUpdatedAt, actualUpdatedAt: existing.updatedAt };
+    throw error;
+  }
+}
+
+async function normalizeValidateAndSaveSuite(input, existing, context, method) {
+  const normalized = normalizeSuite(input, existing);
+  const references = await validateSuiteReferences(normalized);
+  return saveSuiteWithHistory(references.suite, {
+    updateMethod: method,
+    updatedBy: `mcp:${context.token.id}`
+  });
+}
+
+async function renderReportPdfResource({ reportId, caseId }) {
+  const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportId)));
+  if (isSuiteRunActive(report)) throw Object.assign(new Error("実行中のレポートはPDF出力できません。"), { status: 409 });
+  const caseIds = caseId ? [caseId] : null;
+  if (caseId && !(report.suiteSnapshot?.cases || []).some((item) => item.id === caseId)) {
+    throw Object.assign(new Error("指定のテストケースが見つかりません。"), { status: 404 });
+  }
+  const targetCaseIds = caseIds ? new Set(caseIds) : null;
+  const runsById = {};
+  for (const item of report.caseRuns || []) {
+    if (!item.runId || (targetCaseIds && !targetCaseIds.has(item.caseId))) continue;
+    try { runsById[item.runId] = await runStore.get(item.runId); } catch { /* best effort */ }
+  }
+  const bytes = await renderSuiteRunPdf({ report, caseIds, agents: await agentStore.list(), runsById });
+  const filename = caseId ? pdfFilename("run-case", caseId) : pdfFilename("run", report.id);
+  return {
+    content: [{
+      type: "resource",
+      resource: {
+        uri: `prismtrail://reports/${encodeURIComponent(report.id)}/${encodeURIComponent(filename)}`,
+        mimeType: "application/pdf",
+        blob: Buffer.from(bytes).toString("base64")
+      }
+    }]
+  };
+}
+
+async function renderCaseSpecPdfResource({ suiteId, caseId }) {
+  const suite = await suiteStore.get(suiteId);
+  const cases = caseId
+    ? (suite.cases || []).filter((item) => item.id === caseId)
+    : suite.cases || [];
+  if (!cases.length) throw Object.assign(new Error("出力対象のテストケースが見つかりません。"), { status: 404 });
+  const bytes = await renderCaseSpecPdf({ suite, cases, agents: await agentStore.list() });
+  const filename = caseId ? pdfFilename("case", caseId) : pdfFilename("cases", suite.id);
+  return {
+    content: [{
+      type: "resource",
+      resource: {
+        uri: `prismtrail://suites/${encodeURIComponent(suite.id)}/${encodeURIComponent(filename)}`,
+        mimeType: "application/pdf",
+        blob: Buffer.from(bytes).toString("base64")
+      }
+    }]
+  };
+}
+
+const mcpOperations = {
+  async listSuites(args) {
+    const suites = (await suiteStore.list()).map((suite) => ({
+      id: suite.id, name: suite.name, description: suite.description, status: suite.status,
+      caseCount: suite.cases?.length || 0, updatedAt: suite.updatedAt, lastRunAt: suite.lastRunAt
+    }));
+    const page = pageItems(suites, args);
+    return { suites: page.items, nextCursor: page.nextCursor, total: page.total };
+  },
+  getSuite: (suiteId) => suiteStore.get(suiteId),
+  async listTestCases(args) {
+    const suites = args.suiteId ? [await suiteStore.get(args.suiteId)] : await suiteStore.list();
+    const cases = suites.flatMap((suite) => (suite.cases || []).map((testCase) => ({ suiteId: suite.id, suiteName: suite.name, ...testCase })));
+    const page = pageItems(cases, args, 200);
+    return { testCases: page.items, nextCursor: page.nextCursor, total: page.total };
+  },
+  async getTestCase(suiteId, caseId) {
+    const suite = await suiteStore.get(suiteId);
+    const testCase = (suite.cases || []).find((item) => item.id === caseId);
+    if (!testCase) throw Object.assign(new Error("指定のテストケースが見つかりません。"), { status: 404 });
+    return { suiteId, suiteName: suite.name, testCase, suiteUpdatedAt: suite.updatedAt };
+  },
+  async createSuite(suite, context) {
+    const saved = await normalizeValidateAndSaveSuite(suite, {}, context, "mcp_create");
+    syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+    return saved;
+  },
+  async updateSuite({ suiteId, expectedUpdatedAt, patch }, context) {
+    const existing = await suiteStore.get(suiteId);
+    assertExpectedUpdatedAt(existing, expectedUpdatedAt);
+    if (Object.hasOwn(patch, "cases") && !Array.isArray(patch.cases)) throw Object.assign(new Error("cases must be an array"), { status: 400 });
+    return normalizeValidateAndSaveSuite({ ...existing, ...patch, id: existing.id }, existing, context, "mcp_edit");
+  },
+  async createTestCase({ suiteId, expectedUpdatedAt, testCase }, context) {
+    const existing = await suiteStore.get(suiteId);
+    assertExpectedUpdatedAt(existing, expectedUpdatedAt);
+    if ((existing.cases || []).length >= MAX_SUITE_CASES) throw Object.assign(new Error(`1スイートは最大${MAX_SUITE_CASES}ケースです。`), { status: 400 });
+    return normalizeValidateAndSaveSuite({ ...existing, cases: [...(existing.cases || []), testCase] }, existing, context, "mcp_edit");
+  },
+  async updateTestCase({ suiteId, caseId, expectedUpdatedAt, patch }, context) {
+    const existing = await suiteStore.get(suiteId);
+    assertExpectedUpdatedAt(existing, expectedUpdatedAt);
+    const index = (existing.cases || []).findIndex((item) => item.id === caseId);
+    if (index < 0) throw Object.assign(new Error("指定のテストケースが見つかりません。"), { status: 404 });
+    const cases = existing.cases.map((item, position) => position === index ? { ...item, ...patch, id: item.id } : item);
+    return normalizeValidateAndSaveSuite({ ...existing, cases }, existing, context, "mcp_edit");
+  },
+  listSuiteVersions: async (suiteId) => {
+    await suiteStore.get(suiteId);
+    return { versions: (await listSuiteVersions(suiteId)).map(suiteVersionProjection) };
+  },
+  async getSuiteVersion(suiteId, versionId) {
+    await suiteStore.get(suiteId);
+    const version = await suiteVersionStore.get(versionId);
+    if (version.suiteId !== suiteId) throw Object.assign(new Error("指定の履歴が見つかりません。"), { status: 404 });
+    return version;
+  },
+  async restoreSuiteVersion({ suiteId, versionId, expectedUpdatedAt }, context) {
+    const existing = await suiteStore.get(suiteId);
+    assertExpectedUpdatedAt(existing, expectedUpdatedAt);
+    const version = await suiteVersionStore.get(versionId);
+    if (version.suiteId !== suiteId) throw Object.assign(new Error("指定の履歴が見つかりません。"), { status: 404 });
+    const restored = await normalizeValidateAndSaveSuite({
+      ...(version.snapshot || {}), id: existing.id, createdAt: existing.createdAt, lastRunAt: existing.lastRunAt
+    }, existing, context, "restore");
+    return { suite: restored, restoredFrom: suiteVersionProjection(version) };
+  },
+  async importPastedTestCases({ targetSuiteId, text, validateOnly = false, includeSuiteMetadata = true }, context) {
+    const targetSuite = await suiteStore.get(targetSuiteId);
+    const imported = pastedTextToSuiteInput(text, { targetSuite, preferTargetSuite: true, includeSuiteMetadata });
+    const suiteInput = normalizeSuite(imported.suite, targetSuite);
+    const references = await validateSuiteReferences(suiteInput);
+    const suite = normalizeSuite(references.suite, targetSuite);
+    const validation = {
+      format: imported.format,
+      delimiter: imported.delimiter,
+      caseCount: suite.cases.length,
+      diff: suiteCaseDiff(targetSuite.cases, suite.cases),
+      preview: suite.cases.slice(0, 5).map(({ id, title, prompt, agentId }) => ({ id, title, prompt, agentId })),
+      agentCount: references.agentCount,
+      knowledgeSourceCount: references.knowledgeSourceCount
+    };
+    if (validateOnly === true) return { suite, mode: "validated", validation };
+    const saved = await saveSuiteWithHistory(suite, { updateMethod: "sheet_paste", updatedBy: `mcp:${context.token.id}` });
+    return { suite: saved, mode: "updated", validation };
+  },
+  listAgents: async () => ({ agents: await agentStore.list() }),
+  async registerAgent(body) {
+    const resourceName = String(body.resourceName || "").trim();
+    const parsed = parseAgentResource(resourceName);
+    if (!parsed) throw Object.assign(new Error("Data Agent resource nameの形式が正しくありません。"), { status: 400 });
+    const now = new Date().toISOString();
+    const agent = await agentStore.save({
+      schemaVersion: 1, id: objectId("agent"),
+      displayName: String(body.displayName || parsed.remoteId).trim().slice(0, 120),
+      description: String(body.description || "").trim().slice(0, 1000),
+      resourceName, ...parsed, status: "unchecked", lastCheckedAt: null, createdAt: now, updatedAt: now
+    });
+    syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+    return agent;
+  },
+  async checkAgent(agentId) {
+    const agent = await agentStore.get(agentId);
+    const remote = await getDataAgent({ resourceName: agent.resourceName, billingProject: config.billingProject });
+    const updated = await agentStore.save({
+      ...agent,
+      displayName: remote.agent.displayName || agent.displayName,
+      description: remote.agent.description || agent.description,
+      status: "ready",
+      authSource: remote.authSource,
+      lastCheckedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    syncReadySheetCatalogs().catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+    return updated;
+  },
+  async listRuns(args) {
+    const page = pageItems(await runStore.list(), args);
+    return { runs: page.items, nextCursor: page.nextCursor, total: page.total };
+  },
+  async getRun(runId) {
+    return runDetailView(await runStore.get(runId));
+  },
+  async runSinglePrompt({ agentId, question, thinkingMode }) {
+    const agent = await agentStore.get(agentId);
+    return runDetailView(await startSingleRun({ question, agent: agent.resourceName, agentLabel: agent.displayName, thinkingMode }));
+  },
+  async runSuite(suiteId, caseIds) {
+    return slimSuiteRun(await startSuiteRun(await suiteStore.get(suiteId), { caseIds }));
+  },
+  async listReports(args) {
+    const page = pageItems((await suiteRunStore.list()).map(suiteRunProjection), args);
+    return { reports: page.items, nextCursor: page.nextCursor, total: page.total };
+  },
+  async getReport(reportId) {
+    return slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportId)));
+  },
+  downloadReportPdf: renderReportPdfResource,
+  downloadCaseSpecPdf: renderCaseSpecPdfResource,
+  listGcsBuckets: async ({ projectId, limit = 100 }) => {
+    return listGcsBuckets({ projectId, maxBuckets: Math.min(200, Math.max(1, Number(limit) || 100)) });
+  },
+  listKnowledgeSources: async () => ({ sources: await knowledgeSourceStore.list() }),
+  async getKnowledgeSource(sourceId) {
+    const source = await knowledgeSourceStore.get(sourceId);
+    const listing = await listGcsObjects({ bucket: source.bucket, prefix: source.prefix, maxObjects: 200 });
+    let index = null;
+    try {
+      const stored = await knowledgeIndexStore.get(source.id);
+      index = { ...stored, chunks: undefined };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    return { source, objects: listing.items, truncated: listing.truncated, authSource: listing.authSource, index };
+  },
+  searchKnowledge: ({ query, sourceIds, limit = 6 }) => retrieveKnowledge(String(query || ""), sourceIds, Math.min(20, Number(limit) || 6)),
+  registerKnowledgeSources: (args) => createKnowledgeSources(args, { batch: true }),
+  syncKnowledgeSource: async (sourceId) => syncKnowledgeSource(await knowledgeSourceStore.get(sourceId)),
+  async uploadKnowledgeFile({ sourceId, fileName, contentType, contentBase64 }) {
+    const source = await knowledgeSourceStore.get(sourceId);
+    const safeName = String(fileName || "").replaceAll("\\", "/").split("/").pop();
+    if (!safeName || safeName.includes("..") || safeName.length > 240) throw Object.assign(new Error("ファイル名の形式が正しくありません。"), { status: 400 });
+    const bytes = Buffer.from(String(contentBase64 || ""), "base64");
+    if (!bytes.length || bytes.length > 700 * 1024) throw Object.assign(new Error("MCPアップロードは1ファイル700KB以下にしてください。"), { status: 400 });
+    return uploadGcsObject({ bucket: source.bucket, objectName: `${source.prefix}${safeName}`, contentType: String(contentType || "application/octet-stream"), bytes });
+  },
+  async generateKnowledgePlan({ goal, sourceIds }) {
+    const normalizedGoal = String(goal || "").trim();
+    if (normalizedGoal.length < 5) throw Object.assign(new Error("プランニング目的を5文字以上で入力してください。"), { status: 400 });
+    const retrieved = await retrieveKnowledge(normalizedGoal, sourceIds, 8);
+    if (!retrieved.context) throw Object.assign(new Error("同期済みGCSナレッジから関連チャンクを取得できませんでした。"), { status: 400 });
+    const sources = (await knowledgeSourceStore.list())
+      .filter((source) => sourceIds.includes(source.id))
+      .map(({ id, name, description, bucket, prefix }) => ({ id, name, description, bucket, prefix }));
+    const plan = await generateAgentPlan({ project: config.vertexProject, location: config.vertexLocation, model: config.vertexModel, goal: normalizedGoal, knowledgeContext: retrieved.context, sources });
+    return { plan, retrieved: retrieved.matches.map(({ text, ...metadata }) => metadata) };
+  },
+  async listSheetConnections() {
+    return {
+      connections: (await sheetConnectionStore.list()).map(sheetConnectionProjection),
+      format: { suiteTab: SUITE_SHEET, reportTab: REPORT_SHEET, agentsTab: AGENTS_SHEET, suitesTab: SUITES_SHEET, schemaVersion: 2, maxCases: MAX_SUITE_CASES }
+    };
+  },
+  async connectSheet({ spreadsheetUrl, suiteId, forceOperational = false }) {
+    const spreadsheetId = parseSpreadsheetId(spreadsheetUrl);
+    const duplicate = (await sheetConnectionStore.list()).find((connection) => connection.spreadsheetId === spreadsheetId);
+    const connection = await connectAndBootstrapSheet({ spreadsheetId, suiteId, existing: duplicate || null, forceOperational: Boolean(forceOperational) });
+    return sheetConnectionProjection(connection);
+  },
+  async checkSheet({ connectionId, suiteId }) {
+    return sheetConnectionProjection(await refreshSheetConnection(await sheetConnectionStore.get(connectionId), { suiteId }));
+  },
+  async exportSuiteToSheet({ connectionId, suiteId }) {
+    const connection = await sheetConnectionStore.get(connectionId);
+    const suite = await suiteStore.get(suiteId);
+    const agents = await agentStore.list();
+    const prepared = prepareSuiteForSheetExport(suite, agents);
+    const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+      const suiteResult = await writeSuiteSheet(connection.spreadsheetId, prepared, { agents });
+      await writeCatalogSheets(connection.spreadsheetId, { agents, suites: await suiteStore.list() });
+      return suiteResult;
+    });
+    const now = new Date().toISOString();
+    const updated = await sheetConnectionStore.save({ ...connection, title: result.spreadsheet.title, spreadsheetUrl: result.spreadsheet.spreadsheetUrl, authSource: result.spreadsheet.authSource, status: "ready", lastCheckedAt: now, lastExportedAt: now, lastOperation: `suite-export:${suite.id}`, updatedAt: now });
+    return { connection: sheetConnectionProjection(updated), tabName: result.sheetTitle, rowCount: result.rowCount, suiteId: suite.id };
+  },
+  async importSuiteFromSheet({ connectionId }, context) {
+    const connection = await sheetConnectionStore.get(connectionId);
+    const { imported, suite, existing } = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+      const importedSuite = await readSuiteSheet(connection.spreadsheetId);
+      const references = await validateSuiteReferences(importedSuite.suite);
+      const existingSuite = await findLocalSuite(references.suite.sourceSuiteId || importedSuite.suite.sourceSuiteId);
+      const saved = await saveSuiteWithHistory(normalizeSuite(references.suite, existingSuite || {}), { updateMethod: "sheet_import", updatedBy: `mcp:${context.token.id}` });
+      await writeCatalogSheets(connection.spreadsheetId, { agents: await agentStore.list(), suites: await suiteStore.list() });
+      return { imported: importedSuite, suite: saved, existing: existingSuite };
+    });
+    const now = new Date().toISOString();
+    const updated = await sheetConnectionStore.save({ ...connection, authSource: imported.authSource, status: "ready", lastCheckedAt: now, lastImportedAt: now, lastOperation: `suite-import:${suite.id}`, updatedAt: now });
+    return { connection: sheetConnectionProjection(updated), suite, mode: existing ? "updated" : "created" };
+  },
+  async exportReportToSheet({ connectionId, reportId }) {
+    const connection = await sheetConnectionStore.get(connectionId);
+    const report = await correctedSuiteRunView(await suiteRunStore.get(reportId));
+    const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+      const reportResult = await writeReportSheet(connection.spreadsheetId, report);
+      await writeCatalogSheets(connection.spreadsheetId, { agents: await agentStore.list(), suites: await suiteStore.list() });
+      return reportResult;
+    });
+    const now = new Date().toISOString();
+    const updated = await sheetConnectionStore.save({ ...connection, title: result.spreadsheet.title, spreadsheetUrl: result.spreadsheet.spreadsheetUrl, authSource: result.spreadsheet.authSource, status: "ready", lastCheckedAt: now, lastExportedAt: now, lastOperation: `report-export:${report.id}`, updatedAt: now });
+    return { connection: sheetConnectionProjection(updated), tabName: result.sheetTitle, rowCount: result.rowCount, reportId: report.id };
+  },
+  async editSuiteWithAi({ suiteId, messages, applyPatch = false, expectedUpdatedAt }, context) {
+    const suite = await suiteStore.get(suiteId);
+    if (applyPatch === true) assertExpectedUpdatedAt(suite, expectedUpdatedAt);
+    const latestMessage = messages.filter((message) => message.role !== "assistant").at(-1)?.text || "";
+    const sourceIds = [...(suite.knowledgeSourceIds || []), ...(suite.cases || []).flatMap((item) => item.knowledgeSourceIds || [])];
+    const retrieved = await retrieveKnowledge(latestMessage, sourceIds, 6);
+    const reply = await generateSuiteAssistantReply({ project: config.vertexProject, location: config.vertexLocation, model: config.vertexModel, suite, agents: await agentStore.list(), messages, knowledgeContext: retrieved.context });
+    reply.retrieved = retrieved.matches.map(({ text, ...metadata }) => metadata);
+    if (applyPatch === true && reply.patch) reply.updatedSuite = await normalizeValidateAndSaveSuite(mergeAssistantPatch(suite, reply.patch), suite, context, "mcp_edit");
+    return reply;
+  },
+  async getStorageConfig() {
+    const overview = await storageOverview();
+    return publicStorageConfig(storageConfig, primaryStorage.backend, { ...overview, overview });
+  },
+  async testStorage(destination) {
+    const candidateConfig = requestedStorageConfig(destination);
+    const candidate = backendFromConfig(candidateConfig);
+    return { ok: true, details: await candidate.validate(), overview: await storageOverview(candidate) };
+  },
+  async previewStorageSwitch({ destination, expectedRevision }, context) {
+    if (Number(expectedRevision) !== Number(storageConfig.revision || 1)) throw Object.assign(new Error("ストレージ設定のrevisionが一致しません。"), { status: 409 });
+    const targetConfig = requestedStorageConfig(destination);
+    const target = backendFromConfig(targetConfig);
+    const validation = await target.validate();
+    const preview = await migrateStorage({ source: primaryStorage.backend, destination: target, namespaces: storageNamespaces, dryRun: true });
+    if (preview.conflicts) throw Object.assign(new Error("移行先に競合データがあります。"), { status: 409, details: preview });
+    const confirmationId = randomUUID();
+    storageSwitchConfirmations.set(confirmationId, { tokenId: context.token.id, targetConfig, revision: Number(storageConfig.revision || 1), expiresAt: Date.now() + 5 * 60_000 });
+    return { confirmationId, expiresInSeconds: 300, target: { ...targetConfig, validation }, preview };
+  },
+  async switchStorage({ confirmationId, confirm }, context) {
+    if (confirm !== true) throw Object.assign(new Error("confirm=true が必要です。"), { status: 400 });
+    const pending = storageSwitchConfirmations.get(confirmationId);
+    storageSwitchConfirmations.delete(confirmationId);
+    if (!pending || pending.tokenId !== context.token.id || pending.expiresAt < Date.now()) throw Object.assign(new Error("確認IDが無効または期限切れです。"), { status: 409 });
+    if (pending.revision !== Number(storageConfig.revision || 1)) throw Object.assign(new Error("ストレージ設定がpreview後に更新されています。"), { status: 409 });
+    const destination = backendFromConfig(pending.targetConfig);
+    await destination.validate();
+    const preview = await migrateStorage({ source: primaryStorage.backend, destination, namespaces: storageNamespaces, dryRun: true });
+    if (preview.conflicts) throw Object.assign(new Error("移行先に競合データがあります。"), { status: 409, details: preview });
+    const migration = await migrateStorage({ source: primaryStorage.backend, destination, namespaces: storageNamespaces, dryRun: false });
+    const now = new Date().toISOString();
+    const nextConfig = { schemaVersion: STORAGE_SCHEMA_VERSION, ...pending.targetConfig, configured: true, revision: pending.revision + 1, lastSyncedAt: now, updatedAt: now };
+    await saveStorageConfig(nextConfig);
+    primaryStorage.use(destination);
+    storageConfig = nextConfig;
+    return { ok: true, config: await mcpOperations.getStorageConfig(), migration: { copiedFiles: migration.copied, copiedBytes: migration.copiedBytes, unchangedFiles: migration.unchanged } };
+  }
+};
+
+const mcpHttpHandler = createMcpHttpHandler({
+  tokenManager: mcpTokenManager,
+  tools: createPrismTrailMcpTools(mcpOperations),
+  allowedOrigins: String(process.env.MCP_ALLOWED_ORIGINS || "").split(",").map((item) => item.trim()).filter(Boolean),
+  requestsPerMinute: Number(process.env.MCP_REQUESTS_PER_MINUTE || 120),
+  audit: writeMcpAudit
+});
+
+function isLoopbackManagementRequest(request) {
+  if (process.env.MCP_ALLOW_REMOTE_MANAGEMENT === "true") return true;
+  const hostname = String(request.headers.host || "").split(":")[0].replace(/^\[|\]$/g, "").toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
 
+    if (url.pathname === "/mcp") {
+      await mcpHttpHandler(request, response, { readJson: (incoming) => readJson(incoming, 1024 * 1024), sendJson });
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/mcp/") && !isLoopbackManagementRequest(request)) {
+      sendJson(response, 403, { error: "MCP token management is available only through localhost." });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/mcp/config") {
+      sendJson(response, 200, {
+        endpointPath: "/mcp",
+        transport: "streamable-http",
+        localOnly: process.env.MCP_ALLOW_REMOTE_MANAGEMENT !== "true",
+        scopes: MCP_SCOPES,
+        defaultScopes: ["suites:read", "suites:write", "runs:read", "runs:execute", "reports:read", "agents:read", "knowledge:read", "sheets:read"],
+        tokens: await mcpTokenManager.list()
+      });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/mcp/tokens") {
+      const body = await readJson(request);
+      const created = await mcpTokenManager.create({
+        name: body.name,
+        scopes: body.scopes,
+        expiresInDays: body.expiresInDays === null ? null : body.expiresInDays
+      });
+      await writeMcpAudit({ action: "token.create", tokenId: created.metadata.id, outcome: "succeeded" });
+      sendJson(response, 201, created);
+      return;
+    }
+    const mcpRevokeMatch = url.pathname.match(/^\/api\/mcp\/tokens\/([a-zA-Z0-9_-]+)\/revoke$/);
+    if (request.method === "POST" && mcpRevokeMatch) {
+      const revoked = await mcpTokenManager.revoke(mcpRevokeMatch[1]);
+      await writeMcpAudit({ action: "token.revoke", tokenId: revoked.id, outcome: "succeeded" });
+      sendJson(response, 200, revoked);
+      return;
+    }
+
     if (request.method === "GET" && staticFiles[url.pathname]) {
       const [file, contentType] = staticFiles[url.pathname];
+      const body = await readFile(path.join(publicDirectory, file));
       response.writeHead(200, { ...securityHeaders(contentType), "Cache-Control": "no-store" });
-      response.end(await readFile(path.join(publicDirectory, file)));
+      response.end(body);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/config") {
