@@ -219,6 +219,27 @@ Migration validates and copies data before switching; it does not delete the sou
 
 ## Security model
 
+### MCP coding-agent integration
+
+Settings can issue a dedicated, expiring token for external coding agents. Connect a Streamable
+HTTP MCP client to `http://127.0.0.1:4318/mcp` and send the token as an
+`Authorization: Bearer ...` header. The plaintext token is shown only once; PrismTrail stores only
+its SHA-256 digest, prefix, fingerprint, scopes, expiry, revocation state, and last-used time in a
+local credential file that is not copied during primary-storage migration.
+
+The 42 MCP tools cover suite and test-case listing, creation, history, bulk paste, and
+optimistic-concurrency updates; Data Agent registration and connection checks; single-prompt and
+suite execution; run evidence; report polling and case/report PDF downloads; GCS knowledge
+registration, upload, sync, search, and planning; Google Sheets connection, import, and export; AI
+suite editing; and storage inspection/switching. Storage switching requires its own elevated scope
+plus a five-minute, token-bound preview confirmation. Source data is never deleted. Delete, purge,
+run-cancel, arbitrary HTTP, and shell tools are intentionally not registered.
+
+The MCP endpoint and token-management UI follow the same local-workstation boundary as the rest of
+PrismTrail. Do not expose the Docker port to an untrusted network. A remote deployment must add TLS
+and authentication/authorization for **all** `/api` routes, not only `/mcp`; otherwise callers could
+bypass MCP policy through the existing local UI API.
+
 This is a trusted-local-tool architecture:
 
 - the HTTP service has no application-level user authentication

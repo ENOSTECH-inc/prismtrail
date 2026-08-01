@@ -30,6 +30,8 @@ const state = {
   storageConfig: null,
   storageDraft: null,
   storageTestResult: null,
+  mcpConfig: null,
+  mcpNewToken: null,
   selectedSuite: null,
   selectedCaseIndex: 0,
   editorTab: "cases",
@@ -3080,8 +3082,88 @@ function renderSettings() {
         </div>
       </section>
     </form>
+    ${renderMcpSettings()}
   `, "settings");
   bindStorageSettings();
+  bindMcpSettings();
+}
+
+function mcpScopeLabel(scope) {
+  return ({
+    "suites:read": tr("スイート・ケース参照", "Read suites and cases"),
+    "suites:write": tr("スイート・ケース作成・更新", "Create and update suites and cases"),
+    "runs:read": tr("実行状況参照", "Read run status"),
+    "runs:execute": tr("テスト実行", "Execute tests"),
+    "reports:read": tr("評価レポート参照・PDF取得", "Read reports and download PDFs"),
+    "agents:read": tr("Data Agent参照", "Read Data Agents"),
+    "agents:write": tr("Data Agent登録", "Register Data Agents"),
+    "knowledge:read": tr("GCSナレッジ参照・検索", "Read and search GCS knowledge"),
+    "knowledge:write": tr("GCSナレッジ登録・同期・アップロード", "Register, sync, and upload GCS knowledge"),
+    "sheets:read": tr("Google Sheets接続参照", "Read Google Sheets connections"),
+    "sheets:write": tr("Google Sheets接続・入出力", "Connect, import, and export Google Sheets"),
+    "assistant:write": tr("AIによるスイート編集", "Edit suites with AI"),
+    "storage:read": tr("ストレージ設定参照・接続テスト", "Read and test storage"),
+    "storage:switch": tr("ストレージ切替（高権限）", "Switch storage (elevated)")
+  })[scope] || scope;
+}
+
+function renderMcpSettings() {
+  const config = state.mcpConfig;
+  if (!config) return `<section class="mcp-settings-panel settings-panel"><p>${tr("MCP設定を読み込んでいます…", "Loading MCP settings…")}</p></section>`;
+  const endpoint = `${location.origin}${config.endpointPath}`;
+  const issued = state.mcpNewToken;
+  const rows = (config.tokens || []).map((token) => {
+    const status = token.revokedAt ? "revoked" : token.expiresAt && Date.parse(token.expiresAt) <= Date.now() ? "expired" : "active";
+    const label = { active: tr("有効", "Active"), expired: tr("期限切れ", "Expired"), revoked: tr("失効済み", "Revoked") }[status];
+    return `<article class="mcp-token-row">
+      <div><strong>${esc(token.name)}</strong><code>${esc(token.prefix)}•••• · ${esc(token.fingerprint)}</code><small>${(token.scopes || []).map(mcpScopeLabel).map(esc).join(" / ")}</small></div>
+      <div><span class="mcp-token-status ${status}">${esc(label)}</span><small>${tr("最終利用", "Last used")}: ${esc(token.lastUsedAt ? fmtDate(token.lastUsedAt) : tr("未使用", "Never"))}<br>${tr("期限", "Expires")}: ${esc(token.expiresAt ? fmtDate(token.expiresAt) : tr("無期限", "Never"))}</small></div>
+      ${status === "active" ? `<button class="button secondary" type="button" data-revoke-mcp="${esc(token.id)}">${icon("ban", 14)}${tr("失効", "Revoke")}</button>` : ""}
+    </article>`;
+  }).join("");
+  return `<section class="mcp-settings-panel settings-panel">
+    <div class="settings-section-head"><div><h2>${tr("MCP連携", "MCP integration")}</h2><p>${tr("外部コーディングエージェントから、削除を除くPrismTrail操作を安全な専用トークンで実行します。", "Connect external coding agents using a dedicated token. Delete operations are unavailable.")}</p></div><span class="adc-inline">${icon("shield-check", 13)}Streamable HTTP</span></div>
+    <div class="mcp-security-note">${icon("lock-keyhole", 17)}<div><strong>${tr("localhost専用の安全境界", "Localhost security boundary")}</strong><p>${tr("外部ネットワークへ公開する場合は、MCPトークンに加えてTLSと既存REST API全体の認証が必要です。", "Remote exposure requires TLS and authentication for the complete REST API in addition to MCP tokens.")}</p></div></div>
+    <label>${tr("MCPエンドポイント", "MCP endpoint")}<div class="mcp-endpoint"><code>${esc(endpoint)}</code><button class="text-button" id="copy-mcp-endpoint" type="button">${icon("copy", 13)}${tr("コピー", "Copy")}</button></div></label>
+    ${issued ? `<div class="mcp-issued-token"><div>${icon("key-round", 18)}<div><strong>${tr("トークンを発行しました（再表示できません）", "Token issued (it cannot be shown again)")}</strong><p>${tr("今すぐコピーして、安全な場所に保存してください。画面にはマスク値だけを表示しています。", "Copy it now and store it securely. Only a masked value is rendered on screen.")}</p><code>${esc(issued.metadata.prefix)}••••••••••••••••••••</code></div></div><div><button id="copy-mcp-token" class="button primary" type="button">${icon("copy", 14)}${tr("トークンをコピー", "Copy token")}</button><button id="dismiss-mcp-token" class="button secondary" type="button">${tr("閉じる", "Close")}</button></div></div>` : ""}
+    <form id="mcp-token-form" class="mcp-token-form">
+      <label>${tr("接続名", "Connection name")}<input name="name" maxlength="120" required placeholder="Codex / Claude Code"></label>
+      <label>${tr("有効期間", "Expiration")}<select name="expiresInDays"><option value="7">7${tr("日", " days")}</option><option value="30">30${tr("日", " days")}</option><option value="90" selected>90${tr("日", " days")}</option><option value="365">365${tr("日", " days")}</option></select></label>
+      <fieldset><legend>${tr("許可する操作", "Allowed operations")}</legend>${config.scopes.map((scope) => `<label class="mcp-scope ${scope === "storage:switch" ? "elevated" : ""}"><input type="checkbox" name="scopes" value="${esc(scope)}" ${config.defaultScopes.includes(scope) ? "checked" : ""}><span><strong>${esc(mcpScopeLabel(scope))}</strong><small>${esc(scope)}</small></span></label>`).join("")}</fieldset>
+      <button class="button primary" type="submit">${icon("key-round", 15)}${tr("専用トークンを発行", "Issue token")}</button>
+    </form>
+    <div class="mcp-token-list"><header><strong>${tr("発行済みトークン", "Issued tokens")}</strong><span>${config.tokens.length}</span></header>${rows || `<p>${tr("まだMCPトークンはありません。", "No MCP tokens have been issued.")}</p>`}</div>
+  </section>`;
+}
+
+function bindMcpSettings() {
+  if (!state.mcpConfig) return;
+  document.querySelector("#copy-mcp-endpoint")?.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(`${location.origin}${state.mcpConfig.endpointPath}`);
+    notify(tr("MCPエンドポイントをコピーしました。", "MCP endpoint copied."), "success");
+  });
+  document.querySelector("#copy-mcp-token")?.addEventListener("click", async () => {
+    if (!state.mcpNewToken?.token) return;
+    await navigator.clipboard.writeText(state.mcpNewToken.token);
+    notify(tr("トークンをコピーしました。", "Token copied."), "success");
+  });
+  document.querySelector("#dismiss-mcp-token")?.addEventListener("click", () => { state.mcpNewToken = null; renderSettings(); });
+  document.querySelector("#mcp-token-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const scopes = [...form.querySelectorAll('input[name="scopes"]:checked')].map((input) => input.value);
+    try {
+      state.mcpNewToken = await json("/api/mcp/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.elements.name.value, expiresInDays: Number(form.elements.expiresInDays.value), scopes }) });
+      state.mcpConfig = await json("/api/mcp/config");
+      renderSettings();
+    } catch (error) { notify(error.message); }
+  });
+  document.querySelectorAll("[data-revoke-mcp]").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm(tr("このMCPトークンを失効しますか？接続中のエージェントは直ちに利用できなくなります。", "Revoke this token? Connected agents will immediately lose access."))) return;
+    await json(`/api/mcp/tokens/${button.dataset.revokeMcp}/revoke`, { method: "POST" });
+    state.mcpConfig = await json("/api/mcp/config");
+    renderSettings();
+  }));
 }
 
 function bindStorageSettings() {
@@ -3503,6 +3585,7 @@ async function route() {
   clearTimeout(state.reportPollTimer);
   state.reportPollTimer = null;
   const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
+  if (parts[0] !== "settings") state.mcpNewToken = null;
   await withRouteProgress(async () => {
     try {
       if (parts[0] === "knowledge" && parts[1]) {
@@ -3513,9 +3596,12 @@ async function route() {
       else if (parts[0] === "sheets") renderSheets();
       else if (parts[0] === "agents") renderAgents();
       else if (parts[0] === "settings") {
-        if (!state.storageConfig?.overview) {
-          state.storageConfig = await json("/api/storage/config").catch(() => state.storageConfig);
-        }
+        const [storage, mcp] = await Promise.all([
+          state.storageConfig?.overview ? state.storageConfig : json("/api/storage/config").catch(() => state.storageConfig),
+          json("/api/mcp/config").catch(() => state.mcpConfig)
+        ]);
+        state.storageConfig = storage;
+        state.mcpConfig = mcp;
         renderSettings();
       }
       else if (parts[0] === "run") renderSingleRun();
