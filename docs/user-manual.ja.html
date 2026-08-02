@@ -676,10 +676,11 @@
               </ul>
             </div>
             <div class="panel">
-              <h3>ビジネス要件（精度チェック）</h3>
+              <h3>ビジネス要件と精度検証</h3>
               <p style="color:var(--muted);font-size:13.5px;margin-bottom:8px;">Gemini が A〜D で採点</p>
               <ul>
-                <li>期待値・期間・単位・許容差を自然言語で記述</li>
+                <li>ビジネス要件には定性・定量の受入条件を記述</li>
+                <li>精度検証にはテキスト・URL・BigQuery SQLの正解根拠を登録</li>
                 <li>既定の合格ラインは <strong>B以上</strong></li>
                 <li>検証可能な期待値がない場合は OFF のままにする</li>
               </ul>
@@ -827,15 +828,17 @@
             <div class="kv-row"><dt>ステータス</dt><dd><strong>実行可</strong> または <strong>下書き</strong>。下書きは実行時にスキップされます。新規追加の既定は下書きです</dd></div>
             <div class="kv-row"><dt>関連URL</dt><dd>ケース追加・更新の根拠となったSlack投稿、チケット、資料などのHTTP(S) URL。1行に1件、最大20件</dd></div>
             <div class="kv-row"><dt>システム要件</dt><dd>SQL必須・チャート・時間上限・課金上限・必須語句など</dd></div>
-            <div class="kv-row"><dt>ビジネス要件</dt><dd>「AIで回答精度を判定」をONにし、期待する正解・判定条件を自然言語で記述</dd></div>
+            <div class="kv-row"><dt>ビジネス要件</dt><dd>回答が満たすべき定性・定量の受入条件を1項目ずつ記述</dd></div>
+            <div class="kv-row"><dt>精度検証</dt><dd>正解根拠をテキスト、公開URL、読み取り専用BigQuery SQLから選択。説明は任意で、最大20件</dd></div>
           </dl>
 
           <div class="panel">
-            <h3>ビジネス要件の書き方例</h3>
-            <pre><code>2026年6月の求人応募数は65,200件。
-期間・数値・単位が一致すること。許容差は±1%まで。</code></pre>
+            <h3>受入条件と精度根拠の例</h3>
+            <pre><code>受入条件: 期間・数値・単位が一致すること。許容差は±1%まで。
+精度根拠 (text): 2026年6月の求人応募数は65,200件。
+精度根拠 (BigQuery SQL): SELECT month, applications FROM ...</code></pre>
             <p style="margin:12px 0 0;color:var(--muted);font-size:13px;">
-              期待値がまだない場合はビジネス要件をOFFのままにし、システム要件だけでスモークしてください。
+              正解根拠がまだない場合は精度検証をOFFのままにし、システム要件だけでスモークしてください。
               存在しない正解値を書いて採点させないでください。
             </p>
           </div>
@@ -961,6 +964,7 @@
             <li>
               <strong>スイートをシートへ出す</strong>
               「アプリ → Sheets：テストスイート」の <span class="ui-label">固定フォーマットで出力</span>、
+              <code>accuracy_sources_json</code> 列にはテキスト・URL・BigQuery SQLと任意説明をJSON配列で保持します。
               または編集画面の <span class="ui-label">Gシートで編集</span>。
             </li>
             <li>

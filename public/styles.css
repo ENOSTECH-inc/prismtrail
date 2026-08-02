@@ -916,6 +916,15 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .migration-confirm input { width: 15px; height: 15px; margin: 0; }
 .toast { position: fixed; right: 20px; bottom: 20px; max-width: 480px; padding: 13px 16px; color: #fff; border-radius: 9px; background: #a93343; box-shadow: var(--shadow); font-size: 10px; z-index: 100; }
 .toast.success { background: #147c5c; }
+.accuracy-sources-editor { margin-top: 14px; }
+.accuracy-source-rows { display: grid; gap: 10px; margin: 10px 0; padding: 0; list-style: none; }
+.accuracy-source-row { padding: 12px; border: 1px solid var(--line-soft); border-radius: 9px; background: #f8fafc; }
+.accuracy-source-head { display: grid; grid-template-columns: minmax(130px,.35fr) minmax(180px,1fr) auto; gap: 8px; margin-bottom: 8px; }
+.accuracy-source-row textarea { width: 100%; font-family: "DM Mono",monospace; }
+.accuracy-source-status { margin: 10px 0; padding: 10px; border-radius: 8px; background: #f7f9fc; }
+.accuracy-source-status ul { display: grid; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
+.accuracy-source-status li { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 6px; font-size: 9px; }
+.accuracy-source-status small { grid-column: 3; color: #a93343; }
 @media(max-width:1150px) {
   .card-grid { grid-template-columns: repeat(2,1fr); }
   .knowledge-grid { grid-template-columns: repeat(2,1fr); }
@@ -974,6 +983,8 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .expectation-grid,.evaluation-layers,.run-evaluation-summary { grid-template-columns: 1fr; }
   .business-toggle-row { flex-direction: column; align-items: stretch; }
   .business-toggle-row > label:not(.check) { flex-basis: auto; width: 100%; }
+  .accuracy-source-head { grid-template-columns: 1fr auto; }
+  .accuracy-source-head [data-source-description] { grid-column: 1/-1; grid-row: 2; }
   .report-metrics { grid-template-columns: repeat(2,1fr); }
   .sheet-export-status { grid-template-columns: auto 1fr; }
   .sheet-export-status .button { grid-column: 1/-1; justify-self: start; }

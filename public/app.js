@@ -1024,6 +1024,7 @@ function caseNav(suite) {
           const title = String(item.title || "").trim() || tr("無題のケース", "Untitled case");
           const system = item.expectations?.systemRequirements || item.expectations || {};
           const business = item.expectations?.businessRequirements || {};
+          const accuracy = item.expectations?.accuracyValidation || {};
           const agent =
             state.agents.find((entry) => entry.id === item.agentId)?.displayName ||
             item.agentId ||
@@ -1036,7 +1037,7 @@ function caseNav(suite) {
               ? `<span class="case-nav-flag">${icon("database", 11)}SQL</span>`
               : "",
             system.requireChart ? `<span class="case-nav-flag">${icon("chart-column", 11)}${tr("チャート", "Chart")}</span>` : "",
-            business.enabled && ((business.criteriaItems || []).length || business.accuracyCriteria)
+            accuracy.enabled && accuracy.sources?.length
               ? `<span class="case-nav-flag accent">${icon("sparkles", 11)}${tr("精度", "Accuracy")}</span>`
               : ""
           ]
@@ -1062,6 +1063,7 @@ function caseNav(suite) {
 function caseForm(item, index) {
   const system = item.expectations?.systemRequirements || item.expectations || {};
   const business = item.expectations?.businessRequirements || {};
+  const accuracy = item.expectations?.accuracyValidation || {};
   return `<article class="case-editor" data-case-index="${index}">
     <div class="case-titlebar">
       <span class="case-number">${String(index + 1).padStart(2, "0")}</span>
@@ -1097,14 +1099,19 @@ function caseForm(item, index) {
         </div>
       </fieldset>
       <fieldset class="requirement-section business-requirements">
-        <legend>${tr("ビジネス要件", "Business requirements")} <small>${tr("精度チェック", "Accuracy check")}</small></legend>
-        <p>${tr("チェック項目ごとに、Data AgentレスポンスJSON全体を根拠にGeminiが☀️/☁️/☔️で採点します。総合A〜Dはマーク比率から自動算出されます。", "Gemini scores each checklist item as sun/cloud/rain against the full Data Agent response JSON. Overall A–D is derived from mark weights.")}</p>
+        <legend>${tr("ビジネス要件", "Business requirements")} <small>${tr("受入条件", "Acceptance criteria")}</small></legend>
+        <p>${tr("回答が満たすべき定性・定量条件を1項目ずつ定義します。正解の根拠は次の「精度検証」で別に設定します。", "Define qualitative and quantitative acceptance conditions. Configure the source of truth separately under Accuracy validation.")}</p>
         <div class="business-toggle-row">
-          <label class="check"><input type="checkbox" data-business-enabled ${business.enabled && (business.criteriaItems?.length || business.accuracyCriteria) ? "checked" : ""}> ${tr("AIで回答精度を判定", "Evaluate answer accuracy with AI")}</label>
           <label>${tr("合格ライン", "Passing grade")}<select data-business-passing-grade><option value="B" ${business.passingGrade !== "C" ? "selected" : ""}>${tr("B以上（推奨）", "B or higher (recommended)")}</option><option value="C" ${business.passingGrade === "C" ? "selected" : ""}>${tr("C以上", "C or higher")}</option></select></label>
         </div>
         ${businessCriteriaEditorHtml(business)}
         <div class="grade-legend">${gradeBadge({ grade: "A", status: "passed" })}${gradeBadge({ grade: "B", status: "passed" })}${gradeBadge({ grade: "C", status: "review" })}${gradeBadge({ grade: "D", status: "failed" })} <span class="muted-copy">☀️=OK · ☁️=部分 · ☔️=NG</span></div>
+      </fieldset>
+      <fieldset class="requirement-section accuracy-validation">
+        <legend>${tr("精度検証", "Accuracy validation")} <small>${tr("正解根拠", "Ground truth")}</small></legend>
+        <p>${tr("Geminiが参照する正解根拠を登録します。URLは安全な公開ページだけを取得し、BigQuery SQLは読み取り専用・課金上限付きで実行します。", "Register ground-truth evidence for Gemini. URLs are fetched only from safe public pages; BigQuery SQL is read-only and cost-capped.")}</p>
+        <label class="check"><input type="checkbox" data-accuracy-enabled ${accuracy.enabled && accuracy.sources?.length ? "checked" : ""}> ${tr("このケースで精度検証を実行", "Run accuracy validation for this case")}</label>
+        ${accuracySourcesEditorHtml(accuracy.sources || [])}
       </fieldset>
     </details>
   </article>`;
@@ -1330,7 +1337,7 @@ function businessCriteriaEditorHtml(business = {}) {
   const rows = items.length ? items : [""];
   return `<div class="criteria-editor" data-criteria-editor>
     <div class="criteria-editor-head">
-      <strong>${tr("チェック項目", "Checklist items")}</strong>
+      <strong>${tr("受入条件", "Acceptance criteria")}</strong>
       <button type="button" class="button secondary compact" data-add-criteria>${icon("plus", 14)}${tr("項目を追加", "Add item")}</button>
     </div>
     <ol class="criteria-rows">
@@ -1344,8 +1351,42 @@ function businessCriteriaEditorHtml(business = {}) {
         )
         .join("")}
     </ol>
-    <small class="field-help">${tr("1行が1つの判定ルールです（最大20件）。Sheets連携時は ; 区切りで入出力します。", "Each row is one scoring rule (max 20). Sheets import/export uses semicolon separators.")} Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
+    <small class="field-help">${tr("1行が1つの受入条件です（最大20件）。Sheets連携時は ; 区切りで入出力します。", "Each row is one acceptance condition (max 20). Sheets import/export uses semicolon separators.")} Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
   </div>`;
+}
+
+function accuracySourceRowHtml(source = {}, index = 0) {
+  const type = ["text", "url", "bigquery_sql"].includes(source.type) ? source.type : "text";
+  return `<li class="accuracy-source-row" data-accuracy-source data-source-id="${esc(source.id || `source_${index + 1}`)}">
+    <div class="accuracy-source-head">
+      <select data-source-type aria-label="${tr("ソースタイプ", "Source type")}">
+        <option value="text" ${type === "text" ? "selected" : ""}>${tr("テキスト", "Text")}</option>
+        <option value="url" ${type === "url" ? "selected" : ""}>URL</option>
+        <option value="bigquery_sql" ${type === "bigquery_sql" ? "selected" : ""}>BigQuery SQL</option>
+      </select>
+      <input data-source-description maxlength="500" value="${esc(source.description || "")}" placeholder="${tr("説明（任意）", "Description (optional)")}">
+      <button type="button" class="icon-button danger" data-remove-accuracy-source aria-label="${tr("ソースを削除", "Remove source")}">${icon("trash-2", 14)}</button>
+    </div>
+    <textarea data-source-content rows="${type === "bigquery_sql" ? 6 : 3}" maxlength="20000" placeholder="${type === "url" ? "https://..." : type === "bigquery_sql" ? "SELECT ..." : tr("正解となる事実・数値・定義", "Ground-truth facts, values, or definitions")}">${esc(source.content || source.value || "")}</textarea>
+  </li>`;
+}
+
+function accuracySourcesEditorHtml(sources = []) {
+  const rows = sources.length ? sources : [{}];
+  return `<div class="accuracy-sources-editor">
+    <div class="criteria-editor-head"><strong>${tr("検証ソース", "Validation sources")}</strong><button type="button" class="button secondary compact" data-add-accuracy-source>${icon("plus", 14)}${tr("ソースを追加", "Add source")}</button></div>
+    <ol class="accuracy-source-rows">${rows.map(accuracySourceRowHtml).join("")}</ol>
+    <small class="field-help">${tr("最大20件。BigQuery SQLはSELECT / WITHのみ、既定100MB・100行・30秒までです。", "Up to 20 sources. BigQuery SQL is limited to SELECT/WITH, 100 MB, 100 rows, and 30 seconds by default.")}</small>
+  </div>`;
+}
+
+function collectAccuracySourcesFromCard(card) {
+  return [...card.querySelectorAll("[data-accuracy-source]")].map((row, index) => ({
+    id: row.dataset.sourceId || `source_${index + 1}`,
+    type: row.querySelector("[data-source-type]")?.value || "text",
+    description: row.querySelector("[data-source-description]")?.value.trim().slice(0, 500) || "",
+    content: row.querySelector("[data-source-content]")?.value.trim().slice(0, 20000) || ""
+  })).filter((source) => source.content).slice(0, 20);
 }
 
 function collectBusinessCriteriaFromCard(card) {
@@ -1503,7 +1544,7 @@ function reportCaseCardHtml(item, { isLive = false, showPdf = true, evidence = n
     ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
     <div class="evaluation-layers">
       <section><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{passed}/{total} 合格 · {score}点", "{passed}/{total} passed · {score} pts", { passed: formatLocaleNumber(system.passedCount || 0), total: formatLocaleNumber(system.checkCount || 0), score: formatLocaleNumber(system.score ?? 0) })}</b></div><div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></section>
-      <section class="business-result"><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(business)}</div>${business?.status === "not_configured" || !business ? `<p class="muted-copy">このケースには精度条件が設定されていません。</p>` : `${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${weatherItemList(business, { showEmpty: true })}${(business.discrepancies || []).length || business.judgeAudit?.model ? `<details><summary>${tr("判定メタ情報", "Judgment metadata")}</summary><dl>${(business.discrepancies || []).length ? `<dt>${tr("差分", "Discrepancies")}</dt><dd>${esc(business.discrepancies.join(" / "))}</dd>` : ""}<dt>${tr("判定モデル", "Judge model")}</dt><dd>${esc(business.judgeAudit?.model || "—")}</dd></dl></details>` : ""}`}</section>
+      <section class="business-result"><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(business)}</div>${business?.status === "not_configured" || !business ? `<p class="muted-copy">このケースには精度検証が設定されていません。</p>` : `${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${accuracySourceStatusHtml(business.accuracySources)}${weatherItemList(business, { showEmpty: true })}${(business.discrepancies || []).length || business.judgeAudit?.model ? `<details><summary>${tr("判定メタ情報", "Judgment metadata")}</summary><dl>${(business.discrepancies || []).length ? `<dt>${tr("差分", "Discrepancies")}</dt><dd>${esc(business.discrepancies.join(" / "))}</dd>` : ""}<dt>${tr("判定モデル", "Judge model")}</dt><dd>${esc(business.judgeAudit?.model || "—")}</dd></dl></details>` : ""}`}</section>
     </div>
     ${evidenceHtml}
     ${item.runId ? `<a href="#/runs/${item.runId}" class="text-link">実行トレースを見る ${icon("arrow-right", 14)}</a>` : ""}
@@ -1617,6 +1658,11 @@ function weatherItemList(business, { showEmpty = false } = {}) {
     .join("")}</ol>`;
 }
 
+function accuracySourceStatusHtml(sources = []) {
+  if (!Array.isArray(sources) || !sources.length) return "";
+  return `<div class="accuracy-source-status"><strong>${tr("精度検証ソース", "Accuracy sources")}</strong><ul>${sources.map((source) => `<li><span class="status-dot ${source.status === "resolved" ? "ok" : "error"}"></span><code>${esc(source.type || "source")}</code> ${esc(source.description || source.id || "")}${source.error ? `<small>${esc(source.error)}</small>` : ""}</li>`).join("")}</ul></div>`;
+}
+
 function wireCriteriaRowControls(row) {
   if (!row || row.dataset.wired === "1") return;
   row.dataset.wired = "1";
@@ -1661,7 +1707,8 @@ function addCaseToSuite() {
     memo: "",
     expectations: {
       systemRequirements: { requireSql: true, requireChart: false, maxDurationMs: 120000, maxBytesBilled: 0, requiredPhrases: [], requiredSqlTables: [] },
-      businessRequirements: { enabled: false, criteriaItems: [], accuracyCriteria: "", passingGrade: "B" }
+      businessRequirements: { enabled: false, criteriaItems: [], accuracyCriteria: "", passingGrade: "B" },
+      accuracyValidation: { enabled: false, sources: [] }
     }
   });
   state.selectedCaseIndex = state.selectedSuite.cases.length - 1;
@@ -1916,6 +1963,22 @@ function bindEditor() {
     wireCriteriaRowControls(list.lastElementChild);
   });
   document.querySelectorAll(".criteria-row").forEach((row) => wireCriteriaRowControls(row));
+  document.querySelector("[data-add-accuracy-source]")?.addEventListener("click", () => {
+    const list = document.querySelector(".accuracy-source-rows");
+    if (!list || list.children.length >= 20) return notify(tr("精度検証ソースは最大20件です。", "Accuracy sources are limited to 20."));
+    list.insertAdjacentHTML("beforeend", accuracySourceRowHtml({}, list.children.length));
+    refreshIcons();
+    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+  });
+  document.querySelector(".accuracy-source-rows")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-accuracy-source]");
+    if (!button) return;
+    const list = button.closest(".accuracy-source-rows");
+    button.closest("[data-accuracy-source]")?.remove();
+    if (list && !list.children.length) list.insertAdjacentHTML("beforeend", accuracySourceRowHtml({}, 0));
+    refreshIcons();
+    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+  });
   document.querySelectorAll("input,textarea,select").forEach((input) => {
     if (input.closest("#suite-paste-dialog")) return;
     input.addEventListener("input", () => {
@@ -1973,9 +2036,10 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   const next = {
     ...source,
     expectations: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       systemRequirements: { ...previousSystem },
-      businessRequirements: { ...previousBusiness }
+      businessRequirements: { ...previousBusiness },
+      accuracyValidation: { ...(source.expectations?.accuracyValidation || {}) }
     }
   };
   card.querySelectorAll("[data-field]").forEach((input) => (next[input.dataset.field] = input.value));
@@ -1996,10 +2060,15 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   });
   const criteriaItems = collectBusinessCriteriaFromCard(card);
   next.expectations.businessRequirements = {
-    enabled: card.querySelector("[data-business-enabled]").checked && criteriaItems.length > 0,
+    enabled: criteriaItems.length > 0,
     criteriaItems,
     accuracyCriteria: criteriaItems.join("; "),
     passingGrade: card.querySelector("[data-business-passing-grade]").value
+  };
+  const accuracySources = collectAccuracySourcesFromCard(card);
+  next.expectations.accuracyValidation = {
+    enabled: Boolean(card.querySelector("[data-accuracy-enabled]")?.checked) && accuracySources.length > 0,
+    sources: accuracySources
   };
   return next;
 }
