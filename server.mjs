@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   chatWithDataAgent,
   downloadGcsObject,
+  executeReadOnlyBigQuery,
   fetchJobDetails,
   generateAgentPlan,
   generateSuiteAssistantReply,
@@ -32,6 +33,13 @@ import { RunStore } from "./lib/store.mjs";
 import { McpTokenManager, MCP_SCOPES } from "./lib/mcp-auth.mjs";
 import { createMcpHttpHandler } from "./lib/mcp-server.mjs";
 import { createPrismTrailMcpTools } from "./lib/mcp-tools.mjs";
+import { normalizeRelatedUrls } from "./lib/related-urls.mjs";
+import {
+  accuracyEvidenceJson,
+  normalizeAccuracySources,
+  resolveAccuracySources
+} from "./lib/accuracy-sources.mjs";
+import { readPublicUrl } from "./lib/safe-url-reader.mjs";
 import {
   createStorageBackend,
   LocalStorageBackend,
@@ -56,6 +64,7 @@ import {
   pastedTextToSuiteInput,
   readSuiteSheet,
   REPORT_SHEET,
+  SHEET_SCHEMA_VERSION,
   SUITE_SHEET,
   SUITES_SHEET,
   MAX_SUITE_CASES,
@@ -252,7 +261,7 @@ const config = {
     reportTab: REPORT_SHEET,
     agentsTab: AGENTS_SHEET,
     suitesTab: SUITES_SHEET,
-    schemaVersion: 2
+    schemaVersion: Number(SHEET_SCHEMA_VERSION)
   }
 };
 
@@ -549,8 +558,17 @@ function normalizeExpectations(value = {}) {
     business.criteriaItems ?? business.accuracyCriteria ?? value.accuracyCriteria
   );
   const accuracyCriteria = formatCriteriaItems(criteriaItems).slice(0, 5000);
+  const accuracyInput = value.accuracyValidation || business.accuracyValidation || {};
+  const hasExplicitAccuracySources = Array.isArray(accuracyInput.sources);
+  const accuracySources = normalizeAccuracySources(
+    hasExplicitAccuracySources
+      ? accuracyInput.sources
+      : criteriaItems.length
+        ? [{ id: "legacy_text", type: "text", description: "旧形式から移行した正解根拠", content: accuracyCriteria }]
+        : []
+  );
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     systemRequirements: {
       requireSql: system.requireSql !== false,
       requireChart: Boolean(system.requireChart),
@@ -560,12 +578,16 @@ function normalizeExpectations(value = {}) {
       requiredSqlTables
     },
     businessRequirements: {
-      enabled: business.enabled !== false && criteriaItems.length > 0,
+      enabled: criteriaItems.length > 0,
       criteriaItems,
       accuracyCriteria,
       passingGrade: ["A", "B", "C", "D"].includes(business.passingGrade)
         ? business.passingGrade
         : "B"
+    },
+    accuracyValidation: {
+      enabled: accuracyInput.enabled !== false && (hasExplicitAccuracySources || business.enabled !== false) && accuracySources.length > 0,
+      sources: accuracySources
     },
     // 移行期間中の旧UI・過去データ向けミラー。
     requireSql: system.requireSql !== false,
@@ -582,7 +604,7 @@ function normalizeSuite(body, existing = {}) {
   const cases = Array.isArray(body.cases) ? body.cases : existing.cases || [];
   const defaultAgentId = String(body.defaultAgentId ?? existing.defaultAgentId ?? "").trim();
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: existing.id || objectId("suite"),
     name: String(body.name ?? existing.name ?? "無題のテストスイート").trim().slice(0, 120),
     description: String(body.description ?? existing.description ?? "").trim().slice(0, 2000),
@@ -601,6 +623,7 @@ function normalizeSuite(body, existing = {}) {
         : [],
       thinkingMode: item.thinkingMode === "THINKING" ? "THINKING" : "FAST",
       status: normalizeCaseStatus(item.status, { fallback: "active" }),
+      relatedUrls: normalizeRelatedUrls(item.relatedUrls),
       memo: String(item.memo ?? "").trim().slice(0, 20000),
       expectations: normalizeExpectations(item.expectations)
     })),
@@ -1368,10 +1391,11 @@ async function processSuiteRun(suite, suiteRun, abortController) {
           evaluation = appendContextEvaluation(evaluation, judge);
         }
         const businessRequirements = testCase.expectations?.businessRequirements || {};
+        const accuracyValidation = testCase.expectations?.accuracyValidation || {};
         const criteriaItems = parseCriteriaItems(
           businessRequirements.criteriaItems ?? businessRequirements.accuracyCriteria
         );
-        if (businessRequirements.enabled && criteriaItems.length) {
+        if (accuracyValidation.enabled && criteriaItems.length && accuracyValidation.sources?.length) {
           if (signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
           await setCasePhase(testCase, caseIndex, "evaluating_business");
           const answerEvidence = buildBusinessJudgeEvidence(run);
@@ -1383,14 +1407,41 @@ async function processSuiteRun(suite, suiteRun, abortController) {
             };
           } else {
             try {
-              accuracyJudge = await judgeBusinessAccuracy({
-                project: config.vertexProject,
-                location: config.vertexLocation,
-                model: config.vertexJudgeModel,
-                question: testCase.prompt,
-                criteriaItems,
-                answerEvidence
+              const accuracySources = await resolveAccuracySources(accuracyValidation.sources, {
+                readUrl: (url) => readPublicUrl(url),
+                executeBigQuery: (sql) => executeReadOnlyBigQuery({
+                  projectId: config.billingProject,
+                  sql,
+                  location: process.env.ACCURACY_BQ_LOCATION || ""
+                })
               });
+              const sourceAudit = accuracySources.map((source) => ({
+                id: source.id,
+                type: source.type,
+                description: source.description,
+                status: source.status,
+                error: source.error,
+                metadata: source.metadata
+              }));
+              const sourceErrors = sourceAudit.filter((source) => source.status === "error");
+              if (sourceErrors.length) {
+                accuracyJudge = {
+                  evaluationError: true,
+                  reason: `精度検証ソースを取得できませんでした: ${sourceErrors.map((source) => `${source.type}: ${source.error}`).join(" / ")}`,
+                  resolvedAccuracySources: sourceAudit
+                };
+              } else {
+                accuracyJudge = await judgeBusinessAccuracy({
+                  project: config.vertexProject,
+                  location: config.vertexLocation,
+                  model: config.vertexJudgeModel,
+                  question: testCase.prompt,
+                  criteriaItems,
+                  accuracySources: accuracyEvidenceJson(accuracySources),
+                  answerEvidence
+                });
+                accuracyJudge.resolvedAccuracySources = sourceAudit;
+              }
             } catch (error) {
               accuracyJudge = {
                 evaluationError: true,
@@ -1400,11 +1451,12 @@ async function processSuiteRun(suite, suiteRun, abortController) {
           }
           evaluation = composeEvaluation(evaluation, accuracyJudge, {
             ...businessRequirements,
+            accuracyValidation,
             criteriaItems,
             accuracyCriteria: formatCriteriaItems(criteriaItems)
           });
         } else {
-          evaluation = composeEvaluation(evaluation, null, businessRequirements);
+          evaluation = composeEvaluation(evaluation, null, { ...businessRequirements, accuracyValidation });
         }
         await recordCaseResult({
           caseId: testCase.id,
@@ -1862,7 +1914,7 @@ const mcpOperations = {
   async listSheetConnections() {
     return {
       connections: (await sheetConnectionStore.list()).map(sheetConnectionProjection),
-      format: { suiteTab: SUITE_SHEET, reportTab: REPORT_SHEET, agentsTab: AGENTS_SHEET, suitesTab: SUITES_SHEET, schemaVersion: 2, maxCases: MAX_SUITE_CASES }
+      format: { suiteTab: SUITE_SHEET, reportTab: REPORT_SHEET, agentsTab: AGENTS_SHEET, suitesTab: SUITES_SHEET, schemaVersion: Number(SHEET_SCHEMA_VERSION), maxCases: MAX_SUITE_CASES }
     };
   },
   async connectSheet({ spreadsheetUrl, suiteId, forceOperational = false }) {
@@ -2375,7 +2427,7 @@ const server = createServer(async (request, response) => {
           reportTab: REPORT_SHEET,
           agentsTab: AGENTS_SHEET,
           suitesTab: SUITES_SHEET,
-          schemaVersion: 2,
+          schemaVersion: Number(SHEET_SCHEMA_VERSION),
           maxCases: MAX_SUITE_CASES
         }
       });
@@ -2795,40 +2847,11 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/api/assistant") {
-      const body = await readJson(request);
-      const latestMessage = Array.isArray(body.messages)
-        ? body.messages.filter((message) => message.role !== "assistant").at(-1)?.text || ""
-        : "";
-      const sourceIds = [
-        ...(body.suite?.knowledgeSourceIds || []),
-        ...(body.suite?.cases || []).flatMap((item) => item.knowledgeSourceIds || [])
-      ];
-      const retrieved = await retrieveKnowledge(latestMessage, sourceIds, 6);
-      const reply = await generateSuiteAssistantReply({
-        project: config.vertexProject,
-        location: config.vertexLocation,
-        model: config.vertexModel,
-        suite: body.suite,
-        agents: await agentStore.list(),
-        messages: Array.isArray(body.messages) ? body.messages : [],
-        knowledgeContext: retrieved.context
-      });
-      reply.retrieved = retrieved.matches.map(({ text, ...metadata }) => metadata);
-      if (body.applyPatch && reply.patch) {
-        const suite = await suiteStore.get(String(body.suite?.id || ""));
-        reply.updatedSuite = await saveSuiteWithHistory(mergeAssistantPatch(suite, reply.patch), {
-          updateMethod: "ui_edit"
-        });
-      }
-      sendJson(response, 200, reply);
-      return;
-    }
-
     sendJson(response, 404, { error: "Not found" });
   } catch (error) {
-    console.error(error);
     const status = error?.status || (error?.code === "ENOENT" ? 404 : 500);
+    if (status >= 500) console.error(error);
+    else console.warn(`[request] ${request.method} ${request.url?.split("?", 1)[0] || "/"} -> ${status}`);
     sendJson(response, status, {
       error: error.message || "Unexpected error",
       ...(error.details ? { details: error.details } : {})

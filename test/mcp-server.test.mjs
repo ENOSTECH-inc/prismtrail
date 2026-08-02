@@ -76,4 +76,10 @@ test("PrismTrail MCP exposes the complete non-destructive operation surface", ()
   ]) assert.equal(names.includes(expected), true, expected);
   assert.equal(names.some((name) => /delete|remove|purge|cancel/i.test(name)), false);
   assert.equal(tools.every((tool) => typeof tool.scope === "string" && tool.scope.length > 0), true);
+  const createCase = tools.find((tool) => tool.name === "create_test_case");
+  assert.equal(createCase.inputSchema.properties.testCase.properties.relatedUrls.maxItems, 20);
+  const accuracy = createCase.inputSchema.properties.testCase.properties.expectations.properties.accuracyValidation;
+  assert.deepEqual(accuracy.properties.sources.items.properties.type.enum, ["text", "url", "bigquery_sql"]);
+  assert.equal(accuracy.properties.sources.maxItems, 20);
+  assert.equal(createCase.inputSchema.properties.testCase.properties.relatedUrls.items.format, "uri");
 });

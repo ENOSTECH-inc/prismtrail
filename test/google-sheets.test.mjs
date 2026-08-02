@@ -75,6 +75,7 @@ test("suite format round-trips through fixed rows", () => {
         agentId: "agent_1",
         thinkingMode: "THINKING",
         knowledgeSourceIds: ["knowledge_2"],
+        relatedUrls: ["https://example.com/slack/thread-1", "https://example.com/tickets/42"],
         memo: "参照: sales_fact の売上定義",
         expectations: {
           requireSql: true,
@@ -88,14 +89,24 @@ test("suite format round-trips through fixed rows", () => {
             criteriaItems: ["2026年6月の売上は65,200円", "単位が円"],
             accuracyCriteria: "2026年6月の売上は65,200円; 単位が円",
             passingGrade: "B"
+          },
+          accuracyValidation: {
+            enabled: true,
+            sources: [
+              { id: "truth_1", type: "text", description: "月次確定値", content: "売上は65,200円" },
+              { id: "truth_2", type: "url", description: "仕様書", content: "https://example.com/spec" },
+              { id: "truth_3", type: "bigquery_sql", description: "集計照合", content: "SELECT 65200 AS sales" }
+            ]
           }
         }
       }
     ]
   };
   const rows = suiteToRows(source);
-  assert.equal(SUITE_DISPLAY_HEADERS[12], "ビジネス要件チェック（;区切り）");
-  assert.equal(SUITE_DISPLAY_HEADERS[14], "メモ");
+  assert.equal(SUITE_DISPLAY_HEADERS[12], "ビジネス受入条件（;区切り）");
+  assert.equal(SUITE_DISPLAY_HEADERS[13], "精度検証ソースJSON");
+  assert.equal(SUITE_DISPLAY_HEADERS[15], "関連URL（1行1件）");
+  assert.equal(SUITE_DISPLAY_HEADERS[16], "メモ");
   assert.match(rows[10][1], /コピー範囲/);
   assert.deepEqual(rows[11], SUITE_DISPLAY_HEADERS);
   assert.equal(rows[6][0], "接続先Data Agent ID");
@@ -116,7 +127,12 @@ test("suite format round-trips through fixed rows", () => {
     parsed.cases[0].expectations.businessRequirements.accuracyCriteria,
     "2026年6月の売上は65,200円; 単位が円"
   );
+  assert.deepEqual(parsed.cases[0].expectations.accuracyValidation.sources, source.cases[0].expectations.accuracyValidation.sources);
   assert.deepEqual(parsed.cases[0].knowledgeSourceIds, ["knowledge_2"]);
+  assert.deepEqual(parsed.cases[0].relatedUrls, [
+    "https://example.com/slack/thread-1",
+    "https://example.com/tickets/42"
+  ]);
   assert.equal(parsed.cases[0].memo, "参照: sales_fact の売上定義");
 });
 
@@ -142,6 +158,29 @@ test("legacy accuracy header remains import-compatible", () => {
     rowsToSuiteInput(rows).cases[0].expectations.businessRequirements.accuracyCriteria,
     "売上は65,200円"
   );
+});
+
+test("schema v2 rows without related URLs remain import-compatible", () => {
+  const rows = suiteToRows({
+    id: "suite_v2",
+    name: "既存スイート",
+    cases: [{
+      id: "case_1",
+      title: "既存ケース",
+      prompt: "既存の質問",
+      agentId: "agent_1",
+      memo: "既存メモ",
+      expectations: {}
+    }]
+  });
+  rows[1][1] = "2";
+  const relatedUrlsIndex = rows[11].indexOf("関連URL（1行1件）");
+  assert.ok(relatedUrlsIndex >= 0);
+  rows[11].splice(relatedUrlsIndex, 1);
+  rows[12].splice(relatedUrlsIndex, 1);
+  const parsed = rowsToSuiteInput(rows);
+  assert.deepEqual(parsed.cases[0].relatedUrls, []);
+  assert.equal(parsed.cases[0].memo, "既存メモ");
 });
 
 test("suite import rejects a changed header contract", () => {
@@ -321,6 +360,7 @@ test("report format contains stable metadata and case rows", () => {
               { id: 2, criterion: "単位が円", mark: "sun", symbol: "☀️", reason: "円表記で一致" }
             ],
             evidence: [{ quote: "65,200円", explanation: "一致" }],
+            accuracySources: [{ id: "truth", type: "text", description: "承認値", status: "resolved" }],
             judgeAudit: { model: "gemini-2.5-flash-lite" }
           }
         }
@@ -331,6 +371,7 @@ test("report format contains stable metadata and case rows", () => {
   assert.equal(rows[12][1], 100);
   assert.equal(REPORT_DISPLAY_HEADERS[7], "ビジネス評価 (A/B/C/D)");
   assert.equal(REPORT_DISPLAY_HEADERS[12], "ビジネス要件の検証内容");
+  assert.equal(REPORT_DISPLAY_HEADERS[13], "精度検証ソース状態");
   assert.deepEqual(rows[3], ["Suite Run ID", "suite_run_1"]);
   assert.deepEqual(rows[15], REPORT_DISPLAY_HEADERS);
   assert.equal(rows[16][0], "case_1");
@@ -341,7 +382,8 @@ test("report format contains stable metadata and case rows", () => {
   assert.match(rows[16][11], /└ 回答に65,200円がある/);
   assert.match(rows[16][11], /☀️ 単位が円/);
   assert.equal(rows[16][12], "1. 売上は65,200円\n2. 単位が円");
-  assert.equal(rows[16][14], "gemini-2.5-flash-lite");
+  assert.match(rows[16][13], /✓ text: 承認値/);
+  assert.equal(rows[16][15], "gemini-2.5-flash-lite");
   assert.deepEqual(rows[9], ["システム要件 正解率", 90]);
   assert.deepEqual(rows[10], ["ビジネス要件 正解率", 100]);
 });

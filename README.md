@@ -46,7 +46,8 @@ This project models those concerns explicitly:
 | Layer | What it checks | Result |
 |---|---|---|
 | System requirements | final response, errors, SQL evidence, chart evidence, duration, billed bytes, required phrases | pass/fail checks and score |
-| Business requirements | expected values, period, units, tolerance, and answer evidence | Gemini judge grade A/B/C/D |
+| Business requirements | qualitative and quantitative acceptance conditions | Gemini judge grade A/B/C/D |
+| Accuracy sources | manual text, a public evidence URL, or a read-only BigQuery SQL result | Ground truth supplied to the Gemini judge |
 | Reporting | suite progress, trace, cost, scores, evidence, and errors | web report and managed Google Sheet |
 
 ## Features
@@ -55,6 +56,7 @@ This project models those concerns explicitly:
 - Reusable test suites with live progress and resumable report URLs
 - Separate system and business-accuracy scores
 - A/B/C/D business grading with evidence and review-required judge failures
+- Separate business acceptance conditions and structured text / URL / BigQuery SQL accuracy sources
 - BigQuery SQL evidence from generated SQL, matched verified queries, and query jobs
 - BigQuery duration and billed-byte reporting
 - Existing Data Agent registry using full Google Cloud resource names
@@ -195,12 +197,20 @@ of being converted into a fabricated D grade.
 
 Share a spreadsheet with the ADC identity and connect it from the application. The app owns only:
 
-- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases
+- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including business acceptance conditions, structured accuracy-source JSON, and newline-separated provenance URLs
 - `AgentEval_Report` — read-only suite-run summary and case results
 
 The app clears and rewrites those fixed tabs while preserving their sheet IDs. It does not modify
 user-created tabs. Imported values are validated server-side; hidden columns and pasted data are
 not trusted.
+
+Accuracy-source URLs are different from provenance `relatedUrls`: they are fetched for scoring.
+Only public HTTP(S) pages on standard ports are allowed; DNS answers and every redirect are checked
+against private, loopback, link-local, metadata, and reserved IP ranges, and text responses are size-
+and time-bounded. Accuracy-source BigQuery SQL uses ADC, accepts only one `SELECT`/`WITH` statement,
+runs a dry run first, and defaults to a 100 MiB billed-byte cap, 100 returned rows, and 30 seconds.
+The limits can be lowered with `ACCURACY_BQ_MAX_BYTES_BILLED`, `ACCURACY_BQ_MAX_ROWS`, and
+`ACCURACY_BQ_TIMEOUT_MS`; use `ACCURACY_BQ_LOCATION` when the referenced datasets require a location.
 
 ## Storage
 
