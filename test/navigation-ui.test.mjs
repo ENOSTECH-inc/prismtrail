@@ -22,6 +22,20 @@ test("Data Agent details own the connectivity test flow", () => {
   assert.match(styles, /\.agent-connectivity-intro\s*\{/);
 });
 
+test("Data Agent list uses navigable cards and details expose Cloud configuration", () => {
+  assert.match(app, /class="agent-card" href="#\/agents\/\$\{agent\.id\}"/);
+  assert.match(app, /class="agent-card-grid"/);
+  assert.doesNotMatch(app, /data-check-agent="\$\{agent\.id\}">.*接続確認/);
+  assert.match(app, /設定情報/);
+  assert.match(app, /remoteConfiguration/);
+  assert.match(app, /システム指示/);
+  assert.match(app, /データソース/);
+  assert.match(app, /BigQuery max billed bytes/);
+  assert.match(app, /Google Cloudで開く/);
+  assert.match(styles, /\.agent-card-grid\s*\{/);
+  assert.match(styles, /\.agent-configuration\s*\{/);
+});
+
 test("knowledge stays out of the active client surface without erasing stored ids", () => {
   assert.doesNotMatch(initializeSource, /json\("\/api\/knowledge-sources"\)/);
   assert.doesNotMatch(app, /ケース固有バケット/);
@@ -38,4 +52,11 @@ test("suite editor separates run history from version history and groups actions
   assert.match(app, /case-action-groups/);
   assert.match(app, /case-export-menu/);
   assert.match(styles, /\.case-export-menu\s*\{/);
+});
+
+test("suite case workspace leads with the selected case and keeps actions in one row", () => {
+  assert.doesNotMatch(app, /テスト設計を編集/);
+  assert.match(app, /class="selected-case-heading"/);
+  assert.match(app, /selectedCase\?\.title/);
+  assert.match(styles, /\.case-action-groups\s*\{[^}]*flex-wrap:\s*nowrap/);
 });

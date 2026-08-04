@@ -11,6 +11,9 @@ test("app loads Google auth readiness before the first route", () => {
 
 test("shared shell exposes authentication status and recovery settings", () => {
   assert.match(app, /function googleAuthBanner\(\)/);
+  assert.match(app, /if \(auth\.ready \|\| auth\.status === "checking"\) return ""/);
+  assert.match(app, /!auth\.ready && auth\.status !== "checking"/);
+  assert.doesNotMatch(app, /<div class="auth-banner">/);
   assert.match(app, /href="#\/settings\/auth"/);
   assert.match(app, /data-settings-tab="auth"/);
   assert.match(app, /data-copy-auth-command/);
