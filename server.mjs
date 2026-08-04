@@ -9,6 +9,7 @@ import {
   executeReadOnlyBigQuery,
   fetchJobDetails,
   generateAgentPlan,
+  generateSuiteRunAiSummary,
   generateSuiteAssistantReply,
   getDataAgent,
   GOOGLE_ADC_SCOPES,
@@ -21,6 +22,7 @@ import {
 } from "./lib/google-cloud.mjs";
 import { diagnoseGoogleAuth, googleAuthSetupOptions } from "./lib/google-auth-readiness.mjs";
 import { normalizeMessages, summarizeRun } from "./lib/normalize.mjs";
+import { buildSuiteSummaryContext, normalizeSuiteAiSummary } from "./lib/suite-ai-summary.mjs";
 import {
   appendContextEvaluation,
   composeEvaluation,
@@ -1328,6 +1330,7 @@ async function createSuiteRun(suite) {
     currentCase: null,
     activeCases: [],
     sheetExport: { status: "pending" },
+    aiSummary: { status: "pending" },
     caseRuns: [],
     summary: {
       status: "running",
@@ -1393,6 +1396,50 @@ async function autoExportSuiteRun(suiteRun) {
       completedAt: new Date().toISOString()
     };
   }
+}
+
+async function createSuiteAiSummary(suiteRun) {
+  if (!config.vertexProject) {
+    return {
+      status: "failed",
+      message: "Vertex AIプロジェクトが設定されていないため、AIコメントを生成できませんでした。",
+      completedAt: new Date().toISOString()
+    };
+  }
+  try {
+    const generated = await generateSuiteRunAiSummary({
+      project: config.vertexProject,
+      location: config.vertexLocation,
+      model: config.vertexModel,
+      context: buildSuiteSummaryContext(suiteRun)
+    });
+    return normalizeSuiteAiSummary(generated, generated.audit);
+  } catch (error) {
+    return {
+      status: "failed",
+      message: `GeminiによるAIコメント生成に失敗しました: ${error.message}`,
+      completedAt: new Date().toISOString(),
+      provider: "vertex-ai",
+      model: config.vertexModel,
+      promptTemplateVersion: "suite-summary-v1"
+    };
+  }
+}
+
+async function regenerateSuiteAiSummary(reportId) {
+  const suiteRun = await suiteRunStore.get(reportId);
+  if (isSuiteRunActive(suiteRun)) {
+    const error = new Error("実行完了後にAIコメントを生成してください。");
+    error.status = 409;
+    throw error;
+  }
+  suiteRun.aiSummary = { status: "generating", startedAt: new Date().toISOString() };
+  suiteRun.updatedAt = suiteRun.aiSummary.startedAt;
+  await suiteRunStore.save(suiteRun);
+  suiteRun.aiSummary = await createSuiteAiSummary(suiteRun);
+  suiteRun.updatedAt = new Date().toISOString();
+  await suiteRunStore.save(suiteRun);
+  return suiteRun;
 }
 
 async function processSuiteRun(suite, suiteRun, abortController) {
@@ -1650,6 +1697,7 @@ async function processSuiteRun(suite, suiteRun, abortController) {
   suiteRun.summary.running = 0;
   suiteRun.summary.concurrency = concurrency;
   if (wasCancelled) suiteRun.summary.status = "cancelled";
+  suiteRun.aiSummary = { status: "generating", startedAt: suiteRun.completedAt };
   suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.completedAt };
   await suiteRunStore.save(suiteRun);
   const existingSuite = await suiteStore.get(suite.id).catch(() => null);
@@ -1660,7 +1708,10 @@ async function processSuiteRun(suite, suiteRun, abortController) {
       updatedAt: suiteRun.completedAt
     });
   }
-  suiteRun.sheetExport = await autoExportSuiteRun(suiteRun);
+  [suiteRun.aiSummary, suiteRun.sheetExport] = await Promise.all([
+    createSuiteAiSummary(suiteRun),
+    autoExportSuiteRun(suiteRun)
+  ]);
   suiteRun.updatedAt = new Date().toISOString();
   await suiteRunStore.save(suiteRun);
   return suiteRun;
@@ -3005,6 +3056,11 @@ const server = createServer(async (request, response) => {
         200,
         slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportMatch[1])))
       );
+      return;
+    }
+    const aiSummaryMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/ai-summary$/);
+    if (request.method === "POST" && aiSummaryMatch) {
+      sendJson(response, 200, slimSuiteRun(await regenerateSuiteAiSummary(aiSummaryMatch[1])));
       return;
     }
     const cancelMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/cancel$/);
