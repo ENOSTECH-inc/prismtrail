@@ -32,9 +32,12 @@ test("report actions have distinct Sheets, PDF, and raw JSON treatments", () => 
 
 test("run detail keeps the report header and provides a closeable case context", () => {
   assert.match(app, /case-drilldown-header/);
+  assert.match(app, /case-drilldown-inner/);
   assert.match(app, /case-drilldown-close/);
+  assert.match(app, /tr\("閉じる", "Close"\)/);
   assert.match(app, /reportToolbarActions\(suiteRun/);
   assert.match(styles, /\.case-drilldown-header\s*\{/);
+  assert.match(styles, /\.case-drilldown-close\s*\{[^}]*#fff0f2/s);
 });
 
 test("quick search scopes report and run pages to the current test suite", () => {

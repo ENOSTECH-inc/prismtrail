@@ -428,7 +428,7 @@ function buildScopedQuickSearchCatalog(scope) {
       id: `scope-report:${reportId}`,
       group: "context",
       groupLabel: tr("このテストスイート", "This test suite"),
-      title: tr("評価レポートの全体サマリー", "Evaluation report summary"),
+      title: tr("テスト実行結果の全体サマリー", "Test run result summary"),
       subtitle: suiteRunLabel(report),
       keywords: `${reportId} ${report.suiteName || ""}`,
       icon: "chart-no-axes-combined",
@@ -490,20 +490,10 @@ function buildQuickSearchCatalog() {
       href: "#/suites"
     },
     {
-      id: "page:run",
-      group: "pages",
-      groupLabel: tr("ページ", "Pages"),
-      title: tr("テスト実行", "Test run"),
-      subtitle: tr("単発プロンプト実行", "Ad-hoc prompt run"),
-      keywords: "run single prompt",
-      icon: "play-circle",
-      href: "#/run"
-    },
-    {
       id: "page:reports",
       group: "pages",
       groupLabel: tr("ページ", "Pages"),
-      title: tr("評価レポート", "Evaluation reports"),
+      title: tr("テスト実行結果", "Test run results"),
       subtitle: tr("スイート実行結果", "Suite run results"),
       keywords: "reports evaluation",
       icon: "chart-no-axes-combined",
@@ -518,16 +508,6 @@ function buildQuickSearchCatalog() {
       keywords: "agents data",
       icon: "bot",
       href: "#/agents"
-    },
-    {
-      id: "page:knowledge",
-      group: "pages",
-      groupLabel: tr("ページ", "Pages"),
-      title: tr("GCSナレッジ", "GCS knowledge"),
-      subtitle: tr("ナレッジバケット", "Knowledge buckets"),
-      keywords: "knowledge gcs bucket",
-      icon: "library-big",
-      href: "#/knowledge"
     },
     {
       id: "page:sheets",
@@ -569,7 +549,7 @@ function buildQuickSearchCatalog() {
   const reports = (state.suiteRuns || []).slice(0, 40).map((run) => ({
     id: `report:${run.id}`,
     group: "reports",
-    groupLabel: tr("評価レポート", "Evaluation reports"),
+    groupLabel: tr("テスト実行結果", "Test run results"),
     title: suiteRunLabel(run),
     subtitle: `${run.status || "—"} · ${run.id}`,
     keywords: `${run.id} ${run.suiteName || ""} ${run.suiteId || ""}`,
@@ -585,7 +565,7 @@ function buildQuickSearchCatalog() {
     subtitle: agent.resourceName || agent.id,
     keywords: `${agent.id} ${agent.resourceName || ""}`,
     icon: "bot",
-    href: "#/agents"
+    href: `#/agents/${agent.id}`
   }));
 
   const cases = [];
@@ -1058,23 +1038,23 @@ function shell(content, active = "suites", mode = false) {
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
         <div class="sidebar-head">
-          <a class="brand" href="#/suites" aria-label="${tr("PrismTrail ホーム", "PrismTrail home")}">
-            <span class="brand-icon"><img src="/assets/prismtrail-mark.png" alt="" width="32" height="32"></span>
-            <span class="brand-copy"><strong>PrismTrail</strong><small>${tr("データエージェント評価", "Data agent evaluation")}</small></span>
-          </a>
-          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}" aria-expanded="${!collapsed}" title="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</button>
+          <button id="sidebar-toggle" class="sidebar-head-trigger" type="button" aria-label="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}" aria-controls="primary-sidebar-navigation" aria-expanded="${!collapsed}" title="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}">
+            <span class="brand">
+              <span class="brand-icon"><img src="/assets/prismtrail-mark.png" alt="" width="32" height="32"></span>
+              <span class="brand-copy"><strong>PrismTrail</strong><small>${tr("データエージェント評価", "Data agent evaluation")}</small></span>
+            </span>
+            <span class="sidebar-toggle" aria-hidden="true">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</span>
+          </button>
         </div>
-        <nav aria-label="${tr("メインナビゲーション", "Main navigation")}">
-          <section class="nav-group ${["suites", "run", "reports"].includes(active) ? "active-group" : ""}" aria-labelledby="nav-evaluation">
+        <nav id="primary-sidebar-navigation" aria-label="${tr("メインナビゲーション", "Main navigation")}">
+          <section class="nav-group ${["suites", "reports"].includes(active) ? "active-group" : ""}" aria-labelledby="nav-evaluation">
             <h2 id="nav-evaluation" class="nav-group-label">${tr("評価ワークフロー", "Evaluation")}</h2>
             <a class="${active === "suites" ? "active" : ""}" href="#/suites" title="${tr("テストスイート", "Test suites")}">${icon("layers-3")}<span class="nav-label">${tr("テストスイート", "Test suites")}</span></a>
-            <a class="${active === "run" ? "active" : ""}" href="#/run" title="${tr("テスト実行", "Test run")}">${icon("play-circle")}<span class="nav-label">${tr("テスト実行", "Test run")}</span></a>
-            <a class="${active === "reports" ? "active" : ""}" href="#/reports" title="${tr("評価レポート", "Evaluation reports")}">${icon("chart-no-axes-combined")}<span class="nav-label">${tr("評価レポート", "Evaluation reports")}</span></a>
+            <a class="${active === "reports" ? "active" : ""}" href="#/reports" title="${tr("テスト実行結果", "Test run results")}">${icon("chart-no-axes-combined")}<span class="nav-label">${tr("テスト実行結果", "Test run results")}</span></a>
           </section>
-          <section class="nav-group ${["agents", "knowledge"].includes(active) ? "active-group" : ""}" aria-labelledby="nav-resources">
-            <h2 id="nav-resources" class="nav-group-label">${tr("データ・ナレッジ", "Data & knowledge")}</h2>
+          <section class="nav-group ${active === "agents" ? "active-group" : ""}" aria-labelledby="nav-resources">
+            <h2 id="nav-resources" class="nav-group-label">${tr("データ", "Data")}</h2>
             <a class="${active === "agents" ? "active" : ""}" href="#/agents" title="${tr("データエージェント", "Data agents")}">${icon("bot")}<span class="nav-label">${tr("データエージェント", "Data agents")}</span></a>
-            <a class="${active === "knowledge" ? "active" : ""}" href="#/knowledge" title="${tr("GCSナレッジ", "GCS knowledge")}">${icon("library-big")}<span class="nav-label">${tr("GCSナレッジ", "GCS knowledge")}</span></a>
           </section>
           <section class="nav-group ${active === "settings" ? "active-group" : ""}" aria-labelledby="nav-system">
             <h2 id="nav-system" class="nav-group-label">${tr("システム管理", "System")}</h2>
@@ -1369,13 +1349,7 @@ function caseForm(item, index) {
       <label class="span-2">${tr("検証プロンプト", "Test prompt")}<textarea data-field="prompt" rows="4">${esc(item.prompt)}</textarea></label>
       <label>${tr("対象Data Agent", "Target Data Agent")}<select data-field="agentId">${state.agents.map((agent) => `<option value="${agent.id}" ${agent.id === item.agentId ? "selected" : ""}>${esc(agent.displayName)}</option>`).join("")}</select></label>
       <label>${tr("思考モード", "Thinking mode")}<select data-field="thinkingMode"><option value="FAST" ${item.thinkingMode !== "THINKING" ? "selected" : ""}>FAST</option><option value="THINKING" ${item.thinkingMode === "THINKING" ? "selected" : ""}>THINKING</option></select></label>
-      <label>${tr("ステータス", "Status")}<select data-field="status"><option value="active" ${item.status !== "draft" ? "selected" : ""}>${tr("実行可", "Runnable")}</option><option value="draft" ${item.status === "draft" ? "selected" : ""}>${tr("下書き", "Draft")}</option></select><small class="field-help">${tr("下書きのケースは評価レポート実行時にスキップされます。", "Draft cases are skipped when a suite evaluation runs.")}</small></label>
-      <label class="span-2">${tr("ケース固有バケット（複数選択）", "Case-specific buckets (multiple selection)")}
-        <select data-knowledge multiple size="${Math.min(3, Math.max(2, state.knowledgeSources.length))}">
-          ${state.knowledgeSources.map((source) => `<option value="${source.id}" ${(item.knowledgeSourceIds || []).includes(source.id) ? "selected" : ""}>${esc(source.name)} · gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${tr("{count} チャンク", "{count} chunks", { count: formatLocaleNumber(source.chunkCount || 0) })}</option>`).join("")}
-        </select>
-        <small class="field-help">${tr("未選択の場合はスイート共通ナレッジを使います。選択時はVertex AIが回答と関連チャンクの整合性を評価します。", "If none are selected, the suite-level knowledge is used. When selected, Vertex AI evaluates consistency between the answer and relevant chunks.")}</small>
-      </label>
+      <label>${tr("ステータス", "Status")}<select data-field="status"><option value="active" ${item.status !== "draft" ? "selected" : ""}>${tr("実行可", "Runnable")}</option><option value="draft" ${item.status === "draft" ? "selected" : ""}>${tr("下書き", "Draft")}</option></select><small class="field-help">${tr("下書きのケースはスイート実行時にスキップされます。", "Draft cases are skipped when the suite runs.")}</small></label>
       <label class="span-2">${tr("関連URL", "Related URLs")}<textarea data-related-urls rows="3" maxlength="40979" placeholder="https://...">${esc((item.relatedUrls || []).join("\n"))}</textarea><small class="field-help">${tr("このケースを追加・更新した根拠へのリンクを1行に1件、最大20件まで登録できます。", "Add up to 20 provenance links for this case, one HTTP(S) URL per line.")}</small><div class="related-url-list">${relatedUrlLinks(item.relatedUrls)}</div></label>
       <label class="span-2">${tr("メモ", "Memo")}<textarea data-field="memo" rows="5" maxlength="20000" placeholder="${tr("自由記述。モデル定義・指標レイヤー・参照メモなど。評価には使いません。", "Free-form notes. Model definitions, metrics layer, references, etc. Not used in evaluation.")}">${esc(item.memo || "")}</textarea><small class="field-help">${tr("評価判定には使わない、ケース単位の参照メモです。", "Case-level reference notes; not used for scoring.")}</small></label>
     </div>
@@ -1451,9 +1425,10 @@ function suitePasteDialog(suite) {
 function renderEditor() {
   const suite = state.selectedSuite;
   clampSelectedCaseIndex();
-  if (!["basics", "cases", "history"].includes(state.editorTab)) state.editorTab = "cases";
+  if (!["basics", "cases", "runs", "history"].includes(state.editorTab)) state.editorTab = "cases";
   const selectedCase = suite.cases[state.selectedCaseIndex];
   const onCasesTab = state.editorTab === "cases";
+  const onRunsTab = state.editorTab === "runs";
   const onHistoryTab = state.editorTab === "history";
   const editorAgentId = suiteAgentId(suite);
   const connectedSheet = editorAgentId
@@ -1488,10 +1463,6 @@ function renderEditor() {
               <small class="field-help">${tr("シートへ同期するとき、未設定のケースへこのAgent IDを自動入力します。", "When syncing to Sheets, empty case Agent IDs are filled with this value.")}</small>
             </label>
             <label>${tr("目的・説明", "Purpose and description")}<textarea id="suite-description" rows="3">${esc(suite.description)}</textarea></label>
-            <div class="suite-knowledge">
-              <span>実行時に接続するナレッジバケット（複数選択）</span>
-              <div>${state.knowledgeSources.map((source) => `<label class="source-check"><input type="checkbox" data-suite-source value="${source.id}" ${(suite.knowledgeSourceIds || []).includes(source.id) ? "checked" : ""}><span>${icon("file-stack", 14)}${esc(source.name)}<small>gs://${esc(source.bucket)}/${esc(source.prefix || "")} · ${source.chunkCount || 0} チャンク</small></span></label>`).join("") || `<a href="#/knowledge" class="text-link">GCSナレッジを登録する ${icon("arrow-right", 14)}</a>`}</div>
-            </div>
           </section>`;
   const casesPanel = `
           ${suite.cases.length ? "" : `<section class="suite-start-panel">
@@ -1513,16 +1484,18 @@ function renderEditor() {
               <h2>${tr("テストケース", "Test cases")}</h2>
               <p>${tr("左の一覧から選択して編集します。上から順に実行されます。", "Select a case from the left list to edit. Cases run from top to bottom.")}</p>
             </div>
-            <div class="section-actions">
-              ${sheetShortcut}
-              <button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}${tr("表を貼り付けて一括編集", "Bulk edit by pasting a table")}</button>
-              <button id="run-selected-case" class="button bright" type="button" ${selectedCase && selectedCase.status !== "draft" ? "" : "disabled"}>${icon("play", 15)}${tr("このケースを実行", "Run this case")}</button>
-              <button id="export-case-pdf" class="button secondary" type="button" ${selectedCase ? "" : "disabled"}>${icon("file-down", 15)}${tr("このケースをPDF", "PDF this case")}</button>
-              <button id="export-cases-pdf" class="button secondary" type="button" ${suite.cases.length ? "" : "disabled"}>${icon("files", 15)}${tr("全ケースをPDF", "PDF all cases")}</button>
-              <button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button>
+            <div class="case-action-groups">
+              <div class="case-action-group primary-actions"><button id="run-selected-case" class="button primary" type="button" ${selectedCase && selectedCase.status !== "draft" ? "" : "disabled"}>${icon("play", 15)}${tr("選択ケースを実行", "Run selected case")}</button><button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button></div>
+              <div class="case-action-group edit-actions">${sheetShortcut}<button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}${tr("表で一括編集", "Bulk edit table")}</button></div>
+              <details class="case-export-menu"><summary class="button report-action-pdf">${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}${icon("chevron-down", 13)}</summary><div><button id="export-case-pdf" class="button secondary" type="button" ${selectedCase ? "" : "disabled"}>${icon("file-down", 15)}${tr("選択ケース", "Selected case")}</button><button id="export-cases-pdf" class="button secondary" type="button" ${suite.cases.length ? "" : "disabled"}>${icon("files", 15)}${tr("全ケース", "All cases")}</button></div></details>
             </div>
           </div>
           <div id="case-detail">${selectedCase ? caseForm(selectedCase, state.selectedCaseIndex) : empty(tr("ケースがありません", "No test cases"), tr("上の作成方法から、最初のケースを追加してください。", "Choose a method above to add your first case."))}</div>`;
+  const suiteRunHistory = state.suiteRuns.filter((run) => run.suiteId === suite.id);
+  const runsPanel = `<section class="suite-run-history">
+    <div class="suite-run-history-head"><div><span class="eyebrow">${tr("TEST RUN HISTORY", "TEST RUN HISTORY")}</span><h2>${tr("このスイートの実行履歴", "Run history for this suite")}</h2><p>${tr("スイート横断ではなく、この定義から実行した結果だけを表示します。", "Shows only runs created from this suite definition.")}</p></div><a class="button secondary" href="#/reports">${icon("chart-no-axes-combined", 15)}${tr("すべての実行結果", "All run results")}</a></div>
+    <div class="table-panel"><table><thead><tr><th>${tr("実行日時", "Executed at")}</th><th>${tr("結果", "Result")}</th><th>${tr("合格ケース", "Passed cases")}</th><th>${tr("所要時間", "Duration")}</th><th></th></tr></thead><tbody>${suiteRunHistory.map((run) => `<tr><td><strong>${esc(suiteRunLabel(run))}</strong><small>${esc(run.id)}</small></td><td>${statusPill(run.status)}</td><td><strong>${formatLocaleNumber(run.summary?.passed || 0)} / ${formatLocaleNumber(run.summary?.total || 0)}</strong><small>${formatLocaleNumber(run.summary?.passRate || 0)}%</small></td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td><a class="button primary small" href="#/reports/${run.id}">${tr("結果を開く", "Open result")}${icon("arrow-right", 13)}</a></td></tr>`).join("")}</tbody></table>${suiteRunHistory.length ? "" : empty(tr("実行履歴はありません", "No run history"), tr("このスイートを実行すると、結果がここに並びます。", "Run this suite to see its results here."))}</div>
+  </section>`;
   const selectedVersion = state.selectedSuiteVersion;
   const selectedSnapshot = selectedVersion?.snapshot;
   const historyList = state.suiteVersions.length
@@ -1594,21 +1567,27 @@ function renderEditor() {
               <h1>${tr("テスト設計を編集", "Edit test design")}</h1>
               <p>${onHistoryTab
                 ? tr("定義の変更履歴を確認し、必要なら復元できます。", "Review definition history and restore a past version if needed.")
+                : onRunsTab
+                ? tr("このスイートから実行したテスト結果を時系列で確認します。", "Review test results from this suite in chronological order.")
                 : onCasesTab
                 ? tr("プロンプトと合格条件をケースごとに定義します。", "Define the prompt and passing criteria for each case.")
-                : tr("スイート全体の名前・接続先・ナレッジを設定します。", "Configure the suite name, target agent, and knowledge.")}</p>
+                : tr("スイート全体の名前と接続先Data Agentを設定します。", "Configure the suite name and target Data Agent.")}</p>
             </div>
             <span class="count-badge">${onHistoryTab
               ? tr("{count} 件の履歴", "{count} versions", { count: formatLocaleNumber(state.suiteVersions.length) })
+              : onRunsTab
+              ? tr("{count} 件の実行", "{count} runs", { count: formatLocaleNumber(suiteRunHistory.length) })
               : tr("{count} ケース", "{count} cases", { count: formatLocaleNumber(suite.cases.length) })}</span>
           </div>
           <div class="editor-tabs" role="tablist" aria-label="${tr("編集モード", "Edit mode")}">
             <button type="button" class="editor-tab${state.editorTab === "basics" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "basics" ? "true" : "false"}" data-editor-tab="basics">${icon("sliders-horizontal", 15)}${tr("基本情報", "Basics")}</button>
             <button type="button" class="editor-tab${state.editorTab === "cases" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "cases" ? "true" : "false"}" data-editor-tab="cases">${icon("list-checks", 15)}${tr("テストケース", "Test cases")}<em>${formatLocaleNumber(suite.cases.length)}</em></button>
-            <button type="button" class="editor-tab${state.editorTab === "history" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "history" ? "true" : "false"}" data-editor-tab="history">${icon("history", 15)}${tr("履歴", "History")}</button>
+            <button type="button" class="editor-tab${state.editorTab === "runs" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "runs" ? "true" : "false"}" data-editor-tab="runs">${icon("activity", 15)}${tr("実行履歴", "Run history")}<em>${formatLocaleNumber(suiteRunHistory.length)}</em></button>
+            <button type="button" class="editor-tab${state.editorTab === "history" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "history" ? "true" : "false"}" data-editor-tab="history">${icon("history", 15)}${tr("バージョン履歴", "Version history")}</button>
           </div>
           <div class="editor-tab-panel" data-tab-panel="basics" ${state.editorTab === "basics" ? "" : "hidden"}>${basicsPanel}</div>
           <div class="editor-tab-panel" data-tab-panel="cases" ${state.editorTab === "cases" ? "" : "hidden"}>${casesPanel}</div>
+          <div class="editor-tab-panel" data-tab-panel="runs" ${state.editorTab === "runs" ? "" : "hidden"}>${runsPanel}</div>
           <div class="editor-tab-panel" data-tab-panel="history" ${state.editorTab === "history" ? "" : "hidden"}>${historyPanel}</div>
         </main>
       </div>
@@ -2268,7 +2247,7 @@ function bindEditor() {
   document.querySelectorAll("[data-editor-tab]").forEach((button) => {
     button.addEventListener("click", async () => {
       const next = button.dataset.editorTab;
-      if (!["basics", "cases", "history"].includes(next)) return;
+      if (!["basics", "cases", "runs", "history"].includes(next)) return;
       if (next === state.editorTab) return;
       if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
       state.editorTab = next;
@@ -2497,7 +2476,9 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   card.querySelectorAll("[data-field]").forEach((input) => (next[input.dataset.field] = input.value));
   if (!String(next.agentId || "").trim()) next.agentId = defaultAgentId;
   const knowledgeSelect = card.querySelector("[data-knowledge]");
-  next.knowledgeSourceIds = knowledgeSelect ? [...knowledgeSelect.selectedOptions].map((option) => option.value) : [];
+  next.knowledgeSourceIds = knowledgeSelect
+    ? [...knowledgeSelect.selectedOptions].map((option) => option.value)
+    : [...(source.knowledgeSourceIds || [])];
   next.relatedUrls = (card.querySelector("[data-related-urls]")?.value || "")
     .split(/\r?\n/)
     .map((value) => value.trim())
@@ -2538,7 +2519,9 @@ function collectSuite() {
     name: document.querySelector("#suite-name").value,
     description: document.querySelector("#suite-description").value,
     defaultAgentId,
-    knowledgeSourceIds: [...document.querySelectorAll("[data-suite-source]:checked")].map((input) => input.value),
+    knowledgeSourceIds: document.querySelector("[data-suite-source]")
+      ? [...document.querySelectorAll("[data-suite-source]:checked")].map((input) => input.value)
+      : [...(state.selectedSuite.knowledgeSourceIds || [])],
     cases
   };
 }
@@ -3174,7 +3157,7 @@ function renderAgents() {
         const sheetCell = sheet
           ? `<a class="text-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 13)}${esc(sheet.sheetName || sheet.title)}</a>`
           : `<a class="text-link" href="#/settings/sheets">${icon("link", 13)}${tr("未連携", "Not connected")}</a>`;
-        return `<tr><td><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></td><td>${esc(agent.projectId)}<small>${esc(agent.location)}</small></td><td>${sheetCell}</td><td>${statusPill(agent.status)}</td><td>${fmtDate(agent.lastCheckedAt)}</td><td><button class="button secondary small" data-check-agent="${agent.id}">${icon("plug-zap", 14)}接続確認</button></td></tr>`;
+        return `<tr><td><a class="agent-name-link" href="#/agents/${agent.id}"><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></a></td><td>${esc(agent.projectId)}<small>${esc(agent.location)}</small></td><td>${sheetCell}</td><td>${statusPill(agent.status)}</td><td>${fmtDate(agent.lastCheckedAt)}</td><td><div class="table-row-actions"><a class="button primary small" href="#/agents/${agent.id}">${icon("panel-right-open", 14)}詳細</a><button class="button secondary small" data-check-agent="${agent.id}">${icon("plug-zap", 14)}接続確認</button></div></td></tr>`;
       }).join("")}</tbody>
       </table>
     </section>
@@ -3202,6 +3185,83 @@ function renderAgents() {
       renderAgents();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
+}
+
+function agentRunMatches(run, agent) {
+  return run?.agent === agent.resourceName || run?.agentLabel === agent.displayName;
+}
+
+function agentDetailTabs(agent, activeTab) {
+  return `<nav class="agent-detail-tabs" aria-label="${tr("データエージェント詳細", "Data agent details")}">
+    <a class="${activeTab === "overview" ? "active" : ""}" href="#/agents/${agent.id}">${icon("info", 16)}<span>${tr("基本情報", "Overview")}</span></a>
+    <a class="${activeTab === "connectivity" ? "active" : ""}" href="#/agents/${agent.id}/connectivity">${icon("radio-tower", 16)}<span>${tr("疎通テスト", "Connectivity test")}</span></a>
+  </nav>`;
+}
+
+function agentOverviewHtml(agent) {
+  const sheet = sheetConnectionForAgent(agent.id);
+  return `<section class="agent-overview-grid">
+    <article class="agent-overview-card agent-overview-primary">
+      <div class="agent-overview-heading"><span>${icon("bot", 22)}</span><div><small>DATA AGENT</small><h2>${esc(agent.displayName)}</h2><p>${esc(agent.description || tr("説明は登録されていません。", "No description has been registered."))}</p></div></div>
+      <dl><div><dt>${tr("リソース名", "Resource name")}</dt><dd><code>${esc(agent.resourceName)}</code></dd></div><div><dt>${tr("プロジェクト", "Project")}</dt><dd>${esc(agent.projectId)}</dd></div><div><dt>${tr("ロケーション", "Location")}</dt><dd>${esc(agent.location)}</dd></div></dl>
+    </article>
+    <article class="agent-status-card"><span>${tr("接続状態", "Connection status")}</span>${statusPill(agent.status)}<small>${tr("最終確認", "Last checked")} ${fmtDate(agent.lastCheckedAt)}</small><button class="button secondary" type="button" data-check-agent="${agent.id}">${icon("plug-zap", 15)}${tr("接続を再確認", "Recheck connection")}</button></article>
+    <article class="agent-status-card"><span>Google Sheets</span>${sheet ? `<strong>${esc(sheet.sheetName || sheet.title)}</strong><small>${esc(sheet.spreadsheetId)}</small><a class="button sheet-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>` : `<strong>${tr("未連携", "Not connected")}</strong><small>${tr("設定から専用シートを紐付けられます。", "Connect a dedicated sheet from settings.")}</small><a class="button secondary" href="#/settings/sheets">${icon("link", 15)}${tr("Sheets連携を設定", "Configure Sheets")}</a>`}</article>
+  </section>`;
+}
+
+function agentConnectivityHtml(agent) {
+  const recent = state.runs.filter((run) => agentRunMatches(run, agent)).slice(0, 8);
+  return `<section class="agent-connectivity-intro"><div>${icon("radio-tower", 21)}<div><span>${tr("DATA AGENT CONNECTIVITY", "DATA AGENT CONNECTIVITY")}</span><h2>${tr("プロンプトを送り、応答と実行トレースを確認", "Send a prompt and inspect the response trace")}</h2><p>${tr("登録済みのData Agentへ単発の問い合わせを行います。スイート評価や採点は行いません。", "Send a one-off request to this Data Agent without running suite evaluation or scoring.")}</p></div></div>${statusPill(agent.status)}</section>
+  <section class="single-run-layout agent-connectivity-layout"><form id="single-run-form" class="form-panel"><label>${tr("対象Data Agent", "Target Data Agent")}<div class="fixed-agent-field">${icon("bot", 16)}<span><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></span></div></label><label>${tr("検証プロンプト", "Verification prompt")}<textarea id="single-prompt" rows="7" required placeholder="${tr("分析したい内容を入力してください", "Enter what you want to analyze")}"></textarea></label><div class="form-row"><label>${tr("思考モード", "Thinking mode")}<select id="single-mode"><option>FAST</option><option>THINKING</option></select></label><button id="single-run-submit" class="button primary" type="submit">${icon("play", 15)}${tr("疎通テストを実行", "Run connectivity test")}</button></div></form><aside class="recent-panel"><h2>${tr("このAgentの最近の疎通テスト", "Recent connectivity tests")}</h2><div id="recent-runs-list">${recent.map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("") || empty(tr("履歴なし", "No history"), tr("疎通テストの結果がここに並びます。", "Connectivity test results will appear here."))}</div></aside></section>`;
+}
+
+function bindAgentCheckButtons() {
+  document.querySelectorAll("[data-check-agent]").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const updated = await json(`/api/agents/${button.dataset.checkAgent}/check`, { method: "POST" });
+      state.agents = state.agents.map((item) => (item.id === updated.id ? updated : item));
+      notify(tr("接続を確認しました。BigQueryクエリは実行していません。", "Connection verified. No BigQuery query was run."), "success");
+      renderAgentDetail(updated, "overview");
+      refreshIcons();
+    } catch (error) { notify(error.message); button.disabled = false; }
+  }));
+}
+
+function bindAgentConnectivity(agent) {
+  document.querySelector("#single-run-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = document.querySelector("#single-run-submit");
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = `${icon("loader-circle", 15)}${tr("実行中…", "Running…")}`;
+      refreshIcons();
+    }
+    try {
+      const run = await json("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: document.querySelector("#single-prompt").value, agent: agent.resourceName, agentLabel: agent.displayName, thinkingMode: document.querySelector("#single-mode").value }) });
+      state.runs.unshift(run);
+      state.selectedRun = run;
+      location.hash = `#/runs/${run.id}`;
+    } catch (error) {
+      notify(error.message);
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = `${icon("play", 15)}${tr("疎通テストを実行", "Run connectivity test")}`;
+        refreshIcons();
+      }
+    }
+  });
+}
+
+function renderAgentDetail(agent, activeTab = "overview") {
+  const tab = activeTab === "connectivity" ? "connectivity" : "overview";
+  app.innerHTML = shell(`
+    ${navHeader({ title: agent.displayName, subtitle: agent.resourceName, backHref: "#/agents", backLabel: tr("データエージェント一覧に戻る", "Back to data agents") })}
+    ${detailBody(`${agentDetailTabs(agent, tab)}${tab === "connectivity" ? agentConnectivityHtml(agent) : agentOverviewHtml(agent)}`)}
+  `, "agents", "detail");
+  bindAgentCheckButtons();
+  if (tab === "connectivity") bindAgentConnectivity(agent);
 }
 
 function renderSheetsSettings() {
@@ -3247,7 +3307,7 @@ function renderSheetsSettings() {
             <button class="button accent" data-import-suite="${connection.id}" ${assigned ? "" : "disabled"}>${icon("download", 14)}取り込む</button>
           </div>
           <form data-export-report="${connection.id}">
-            <label>アプリ → Sheets：評価レポート
+            <label>アプリ → Sheets：テスト実行結果
               <select name="suiteRunId" ${scopedReports.length ? "" : "disabled"}>${reportOptions}</select>
             </label>
             <button class="button secondary" ${scopedReports.length ? "" : "disabled"}>${icon("file-output", 14)}結果を書き出す</button>
@@ -3706,7 +3766,7 @@ function mcpScopeLabel(scope) {
     "suites:write": tr("スイート・ケース作成・更新", "Create and update suites and cases"),
     "runs:read": tr("実行状況参照", "Read run status"),
     "runs:execute": tr("テスト実行", "Execute tests"),
-    "reports:read": tr("評価レポート参照・PDF取得", "Read reports and download PDFs"),
+    "reports:read": tr("テスト実行結果参照・PDF取得", "Read test run results and download PDFs"),
     "agents:read": tr("Data Agent参照", "Read Data Agents"),
     "agents:write": tr("Data Agent登録", "Register Data Agents"),
     "knowledge:read": tr("GCSナレッジ参照・検索", "Read and search GCS knowledge"),
@@ -3959,7 +4019,7 @@ async function migrateStorage(mode) {
 
 function renderReports() {
   const rows = state.suiteRuns.map((run) => `<tr><td><a href="#/reports/${run.id}"><strong>${esc(suiteRunLabel(run))}</strong><small>${esc(run.id)}</small></a></td><td>${statusPill(run.status)}</td><td><strong>${run.summary?.passRate || 0}%</strong></td><td>${run.summary?.passed || 0} / ${run.summary?.total || 0}</td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td>${fmtBytes(run.summary?.totalBytesBilled)}</td></tr>`).join("");
-  app.innerHTML = shell(`${pageHead("評価レポート", "スイートの品質、速度、BigQuery利用量をチーム共有向けにまとめます。")}<section class="table-panel"><table><thead><tr><th>実行ログ</th><th>結果</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("レポートがありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
+  app.innerHTML = shell(`${pageHead("テスト実行結果", "スイートの品質、速度、BigQuery利用量を実行単位で確認します。")}<section class="table-panel"><table><thead><tr><th>実行ログ</th><th>結果</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("実行結果がありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
 }
 
 function suiteAiSummaryHtml(report, { isLive = false } = {}) {
@@ -4113,7 +4173,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       : "#/reports";
   const backLabel = isPartial
     ? tr("ケース編集に戻る", "Back to case editor")
-    : tr("評価レポート一覧に戻る", "Back to evaluation reports");
+    : tr("テスト実行結果一覧に戻る", "Back to test run results");
   const headerTitle = isPartial && focusCase ? focusCase.title || focusCaseId : suiteRunLabel(report);
   const headerSubtitle = isPartial
     ? tr("個別実行 · {id}", "Single-case run · {id}", { id: report.id })
@@ -4131,7 +4191,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       <div class="overall-score"><span>${isLive ? tr("実行進捗", "Run progress") : tr("総合スコア", "Overall score")}</span><strong>${isLive ? completed : overallScore ?? "—"}<small>/${isLive ? total : 100}</small></strong>${!isLive && businessConfigured > 0 ? `<em>${tr("システム 40% + ビジネス 60%", "System 40% + business 60%")}</em>` : !isLive ? `<em>${tr("ビジネス要件未評価のためシステムスコアを採用", "System score used because business requirements were not evaluated")}</em>` : ""}</div>
       <div class="ring" style="--progress:${systemScore};--ring-color:#5d86ff"><b>${scoreText(systemScore)}</b><span>${tr("システム要件", "System requirements")}</span></div>
       <div class="ring ${businessConfigured ? "" : "unscored"}" style="--progress:${businessScore || 0};--ring-color:#55d3a2"><b>${scoreText(businessScore)}</b><span>${tr("ビジネス要件", "Business requirements")}</span></div>
-      <div class="hero-copy">${statusPill(report.status)}${isPartial ? `<span class="partial-run-badge">${tr("個別実行", "Single-case")}</span>` : ""}<h2>${isLive ? runningHeadline : finishedHeadline}</h2><p>${isLive ? (isCancelling ? tr("進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled.") : isPartial ? tr("完了するまでこの画面で待機します。システム要件とビジネス要件の判定が順に表示されます。", "Stay on this screen until the run finishes. System and business checks appear as they complete.") : tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear in this report as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) })) : finishedCopy}</p></div>
+      <div class="hero-copy">${statusPill(report.status)}${isPartial ? `<span class="partial-run-badge">${tr("個別実行", "Single-case")}</span>` : ""}<h2>${isLive ? runningHeadline : finishedHeadline}</h2><p>${isLive ? (isCancelling ? tr("進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled.") : isPartial ? tr("完了するまでこの画面で待機します。システム要件とビジネス要件の判定が順に表示されます。", "Stay on this screen until the run finishes. System and business checks appear as they complete.") : tr("ケースが完了するたびに、このテスト実行結果へ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear here as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) })) : finishedCopy}</p></div>
       ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
     <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
@@ -4201,7 +4261,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
             ? `prismtrail-run-case-${focusCaseId}.pdf`
             : `prismtrail-run-${report.id}.pdf`
         );
-        notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
+        notify(tr("テスト実行結果PDFをダウンロードしました: {name}", "Downloaded test run result PDF: {name}", { name: filename }), "success");
       } catch (error) {
         notify(error.message);
       }
@@ -4272,53 +4332,6 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   }
 }
 
-function renderSingleRun() {
-  const recent = state.runs.slice(0, 8);
-  app.innerHTML = shell(`
-    ${pageHead("テスト実行", "ひとつのプロンプトをすぐに試し、レスポンストレースを確認します。")}
-    <section class="single-run-layout"><form id="single-run-form" class="form-panel"><label>対象Data Agent<select id="single-agent">${state.agents.map((a) => `<option value="${a.id}">${esc(a.displayName)}</option>`).join("")}</select></label><label>検証プロンプト<textarea id="single-prompt" rows="7" required placeholder="分析したい内容を入力してください"></textarea></label><div class="form-row"><label>思考モード<select id="single-mode"><option>FAST</option><option>THINKING</option></select></label><button id="single-run-submit" class="button primary" type="submit">${icon("play", 15)}テストを実行</button></div></form><aside class="recent-panel"><h2>最近の実行</h2><div id="recent-runs-list">${recent.map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("") || `<div class="loading-line">${tr("履歴を読み込み中…", "Loading history…")}</div>`}</div></aside></section>
-  `, "run");
-  if (!state.runs.length) {
-    json("/api/runs")
-      .then((payload) => {
-        state.runs = payload.runs || [];
-        if (location.hash !== "#/run") return;
-        const list = document.querySelector("#recent-runs-list");
-        if (!list) return;
-        list.innerHTML = state.runs.slice(0, 8).map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("")
-          || empty("履歴なし", "実行結果がここに並びます。");
-      })
-      .catch((error) => {
-        const list = document.querySelector("#recent-runs-list");
-        if (list) list.innerHTML = empty(tr("履歴を読み込めませんでした", "Could not load history"), translateApiMessage(error.message));
-      });
-  }
-  document.querySelector("#single-run-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const agent = state.agents.find((a) => a.id === document.querySelector("#single-agent").value);
-    if (!agent) return notify(tr("Data Agentを選択してください。", "Select a Data Agent."));
-    const button = document.querySelector("#single-run-submit");
-    if (button) {
-      button.disabled = true;
-      button.innerHTML = `${icon("loader-circle", 15)}${tr("実行中…", "Running…")}`;
-      refreshIcons();
-    }
-    try {
-      const run = await json("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: document.querySelector("#single-prompt").value, agent: agent.resourceName, agentLabel: agent.displayName, thinkingMode: document.querySelector("#single-mode").value }) });
-      state.runs.unshift(run);
-      state.selectedRun = run;
-      location.hash = `#/runs/${run.id}`;
-    } catch (error) {
-      notify(error.message);
-      if (button) {
-        button.disabled = false;
-        button.innerHTML = `${icon("play", 15)}${tr("テストを実行", "Run test")}`;
-        refreshIcons();
-      }
-    }
-  });
-}
-
 function standaloneRunSummaryHtml(run, evidence) {
   const chartSpec = evidence?.chart?.specs?.[0];
   return `<article class="report-case report-case-detail run-summary-card">
@@ -4357,10 +4370,11 @@ function renderRunDetailLegacy(run) {
   const subtitle = state.runDetailTab === "trace"
     ? tr("レスポンス詳細", "Response details")
     : tr("実行サマリー", "Run summary");
-  const backHref = context ? `#/reports/${context.suiteRunId}` : "#/run";
+  const standaloneAgent = state.agents.find((agent) => agentRunMatches(run, agent));
+  const backHref = context ? `#/reports/${context.suiteRunId}` : standaloneAgent ? `#/agents/${standaloneAgent.id}/connectivity` : "#/agents";
   const backLabel = context
-    ? tr("評価レポートへ戻る", "Back to evaluation report")
-    : tr("テスト実行へ戻る", "Back to test run");
+    ? tr("テスト実行結果へ戻る", "Back to test run result")
+    : tr("疎通テストへ戻る", "Back to connectivity test");
   const actions = "";
   const summaryContent = caseRun
     ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, showRunLink: false })
@@ -4377,7 +4391,7 @@ function renderRunDetailLegacy(run) {
     </section>` : ""}
     <section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンストレース", "Response trace")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>
     `)}
-  `, context ? "reports" : "run", "detail");
+  `, context ? "reports" : "agents", "detail");
   if (isLive) {
     state.reportPollTimer = setTimeout(async () => {
       if (location.hash !== `#/runs/${run.id}`) return;
@@ -4418,19 +4432,20 @@ function renderRunDetail(run) {
   }).join("");
   const title = context?.caseTitle || run.agentLabel || tr("単一テスト実行", "Single test run");
   const subtitle = state.runDetailTab === "trace" ? tr("レスポンス詳細", "Response details") : tr("実行サマリー", "Run summary");
-  const backHref = context ? `#/reports/${context.suiteRunId}/cases/${encodeURIComponent(context.caseId || "")}` : "#/run";
-  const backLabel = context ? tr("評価レポートへ戻る", "Back to evaluation report") : tr("テスト実行へ戻る", "Back to test run");
+  const standaloneAgent = state.agents.find((agent) => agentRunMatches(run, agent));
+  const backHref = context ? `#/reports/${context.suiteRunId}/cases/${encodeURIComponent(context.caseId || "")}` : standaloneAgent ? `#/agents/${standaloneAgent.id}/connectivity` : "#/agents";
+  const backLabel = context ? tr("テスト実行結果へ戻る", "Back to test run result") : tr("疎通テストへ戻る", "Back to connectivity test");
   const reportHeader = suiteRun
     ? navHeader({
         title: suiteRunLabel(suiteRun),
         subtitle: suiteRun.id,
         backHref: "#/reports",
-        backLabel: tr("評価レポート一覧に戻る", "Back to evaluation reports"),
+        backLabel: tr("テスト実行結果一覧に戻る", "Back to test run results"),
         actions: reportToolbarActions(suiteRun, { jsonButtonId: "open-context-report-json", pdfButtonId: "export-context-report-pdf" })
       })
     : navHeader({ title, subtitle, backHref, backLabel });
   const contextHeader = context
-    ? `<section class="case-drilldown-header"><div class="case-drilldown-icon">${icon("list-tree", 19)}</div><div><span>${tr("テストケースの実行詳細を表示中", "Viewing test case run details")}</span><strong>${esc(context.caseTitle || title)}</strong><small>${esc(context.caseId || "")} · ${esc(subtitle)}</small></div><a class="case-drilldown-close" href="${esc(backHref)}" aria-label="${tr("実行詳細を閉じる", "Close run details")}" title="${tr("実行詳細を閉じる", "Close run details")}">${icon("x", 19)}</a></section>`
+    ? `<section class="case-drilldown-header" aria-label="${tr("表示中のテストケース", "Current test case")}"><div class="case-drilldown-inner"><a class="case-drilldown-close" href="${esc(backHref)}" aria-label="${tr("実行詳細を閉じる", "Close run details")}" title="${tr("実行詳細を閉じる", "Close run details")}">${icon("x", 18)}<span>${tr("閉じる", "Close")}</span></a><div class="case-drilldown-icon">${icon("list-tree", 19)}</div><div class="case-drilldown-copy"><span class="case-drilldown-eyebrow">${tr("テストケースの実行詳細を表示中", "Viewing test case run details")}</span><strong>${esc(context.caseTitle || title)}</strong><small>${esc(context.caseId || "")} · ${esc(subtitle)}</small></div></div></section>`
     : `<section class="run-context"><div><span>${tr("選択中のケース", "Selected case")}</span><strong>${esc(title)}</strong></div><div><span>${tr("検証プロンプト", "Verification prompt")}</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>`;
   const summaryContent = caseRun
     ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, showRunLink: false })
@@ -4438,8 +4453,9 @@ function renderRunDetail(run) {
   const traceContent = `<section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンス詳細", "Response details")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>`;
   app.innerHTML = shell(`
     ${reportHeader}
+    ${context ? contextHeader : ""}
     ${detailBody(`
-      ${contextHeader}
+      ${context ? "" : contextHeader}
       <section class="report-metrics"><div><span>${tr("結果", "Result")}</span><strong>${statusPill(run.summary?.status || "running")}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${isLive ? tr("実行中…", "Running…") : fmtDuration(run.summary?.durationMs)}</strong></div><div><span>${tr("課金対象", "Bytes billed")}</span><strong>${fmtBytes(run.summary?.totalBytesBilled)}</strong></div><div><span>${tr("SQL / ジョブ", "SQL / jobs")}</span><strong>${run.summary?.sqlCount || 0} / ${run.summary?.jobCount || 0}</strong></div></section>
       <div class="run-detail-tabs" role="tablist" aria-label="${tr("実行詳細の表示", "Run detail view")}">
         <button type="button" role="tab" data-run-tab="summary" aria-selected="${state.runDetailTab === "summary"}" tabindex="${state.runDetailTab === "summary" ? "0" : "-1"}" class="${state.runDetailTab === "summary" ? "active" : ""}">${icon("layout-dashboard", 16)}${tr("サマリー", "Summary")}</button>
@@ -4457,7 +4473,7 @@ function renderRunDetail(run) {
     await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
       try {
         const filename = await downloadPdf(`/api/suite-runs/${suiteRun.id}/export/pdf`, `prismtrail-run-${suiteRun.id}.pdf`);
-        notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
+        notify(tr("テスト実行結果PDFをダウンロードしました: {name}", "Downloaded test run result PDF: {name}", { name: filename }), "success");
       } catch (error) {
         notify(error.message);
       }
@@ -4512,11 +4528,15 @@ async function route() {
   if (parts[0] !== "settings") state.mcpNewToken = null;
   await withRouteProgress(async () => {
     try {
-      if (parts[0] === "knowledge" && parts[1]) {
-        state.selectedKnowledgeDetail = await json(`/api/knowledge-sources/${parts[1]}`);
-        renderKnowledgeDetail();
+      if (parts[0] === "knowledge") {
+        location.replace("#/agents");
+        return;
       }
-      else if (parts[0] === "knowledge") renderKnowledge();
+      else if (parts[0] === "agents" && parts[1]) {
+        const agent = state.agents.find((item) => item.id === parts[1]);
+        if (!agent) throw new Error(tr("Data Agentが見つかりません。", "Data Agent not found."));
+        renderAgentDetail(agent, parts[2] === "connectivity" ? "connectivity" : "overview");
+      }
       else if (parts[0] === "agents") renderAgents();
       else if (parts[0] === "settings") {
         if (["auth", "sheets", "storage", "mcp"].includes(parts[1])) {
@@ -4533,7 +4553,11 @@ async function route() {
         state.authReadiness = authReadiness;
         renderSettings();
       }
-      else if (parts[0] === "run") renderSingleRun();
+      else if (parts[0] === "run") {
+        const agent = state.agents.find((item) => item.status === "ready") || state.agents[0];
+        location.replace(agent ? `#/agents/${agent.id}/connectivity` : "#/agents");
+        return;
+      }
       else if (parts[0] === "reports" && parts[1]) {
         const selectedCaseId = parts[2] === "cases" && parts[3] ? decodeURIComponent(parts[3]) : null;
         const report = await json(`/api/suite-runs/${parts[1]}`);
@@ -4592,13 +4616,13 @@ async function initialize() {
   setBusyOverlay(true, tr("データを読み込み中…", "Loading data…"));
   setRouteProgress(true);
   try {
-    const [config, authReadiness, agents, knowledgeSources, suites, suiteRuns, sheetConnections, storageConfig] = await Promise.all([
+    const [config, authReadiness, agents, suites, suiteRuns, runs, sheetConnections, storageConfig] = await Promise.all([
       json("/api/config"),
       json("/api/auth/readiness").catch(() => null),
       json("/api/agents"),
-      json("/api/knowledge-sources"),
       json("/api/suites"),
       json("/api/suite-runs"),
+      json("/api/runs").catch(() => ({ runs: [] })),
       json("/api/sheets/connections"),
       json("/api/storage/config?lite=1").catch(() => null)
     ]);
@@ -4606,24 +4630,15 @@ async function initialize() {
       config,
       authReadiness,
       agents: agents.agents,
-      knowledgeSources: knowledgeSources.sources,
       suites: suites.suites,
       suiteRuns: suiteRuns.suiteRuns,
-      runs: state.runs || [],
+      runs: runs.runs || [],
       sheetConnections: sheetConnections.connections,
       sheetFormat: sheetConnections.format,
       storageConfig
     });
     if (!location.hash) location.hash = "#/suites";
     await route();
-    // Single-run history is secondary — load after first paint so GCS cold start feels lighter.
-    json("/api/runs")
-      .then((payload) => {
-        state.runs = payload.runs || [];
-      })
-      .catch(() => {
-        /* keep empty; run page can retry */
-      });
   } catch (error) {
     app.innerHTML = empty(tr("起動できませんでした", "Could not start the application"), translateApiMessage(error.message));
   } finally {

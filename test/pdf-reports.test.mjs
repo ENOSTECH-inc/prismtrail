@@ -126,15 +126,17 @@ const runFixture = {
 test("builds case-spec inputs with checklist and system lines", () => {
   const inputs = buildCaseSpecInputs({ suite, cases: suite.cases, agents });
   assert.equal(inputs.length, 1);
-  assert.match(inputs[0].docType, /テストケース仕様書/);
-  assert.equal(inputs[0].title, "月次売上");
+  assert.equal(inputs[0].docType, "テスト設計 / ケース定義");
+  assert.equal(inputs[0].title, "case_1 | 月次売上");
   assert.match(inputs[0].metaTable, /デモAgent/);
   assert.match(inputs[0].systemTable, /SQL必須/);
   assert.match(inputs[0].businessTable, /売上が数値/);
   assert.equal(inputs[0].specSystemHead0, "項目");
   assert.equal(inputs[0].specCriteriaHead1, "ビジネス要件");
-  assert.match(inputs[0].openLink, /ケースを開く/);
-  assert.equal(inputs[0].openLinkUrl, caseEditorUrl("suite_demo", "case_1"));
+  assert.equal(inputs[0].referenceLabel2, "テストケース");
+  assert.match(inputs[0].referenceValue2, /ケースを開く/);
+  assert.equal(inputs[0]._referenceLinks[2], caseEditorUrl("suite_demo", "case_1"));
+  assert.match(inputs[0].footer, /CONFIDENTIAL/);
   assert.match(inputs[0].relatedUrls, /https:\/\/example.com\/slack\/thread-1/);
 });
 

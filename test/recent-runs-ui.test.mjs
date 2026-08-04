@@ -13,5 +13,6 @@ test("recent single-run entries are styled at their actual DOM nesting level", (
 
 test("single-run history renders entries inside the recent-runs container", () => {
   assert.match(app, /<div id="recent-runs-list">\$\{recent\.map\(/);
-  assert.match(app, /document\.querySelector\("#recent-runs-list"\)/);
+  assert.match(app, /state\.runs\.filter\(\(run\) => agentRunMatches\(run, agent\)\)/);
+  assert.match(app, /このAgentの最近の疎通テスト/);
 });
