@@ -3133,20 +3133,42 @@ function mcpConnectionSetup(clientId, issued, endpoint) {
   };
 }
 
+function mcpSkillSetup(clientId) {
+  if (clientId === "claude") {
+    return {
+      command: "npm run setup -- skill --install claude",
+      note: tr("PrismTrailリポジトリのルートで実行すると、Claude Codeのプロジェクトスキルとして導入されます。", "Run this from the PrismTrail repository root to install the project skill for Claude Code.")
+    };
+  }
+  if (clientId === "generic") {
+    return {
+      command: "npm run setup -- skill",
+      note: tr("表示されたSKILL.mdを、利用するエージェントのスキル設定へ追加してください。", "Add the displayed SKILL.md to your coding agent's skill configuration.")
+    };
+  }
+  return {
+    command: "npm run setup -- skill --install codex",
+    note: tr("PrismTrailリポジトリのルートで実行すると、~/.codex/skills/prismtrailへ導入されます。", "Run this from the PrismTrail repository root to install it under ~/.codex/skills/prismtrail.")
+  };
+}
+
 function renderMcpConnectionSetup() {
   const issued = state.mcpNewToken;
   if (!issued?.token || !state.mcpConfig) return "";
   const endpoint = `${location.origin}${state.mcpConfig.endpointPath}`;
   const client = MCP_CLIENTS[state.mcpClient] || MCP_CLIENTS.codex;
   const setup = mcpConnectionSetup(state.mcpClient, issued, endpoint);
+  const skill = mcpSkillSetup(state.mcpClient);
   const copyButton = (id, label) => `<button class="button secondary mcp-copy-setup" type="button" data-copy-mcp-setup="${id}">${icon("copy", 13)}${label}</button>`;
+  const terminal = (id, command, label) => `<div class="mcp-command-terminal"><span class="mcp-terminal-prompt">$</span><code>${esc(command)}</code>${copyButton(id, label)}</div>`;
   return `<section class="mcp-connect-card">
-    <div class="settings-section-head"><div><h3>${tr("接続先のコーディングエージェント", "Coding agent connection")}</h3><p>${tr("接続先を選ぶと、そのまま貼り付けられる設定と確認手順を表示します。", "Choose a client to get copy-ready setup and verification steps.")}</p></div><span class="mcp-connect-step">1 / 3</span></div>
+    <div class="settings-section-head"><div><h3>${tr("接続先のコーディングエージェント", "Coding agent connection")}</h3><p>${tr("上から順番にコマンドをコピーして実行すると、スキル導入からMCP接続確認まで完了します。", "Copy and run the commands from top to bottom to install the skill and complete the MCP connection.")}</p></div><span class="mcp-connect-step">${tr("全4ステップ", "4 steps")}</span></div>
     <label class="mcp-client-select">${tr("接続先", "Client")}<select id="mcp-client-select">${Object.entries(MCP_CLIENTS).map(([id, item]) => `<option value="${id}" ${id === state.mcpClient ? "selected" : ""}>${item.label}</option>`).join("")}</select><small>${client.description}</small></label>
     <div class="mcp-setup-steps">
-      <article><span class="mcp-step-number">1</span><div><strong>${tr("トークンを環境変数に設定", "Set the token as an environment variable")}</strong><code>${esc(envCommandForDisplay(issued, client.envName))}</code>${copyButton("env", tr("設定コマンドをコピー", "Copy command"))}</div></article>
-      <article><span class="mcp-step-number">2</span><div><strong>${tr("MCPサーバーを登録", "Register the MCP server")}</strong><code>${esc(setup.command)}</code>${copyButton("command", tr("登録コマンドをコピー", "Copy command"))}</div></article>
-      <article><span class="mcp-step-number">3</span><div><strong>${tr("接続を確認", "Verify the connection")}</strong><code>${esc(setup.verify)}</code>${copyButton("verify", tr("確認コマンドをコピー", "Copy command"))}</div></article>
+      <article><span class="mcp-step-number">1</span><div class="mcp-step-content"><strong>${tr("PrismTrailスキルを導入", "Install the PrismTrail skill")}</strong>${terminal("skill", skill.command, tr("導入コマンドをコピー", "Copy install command"))}<small>${esc(skill.note)}</small></div></article>
+      <article><span class="mcp-step-number">2</span><div class="mcp-step-content"><strong>${tr("トークンを環境変数に設定", "Set the token as an environment variable")}</strong>${terminal("env", envCommandForDisplay(issued, client.envName), tr("設定コマンドをコピー", "Copy command"))}</div></article>
+      <article><span class="mcp-step-number">3</span><div class="mcp-step-content"><strong>${tr("MCPサーバーを登録", "Register the MCP server")}</strong>${terminal("command", setup.command, tr("登録コマンドをコピー", "Copy command"))}</div></article>
+      <article><span class="mcp-step-number">4</span><div class="mcp-step-content"><strong>${tr("接続を確認", "Verify the connection")}</strong>${terminal("verify", setup.verify, tr("確認コマンドをコピー", "Copy command"))}</div></article>
     </div>
     <details class="mcp-config-details"><summary>${tr("設定ファイルに貼り付ける場合", "If you prefer a config file")}</summary><pre id="mcp-config-snippet">${esc(setup.config)}</pre>${copyButton("config", tr("設定をコピー", "Copy config"))}<p>${tr("Codexは ~/.codex/config.toml の [mcp_servers.prismtrail] に貼り付けます。設定後はCodexを再起動してください。", "For Codex, paste this under [mcp_servers.prismtrail] in ~/.codex/config.toml, then restart Codex.")}</p></details>
   </section>`;
@@ -3203,7 +3225,7 @@ function bindMcpSettings() {
     const endpoint = `${location.origin}${state.mcpConfig.endpointPath}`;
     const setup = mcpConnectionSetup(state.mcpClient, issued, endpoint);
     const envName = MCP_CLIENTS[state.mcpClient]?.envName || MCP_CLIENTS.codex.envName;
-    const values = { env: envCommandForDisplay(issued, envName), command: setup.command, verify: setup.verify, config: setup.config };
+    const values = { skill: mcpSkillSetup(state.mcpClient).command, env: envCommandForDisplay(issued, envName), command: setup.command, verify: setup.verify, config: setup.config };
     await navigator.clipboard.writeText(values[button.dataset.copyMcpSetup]);
     notify(tr("接続設定をコピーしました。", "Connection setup copied."), "success");
   }));

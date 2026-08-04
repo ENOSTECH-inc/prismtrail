@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { access, copyFile, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, lstat, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -229,7 +229,32 @@ async function start(flags) {
   process.exitCode = Number(status || 0);
 }
 
-function printSkill() {
+async function installSkill(targetName) {
+  const target = String(targetName || "").toLowerCase();
+  const targetDirectory = target === "codex"
+    ? path.join(homedir(), ".codex", "skills", "prismtrail")
+    : target === "claude"
+      ? path.join(process.cwd(), ".claude", "skills", "prismtrail")
+      : null;
+  if (!targetDirectory) throw new Error("Supported skill installation targets are codex and claude.");
+
+  await mkdir(path.dirname(targetDirectory), { recursive: true });
+  try {
+    const existing = await lstat(targetDirectory);
+    if (existing.isSymbolicLink() && await realpath(targetDirectory) === await realpath(path.dirname(skillPath))) {
+      console.log(`PrismTrail skill is already installed for ${target}: ${targetDirectory}`);
+      return;
+    }
+    throw new Error(`Skill target already exists; refusing to overwrite: ${targetDirectory}`);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await symlink(path.dirname(skillPath), targetDirectory, process.platform === "win32" ? "junction" : "dir");
+  console.log(`Installed PrismTrail skill for ${target}: ${targetDirectory}`);
+}
+
+async function printSkill(flags = {}) {
+  if (flags.install) return installSkill(flags.install === true ? "codex" : flags.install);
   console.log(skillPath);
   console.log("");
   console.log("Codex: copy or symlink the containing directory into ~/.codex/skills/");
@@ -243,7 +268,7 @@ Usage:
   prismtrail init [--project ID --agent RESOURCE --label NAME] [--force]
   prismtrail doctor [--json]
   prismtrail up [--detach]
-  prismtrail skill
+  prismtrail skill [--install codex|claude]
 
 Repository usage:
   npm run setup -- init
@@ -259,7 +284,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === "init") return initialize(flags);
   if (command === "doctor") return doctor(flags);
   if (command === "up") return start(flags);
-  if (command === "skill") return printSkill();
+  if (command === "skill") return printSkill(flags);
   throw new Error(`Unknown command: ${command}`);
 }
 
