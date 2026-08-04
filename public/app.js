@@ -11,6 +11,23 @@ import Fuse from "/vendor/fuse.min.mjs";
 
 const QUICK_SEARCH_RECENT_KEY = "prismtrail-quick-search-recent";
 const QUICK_SEARCH_RECENT_LIMIT = 8;
+const MCP_CLIENTS = Object.freeze({
+  codex: {
+    label: "Codex CLI / Desktop",
+    description: "OpenAI CodexでPrismTrailのMCPツールを使う",
+    envName: "PRISMTRAIL_MCP_TOKEN"
+  },
+  claude: {
+    label: "Claude Code",
+    description: "Claude CodeのHTTP MCPサーバーとして登録する",
+    envName: "PRISMTRAIL_MCP_TOKEN"
+  },
+  generic: {
+    label: "汎用MCPクライアント",
+    description: "URLとBearer Tokenを個別に設定する",
+    envName: "PRISMTRAIL_MCP_TOKEN"
+  }
+});
 
 const state = {
   config: null,
@@ -32,6 +49,8 @@ const state = {
   storageTestResult: null,
   mcpConfig: null,
   mcpNewToken: null,
+  mcpClient: "codex",
+  settingsTab: localStorage.getItem("prismtrail-settings-tab") === "mcp" ? "mcp" : "storage",
   selectedSuite: null,
   selectedCaseIndex: 0,
   editorTab: "cases",
@@ -2983,30 +3002,15 @@ function renderSettings() {
   };
   const isLocal = config.driver === "local";
   const draftIsLocal = draft.driver === "local";
-  const status = config.status || "unchecked";
-  const statusCopy = {
-    ready: ["利用可能", "保存先へのアクセスを確認できています。"],
-    setup_required: ["GCS接続を設定してください", "ローカル起動時も、チームで共有できるGCSを基本の保存先として利用します。"],
-    error: ["接続エラー", config.error || "保存先に接続できません。設定と権限を確認してください。"],
-    unchecked: ["未確認", "接続テストを実行して、接続先と認証を確認してください。"]
-  }[status] || ["確認が必要", "現在の接続状態を確認してください。"];
   const test = state.storageTestResult;
 
   app.innerHTML = shell(`
-    ${pageHead("設定", "システムデータの保存先を設定し、端末が変わっても同じ評価環境を利用できます。")}
-    <section class="settings-status ${esc(status)}">
-      <span class="settings-status-icon">${icon(status === "ready" ? "shield-check" : status === "error" ? "circle-alert" : "shield-question", 22)}</span>
-      <div><span>現在のプライマリーストレージ</span><h2>${esc(status === "setup_required" ? tr("GCS未接続（一時ローカル）", "GCS not connected (temporary local)") : storageDriverLabel(config.driver))}</h2><p>${esc(statusCopy[1])}</p></div>
-      <div class="settings-status-meta">
-        ${statusPill(status)}
-        <dl>
-          <div><dt>保存先</dt><dd>${esc(isLocal ? config.localPath || "未設定" : config.bucket ? `gs://${config.bucket}/${config.prefix || ""}` : "未設定")}</dd></div>
-          <div><dt>最終同期</dt><dd>${esc(config.lastSyncedAt ? fmtDate(config.lastSyncedAt) : "未実行")}</dd></div>
-          <div><dt>保存データ</dt><dd>${tr("{count}件", "{count} items", { count: formatLocaleNumber(config.objectCount || 0) })} · ${fmtBytes(config.sizeBytes || 0)}</dd></div>
-        </dl>
-      </div>
-    </section>
-
+    ${pageHead("設定", "ストレージとMCP連携を整理して設定できます。")}
+    <nav class="settings-tabs" role="tablist" aria-label="設定カテゴリ">
+      <button class="settings-tab ${state.settingsTab === "storage" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "storage"}" data-settings-tab="storage">${icon("database", 15)}<span><strong>ストレージ</strong><small>保存先・移行・同期</small></span></button>
+      <button class="settings-tab ${state.settingsTab === "mcp" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "mcp"}" data-settings-tab="mcp">${icon("plug-zap", 15)}<span><strong>MCP連携</strong><small>トークン・接続設定</small></span></button>
+    </nav>
+    <div class="settings-tab-panel ${state.settingsTab === "storage" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "storage" ? "hidden" : ""}>
     <form id="storage-settings-form" class="storage-settings-form">
       <section class="settings-panel">
         <div class="settings-section-head">
@@ -3072,8 +3076,16 @@ function renderSettings() {
         </div>
       </section>
     </form>
+    </div>
+    <div class="settings-tab-panel ${state.settingsTab === "mcp" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "mcp" ? "hidden" : ""}>
     ${renderMcpSettings()}
+    </div>
   `, "settings");
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => {
+    state.settingsTab = button.dataset.settingsTab;
+    localStorage.setItem("prismtrail-settings-tab", state.settingsTab);
+    renderSettings();
+  }));
   bindStorageSettings();
   bindMcpSettings();
 }
@@ -3097,6 +3109,53 @@ function mcpScopeLabel(scope) {
   })[scope] || scope;
 }
 
+function mcpConnectionSetup(clientId, issued, endpoint) {
+  const client = MCP_CLIENTS[clientId] || MCP_CLIENTS.codex;
+  const envName = client.envName;
+  if (clientId === "claude") {
+    return {
+      command: `claude mcp add --transport http prismtrail ${endpoint} --header "Authorization: Bearer $${envName}"`,
+      config: JSON.stringify({ mcpServers: { prismtrail: { type: "http", url: endpoint, headers: { Authorization: `Bearer $${envName}` } } } }, null, 2),
+      verify: "claude mcp list"
+    };
+  }
+  if (clientId === "generic") {
+    return {
+      command: `MCP URL: ${endpoint}\nAuthorization: Bearer $${envName}`,
+      config: JSON.stringify({ name: "prismtrail", transport: "streamable-http", url: endpoint, headers: { Authorization: `Bearer $${envName}` } }, null, 2),
+      verify: "MCPクライアントの接続テストで prismtrail のツール一覧を確認"
+    };
+  }
+  return {
+    command: `codex mcp add prismtrail --url ${endpoint} --bearer-token-env-var ${envName}`,
+    config: `[mcp_servers.prismtrail]\nurl = "${endpoint}"\nbearer_token_env_var = "${envName}"`,
+    verify: "codex mcp list"
+  };
+}
+
+function renderMcpConnectionSetup() {
+  const issued = state.mcpNewToken;
+  if (!issued?.token || !state.mcpConfig) return "";
+  const endpoint = `${location.origin}${state.mcpConfig.endpointPath}`;
+  const client = MCP_CLIENTS[state.mcpClient] || MCP_CLIENTS.codex;
+  const setup = mcpConnectionSetup(state.mcpClient, issued, endpoint);
+  const copyButton = (id, label) => `<button class="button secondary mcp-copy-setup" type="button" data-copy-mcp-setup="${id}">${icon("copy", 13)}${label}</button>`;
+  return `<section class="mcp-connect-card">
+    <div class="settings-section-head"><div><h3>${tr("接続先のコーディングエージェント", "Coding agent connection")}</h3><p>${tr("接続先を選ぶと、そのまま貼り付けられる設定と確認手順を表示します。", "Choose a client to get copy-ready setup and verification steps.")}</p></div><span class="mcp-connect-step">1 / 3</span></div>
+    <label class="mcp-client-select">${tr("接続先", "Client")}<select id="mcp-client-select">${Object.entries(MCP_CLIENTS).map(([id, item]) => `<option value="${id}" ${id === state.mcpClient ? "selected" : ""}>${item.label}</option>`).join("")}</select><small>${client.description}</small></label>
+    <div class="mcp-setup-steps">
+      <article><span class="mcp-step-number">1</span><div><strong>${tr("トークンを環境変数に設定", "Set the token as an environment variable")}</strong><code>${esc(envCommandForDisplay(issued, client.envName))}</code>${copyButton("env", tr("設定コマンドをコピー", "Copy command"))}</div></article>
+      <article><span class="mcp-step-number">2</span><div><strong>${tr("MCPサーバーを登録", "Register the MCP server")}</strong><code>${esc(setup.command)}</code>${copyButton("command", tr("登録コマンドをコピー", "Copy command"))}</div></article>
+      <article><span class="mcp-step-number">3</span><div><strong>${tr("接続を確認", "Verify the connection")}</strong><code>${esc(setup.verify)}</code>${copyButton("verify", tr("確認コマンドをコピー", "Copy command"))}</div></article>
+    </div>
+    <details class="mcp-config-details"><summary>${tr("設定ファイルに貼り付ける場合", "If you prefer a config file")}</summary><pre id="mcp-config-snippet">${esc(setup.config)}</pre>${copyButton("config", tr("設定をコピー", "Copy config"))}<p>${tr("Codexは ~/.codex/config.toml の [mcp_servers.prismtrail] に貼り付けます。設定後はCodexを再起動してください。", "For Codex, paste this under [mcp_servers.prismtrail] in ~/.codex/config.toml, then restart Codex.")}</p></details>
+  </section>`;
+}
+
+function envCommandForDisplay(issued, envName) {
+  return `export ${envName}='${issued.token}'`;
+}
+
 function renderMcpSettings() {
   const config = state.mcpConfig;
   if (!config) return `<section class="mcp-settings-panel settings-panel"><p>${tr("MCP設定を読み込んでいます…", "Loading MCP settings…")}</p></section>`;
@@ -3115,7 +3174,7 @@ function renderMcpSettings() {
     <div class="settings-section-head"><div><h2>${tr("MCP連携", "MCP integration")}</h2><p>${tr("外部コーディングエージェントから、削除を除くPrismTrail操作を安全な専用トークンで実行します。", "Connect external coding agents using a dedicated token. Delete operations are unavailable.")}</p></div><span class="adc-inline">${icon("shield-check", 13)}Streamable HTTP</span></div>
     <div class="mcp-security-note">${icon("lock-keyhole", 17)}<div><strong>${tr("localhost専用の安全境界", "Localhost security boundary")}</strong><p>${tr("外部ネットワークへ公開する場合は、MCPトークンに加えてTLSと既存REST API全体の認証が必要です。", "Remote exposure requires TLS and authentication for the complete REST API in addition to MCP tokens.")}</p></div></div>
     <label>${tr("MCPエンドポイント", "MCP endpoint")}<div class="mcp-endpoint"><code>${esc(endpoint)}</code><button class="text-button" id="copy-mcp-endpoint" type="button">${icon("copy", 13)}${tr("コピー", "Copy")}</button></div></label>
-    ${issued ? `<div class="mcp-issued-token"><div>${icon("key-round", 18)}<div><strong>${tr("トークンを発行しました（再表示できません）", "Token issued (it cannot be shown again)")}</strong><p>${tr("今すぐコピーして、安全な場所に保存してください。画面にはマスク値だけを表示しています。", "Copy it now and store it securely. Only a masked value is rendered on screen.")}</p><code>${esc(issued.metadata.prefix)}••••••••••••••••••••</code></div></div><div><button id="copy-mcp-token" class="button primary" type="button">${icon("copy", 14)}${tr("トークンをコピー", "Copy token")}</button><button id="dismiss-mcp-token" class="button secondary" type="button">${tr("閉じる", "Close")}</button></div></div>` : ""}
+    ${issued ? `<div class="mcp-issued-token"><div>${icon("key-round", 18)}<div><strong>${tr("トークンを発行しました（再表示できません）", "Token issued (it cannot be shown again)")}</strong><p>${tr("今すぐコピーして、安全な場所に保存してください。画面にはマスク値だけを表示しています。", "Copy it now and store it securely. Only a masked value is rendered on screen.")}</p><code>${esc(issued.metadata.prefix)}••••••••••••••••••••</code></div></div><div><button id="copy-mcp-token" class="button primary" type="button">${icon("copy", 14)}${tr("トークンをコピー", "Copy token")}</button><button id="dismiss-mcp-token" class="button secondary" type="button">${tr("閉じる", "Close")}</button></div></div>${renderMcpConnectionSetup()}` : ""}
     <form id="mcp-token-form" class="mcp-token-form">
       <label>${tr("接続名", "Connection name")}<input name="name" maxlength="120" required placeholder="Codex / Claude Code"></label>
       <label>${tr("有効期間", "Expiration")}<select name="expiresInDays"><option value="7">7${tr("日", " days")}</option><option value="30">30${tr("日", " days")}</option><option value="90" selected>90${tr("日", " days")}</option><option value="365">365${tr("日", " days")}</option></select></label>
@@ -3138,6 +3197,16 @@ function bindMcpSettings() {
     notify(tr("トークンをコピーしました。", "Token copied."), "success");
   });
   document.querySelector("#dismiss-mcp-token")?.addEventListener("click", () => { state.mcpNewToken = null; renderSettings(); });
+  document.querySelector("#mcp-client-select")?.addEventListener("change", (event) => { state.mcpClient = event.currentTarget.value; renderSettings(); });
+  document.querySelectorAll("[data-copy-mcp-setup]").forEach((button) => button.addEventListener("click", async () => {
+    const issued = state.mcpNewToken;
+    const endpoint = `${location.origin}${state.mcpConfig.endpointPath}`;
+    const setup = mcpConnectionSetup(state.mcpClient, issued, endpoint);
+    const envName = MCP_CLIENTS[state.mcpClient]?.envName || MCP_CLIENTS.codex.envName;
+    const values = { env: envCommandForDisplay(issued, envName), command: setup.command, verify: setup.verify, config: setup.config };
+    await navigator.clipboard.writeText(values[button.dataset.copyMcpSetup]);
+    notify(tr("接続設定をコピーしました。", "Connection setup copied."), "success");
+  }));
   document.querySelector("#mcp-token-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
