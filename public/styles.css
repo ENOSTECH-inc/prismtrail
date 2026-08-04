@@ -783,6 +783,7 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .sheets-auth p { margin-top: 4px; color: #9eb0c9; font-size: 8px; line-height: 1.5; }
 .sheets-auth > code { max-width: 610px; overflow: auto; padding: 8px 10px; color: #b8c8dd; border-radius: 6px; background: #0b172b; font-size: 8px; white-space: nowrap; }
 .sheet-connect-panel { max-width: 1480px; display: grid; grid-template-columns: minmax(0,1.1fr) minmax(360px,.9fr); gap: 14px; margin: 0 auto 16px; }
+.settings-tab-panel .sheet-connect-panel { grid-template-columns: 1fr; }
 .sheet-connect-panel > form,.format-note { padding: 17px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
 .sheet-connect-panel > form { display: grid; grid-template-columns: minmax(160px,.7fr) minmax(250px,1.3fr) minmax(180px,.9fr) auto; align-items: end; gap: 10px; }
 .format-note { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; }

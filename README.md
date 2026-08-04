@@ -211,7 +211,7 @@ of being converted into a fabricated D grade.
 
 ## Google Sheets
 
-Share spreadsheets with the ADC identity, register each spreadsheet by URL and a PrismTrail-managed
+Open **Settings → Google Sheets**, share spreadsheets with the ADC identity, and register each spreadsheet by URL and a PrismTrail-managed
 sheet name, then link one registered Data Agent. Three agents therefore use three isolated spreadsheets. Suite import/export, report
 writeback, automatic export, and catalog synchronization run only when the resource's effective
 agent matches the connection owner. The app owns only:

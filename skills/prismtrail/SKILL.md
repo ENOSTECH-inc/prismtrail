@@ -115,7 +115,7 @@ npm start
 Preferred path when the user asks to add or revise many cases:
 
 1. Confirm spreadsheet ID / connection and target suite (never invent them).
-2. Register the spreadsheet by `spreadsheetUrl` and its PrismTrail-managed `sheetName`, then link exactly one registered Data Agent. MCP `connect_google_sheet` requires `spreadsheetUrl`, `sheetName`, and the registered local `agentId`.
+2. Open **Settings → Google Sheets**, register the spreadsheet by `spreadsheetUrl` and its PrismTrail-managed `sheetName`, then link exactly one registered Data Agent. MCP `connect_google_sheet` requires `spreadsheetUrl`, `sheetName`, and the registered local `agentId`.
 3. Create or PATCH a suite whose default/case Agent IDs all resolve to that same Agent. Mixed-Agent suites cannot use Sheets.
 4. Push to Sheets with `POST /api/sheets/connections/:id/export-suite` and `{ "suiteId": "..." }`.
    This overwrites the managed `AgentEval_TestSuite` tab for that connection.

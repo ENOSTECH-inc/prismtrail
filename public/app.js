@@ -52,7 +52,7 @@ const state = {
   mcpConfig: null,
   mcpNewToken: null,
   mcpClient: "codex",
-  settingsTab: ["auth", "storage", "mcp"].includes(localStorage.getItem("prismtrail-settings-tab"))
+  settingsTab: ["auth", "sheets", "storage", "mcp"].includes(localStorage.getItem("prismtrail-settings-tab"))
     ? localStorage.getItem("prismtrail-settings-tab")
     : "auth",
   selectedSuite: null,
@@ -426,15 +426,15 @@ function buildQuickSearchCatalog() {
       subtitle: tr("シート連携", "Sheets integration"),
       keywords: "sheets google spreadsheet",
       icon: "sheet",
-      href: "#/sheets"
+      href: "#/settings/sheets"
     },
     {
       id: "page:settings",
       group: "pages",
       groupLabel: tr("ページ", "Pages"),
       title: tr("設定", "Settings"),
-      subtitle: tr("ストレージとシステム設定", "Storage and system settings"),
-      keywords: "settings storage",
+      subtitle: tr("認証・Sheets・ストレージ・MCP", "Authentication, Sheets, storage, and MCP"),
+      keywords: "settings auth sheets storage mcp",
       icon: "settings-2",
       href: "#/settings"
     }
@@ -928,10 +928,6 @@ function shell(content, active = "suites", mode = false) {
             <a class="${active === "agents" ? "active" : ""}" href="#/agents" title="${tr("データエージェント", "Data agents")}">${icon("bot")}<span class="nav-label">${tr("データエージェント", "Data agents")}</span></a>
             <a class="${active === "knowledge" ? "active" : ""}" href="#/knowledge" title="${tr("GCSナレッジ", "GCS knowledge")}">${icon("library-big")}<span class="nav-label">${tr("GCSナレッジ", "GCS knowledge")}</span></a>
           </section>
-          <section class="nav-group ${active === "sheets" ? "active-group" : ""}" aria-labelledby="nav-integrations">
-            <h2 id="nav-integrations" class="nav-group-label">${tr("外部連携", "Integrations")}</h2>
-            <a class="${active === "sheets" ? "active" : ""}" href="#/sheets" title="Google Sheets">${icon("sheet")}<span class="nav-label">Google Sheets</span></a>
-          </section>
           <section class="nav-group ${active === "settings" ? "active-group" : ""}" aria-labelledby="nav-system">
             <h2 id="nav-system" class="nav-group-label">${tr("システム管理", "System")}</h2>
             <a class="${active === "settings" ? "active" : ""}" href="#/settings" title="${tr("設定", "Settings")}">${icon("settings-2")}<span class="nav-label">${tr("設定", "Settings")}</span></a>
@@ -1041,7 +1037,7 @@ function renderSuites() {
     })
     .join("");
   app.innerHTML = shell(`
-    ${pageHead(tr("テストスイート", "Test suites"), tr("実業務プロンプトをまとめて実行し、品質とコストを継続評価します。", "Run real-world prompts together and continuously evaluate quality and cost."), `<a href="#/sheets" class="button secondary">${icon("sheet", 16)}${tr("Sheets連携", "Sheets integration")}</a><button id="new-suite" class="button primary">${icon("plus", 16)}${tr("新しいスイート", "New suite")}</button>`)}
+    ${pageHead(tr("テストスイート", "Test suites"), tr("実業務プロンプトをまとめて実行し、品質とコストを継続評価します。", "Run real-world prompts together and continuously evaluate quality and cost."), `<a href="#/settings/sheets" class="button secondary">${icon("sheet", 16)}${tr("Sheets連携", "Sheets integration")}</a><button id="new-suite" class="button primary">${icon("plus", 16)}${tr("新しいスイート", "New suite")}</button>`)}
     <section class="summary-strip">
       <div><span>${tr("スイート", "Suites")}</span><strong>${formatLocaleNumber(state.suites.length)}</strong></div>
       <div><span>${tr("登録ケース", "Test cases")}</span><strong>${formatLocaleNumber(state.suites.reduce((n, s) => n + (s.cases?.length || 0), 0))}</strong></div>
@@ -1276,7 +1272,7 @@ function renderEditor() {
     ? `<button class="button secondary" type="button" disabled title="${esc(tr("Data Agentを1つに統一してください。", "Use exactly one Data Agent in this suite."))}">${icon("triangle-alert", 15)}${tr("複数Agentのため連携不可", "Mixed-agent suite")}</button>`
     : connectedSheet
     ? `<button id="open-linked-sheet" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}</button>`
-    : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`;
+    : `<a class="button secondary" href="#/settings/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`;
   const showCaseNav = onCasesTab && suite.cases.length > 0;
   const columnClass = [
     "editor-columns",
@@ -1318,7 +1314,7 @@ function renderEditor() {
               <div><strong>${connectedSheet ? esc(connectedSheet.title || "連携済みGoogle Sheets") : "Google Sheetsと連携"}</strong><small>${connectedSheet ? "シート上でケースを編集し、アプリへ取り込めます。" : "連携すると、ここから編集用シートを直接開けます。"}</small></div>
               ${connectedSheet
                 ? `<button id="open-linked-sheet-inline" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}</button>`
-                : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`}
+                : `<a class="button secondary" href="#/settings/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`}
             </div>
           </section>`}
           <div class="section-row">
@@ -1977,7 +1973,7 @@ function bindEditor() {
       return;
     }
     if (!connection) {
-      location.hash = "#/sheets";
+      location.hash = "#/settings/sheets";
       return;
     }
     setLinkedDataButtonsBusy(true);
@@ -2837,7 +2833,7 @@ function renderAgents() {
         const sheet = sheetConnectionForAgent(agent.id);
         const sheetCell = sheet
           ? `<a class="text-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 13)}${esc(sheet.sheetName || sheet.title)}</a>`
-          : `<a class="text-link" href="#/sheets">${icon("link", 13)}${tr("未連携", "Not connected")}</a>`;
+          : `<a class="text-link" href="#/settings/sheets">${icon("link", 13)}${tr("未連携", "Not connected")}</a>`;
         return `<tr><td><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></td><td>${esc(agent.projectId)}<small>${esc(agent.location)}</small></td><td>${sheetCell}</td><td>${statusPill(agent.status)}</td><td>${fmtDate(agent.lastCheckedAt)}</td><td><button class="button secondary small" data-check-agent="${agent.id}">${icon("plug-zap", 14)}接続確認</button></td></tr>`;
       }).join("")}</tbody>
       </table>
@@ -2868,7 +2864,7 @@ function renderAgents() {
   }));
 }
 
-function renderSheets() {
+function renderSheetsSettings() {
   const selectedAgentId = suiteAgentId(state.selectedSuite || {}) || "";
   const agentOptions = state.agents.map((agent) => {
     const connection = sheetConnectionForAgent(agent.id);
@@ -2924,8 +2920,13 @@ function renderSheets() {
       </article>`;
     })
     .join("");
-  app.innerHTML = shell(`
-    ${pageHead("Google Sheets連携", "Googleスプレッドシートを登録し、その接続先としてData Agentを1つ選びます。Agent間のデータは混在しません。", `<a href="#/suites" class="button secondary">${icon("layers-3", 15)}スイートを作成・編集</a>`)}
+  return `
+    <section class="settings-panel sheets-settings-head">
+      <div class="settings-section-head">
+        <div><h2>Google Sheets連携</h2><p>Googleスプレッドシートを登録し、その接続先としてData Agentを1つ選びます。Agent間のデータは混在しません。</p></div>
+        <a href="#/suites" class="button secondary">${icon("layers-3", 15)}スイートを作成・編集</a>
+      </div>
+    </section>
     <section class="sheets-auth">
       <div class="sheets-auth-copy">${icon("shield-check", 24)}<div><strong>アプリケーション既定認証情報（ADC）で接続</strong><p>ADCのGoogleアカウントへ対象シートを共有してください。アクセストークンやセル内容は保存しません。</p></div></div>
       <a class="button bright small" href="#/settings/auth">${icon("key-round", 13)}${tr("認証方式とscopeを確認", "Review authentication method and scopes")}</a>
@@ -2950,8 +2951,7 @@ function renderSheets() {
       </div>
     </section>
     <section class="sheet-grid">${connections || empty("接続先がありません", "ADCアカウントへ共有済みのGoogleスプレッドシートを追加してください。")}</section>
-  `, "sheets");
-  bindSheets();
+  `;
 }
 
 function updateSheetConnection(connection) {
@@ -2989,7 +2989,7 @@ function bindSheets() {
       } else {
         notify(tr("{title} に接続しました。", "Connected to {title}.", { title: connection.sheetName || connection.title }), "success");
       }
-      renderSheets(); refreshIcons();
+      renderSettings(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   });
   document.querySelectorAll("[data-check-sheet]").forEach((button) => button.addEventListener("click", async () => {
@@ -3016,7 +3016,7 @@ function bindSheets() {
       } else {
         notify(tr("Google Sheets APIへの接続を確認しました。", "Google Sheets API connection verified."), "success");
       }
-      renderSheets(); refreshIcons();
+      renderSettings(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
   document.querySelectorAll("[data-export-suite]").forEach((form) => form.addEventListener("submit", async (event) => {
@@ -3031,7 +3031,7 @@ function bindSheets() {
       });
       updateSheetConnection(result.connection);
       notify(tr("{tab} に{count}行を書き出しました。", "Exported {count} rows to {tab}.", { tab: result.tabName, count: formatLocaleNumber(result.rowCount) }), "success");
-      renderSheets(); refreshIcons();
+      renderSettings(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
   document.querySelectorAll("[data-import-suite]").forEach((button) => button.addEventListener("click", async () => {
@@ -3052,7 +3052,7 @@ function bindSheets() {
       updateSheetConnection(result.connection);
       state.suites = [result.suite, ...state.suites.filter((item) => item.id !== result.suite.id)];
       notify(result.mode === "updated" ? tr("テストスイートを更新しました。", "Updated the test suite.") : tr("テストスイートを新規作成しました。", "Created a new test suite."), "success");
-      renderSheets(); refreshIcons();
+      renderSettings(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
   document.querySelectorAll("[data-export-report]").forEach((form) => form.addEventListener("submit", async (event) => {
@@ -3067,7 +3067,7 @@ function bindSheets() {
       });
       updateSheetConnection(result.connection);
       notify(tr("{tab} に評価結果を書き出しました。", "Exported evaluation results to {tab}.", { tab: result.tabName }), "success");
-      renderSheets(); refreshIcons();
+      renderSettings(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
 }
@@ -3263,14 +3263,18 @@ function renderSettings() {
   const test = state.storageTestResult;
 
   app.innerHTML = shell(`
-    ${pageHead("設定", "Google認証、ストレージ、MCP連携を整理して設定できます。")}
+    ${pageHead("設定", "Google認証、Google Sheets、ストレージ、MCP連携を整理して設定できます。")}
     <nav class="settings-tabs" role="tablist" aria-label="設定カテゴリ">
       <button class="settings-tab ${state.settingsTab === "auth" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "auth"}" data-settings-tab="auth">${icon("shield-check", 15)}<span><strong>${tr("Google認証", "Google authentication")}</strong><small>ADC · OAuth scope</small></span></button>
+      <button class="settings-tab ${state.settingsTab === "sheets" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "sheets"}" data-settings-tab="sheets">${icon("sheet", 15)}<span><strong>Google Sheets</strong><small>${tr("接続・入出力", "Connections · import/export")}</small></span></button>
       <button class="settings-tab ${state.settingsTab === "storage" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "storage"}" data-settings-tab="storage">${icon("database", 15)}<span><strong>ストレージ</strong><small>保存先・移行・同期</small></span></button>
       <button class="settings-tab ${state.settingsTab === "mcp" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "mcp"}" data-settings-tab="mcp">${icon("plug-zap", 15)}<span><strong>MCP連携</strong><small>トークン・接続設定</small></span></button>
     </nav>
     <div class="settings-tab-panel ${state.settingsTab === "auth" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "auth" ? "hidden" : ""}>
     ${renderGoogleAuthSettings()}
+    </div>
+    <div class="settings-tab-panel ${state.settingsTab === "sheets" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "sheets" ? "hidden" : ""}>
+    ${renderSheetsSettings()}
     </div>
     <div class="settings-tab-panel ${state.settingsTab === "storage" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "storage" ? "hidden" : ""}>
     <form id="storage-settings-form" class="storage-settings-form">
@@ -3346,11 +3350,14 @@ function renderSettings() {
   document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => {
     state.settingsTab = button.dataset.settingsTab;
     localStorage.setItem("prismtrail-settings-tab", state.settingsTab);
-    renderSettings();
+    const target = `#/settings/${state.settingsTab}`;
+    if (location.hash === target) renderSettings();
+    else location.hash = target;
   }));
   bindStorageSettings();
   bindMcpSettings();
   bindGoogleAuthSettings();
+  bindSheets();
 }
 
 function mcpScopeLabel(scope) {
@@ -3692,9 +3699,9 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
     : sheetExport.status === "exporting"
       ? `<section class="sheet-export-status exporting"><span class="live-spinner"></span><div><strong>Google Sheetsへ評価レポートを書き戻しています</strong><p>レポートは完成しています。このまま自動出力の完了を待ちます。</p></div></section>`
       : sheetExport.status === "failed"
-        ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("Google Sheetsへの自動出力に失敗しました", "Automatic export to Google Sheets failed")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/sheets">${tr("Sheets連携を確認", "Check Sheets integration")}</a></section>`
+        ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("Google Sheetsへの自動出力に失敗しました", "Automatic export to Google Sheets failed")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を確認", "Check Sheets integration")}</a></section>`
         : sheetExport.status === "skipped"
-          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a></section>`
+          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a></section>`
           : "";
   const cancelAction = isRunning
     ? `<button id="cancel-suite-run" class="button danger" type="button">${icon("square", 15)}${tr("実行を中止", "Stop run")}</button>`
@@ -3929,6 +3936,10 @@ async function route() {
   clearTimeout(state.reportPollTimer);
   state.reportPollTimer = null;
   const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
+  if (parts[0] === "sheets") {
+    location.replace("#/settings/sheets");
+    return;
+  }
   if (parts[0] !== "settings") state.mcpNewToken = null;
   await withRouteProgress(async () => {
     try {
@@ -3937,10 +3948,9 @@ async function route() {
         renderKnowledgeDetail();
       }
       else if (parts[0] === "knowledge") renderKnowledge();
-      else if (parts[0] === "sheets") renderSheets();
       else if (parts[0] === "agents") renderAgents();
       else if (parts[0] === "settings") {
-        if (["auth", "storage", "mcp"].includes(parts[1])) {
+        if (["auth", "sheets", "storage", "mcp"].includes(parts[1])) {
           state.settingsTab = parts[1];
           localStorage.setItem("prismtrail-settings-tab", state.settingsTab);
         }
