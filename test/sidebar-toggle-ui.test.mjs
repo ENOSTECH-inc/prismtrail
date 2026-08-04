@@ -17,3 +17,8 @@ test("the sidebar header trigger exposes hover and keyboard focus states", () =>
   assert.match(styles, /\.sidebar-head-trigger:focus-visible/);
   assert.match(styles, /\.sidebar-head-trigger:hover \.sidebar-toggle/);
 });
+
+test("the collapsed sidebar uses only the PrismTrail mark as its toggle", () => {
+  assert.match(styles, /\.sidebar\.collapsed \.sidebar-toggle\s*\{\s*display:\s*none;/);
+  assert.match(styles, /\.sidebar\.collapsed \.brand\s*\{[^}]*justify-content:\s*center;/s);
+});

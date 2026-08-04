@@ -78,13 +78,13 @@ a.sidebar-status:focus-visible { box-shadow: 0 0 0 2px rgba(110,145,255,.45); }
   .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0,1fr); }
   .sidebar.collapsed { width: 76px; padding-inline: 10px; }
   .sidebar.collapsed .sidebar-head { padding-bottom: 14px; }
-  .sidebar.collapsed .sidebar-head-trigger { display: grid; justify-items: center; gap: 8px; padding: 7px 5px; }
+  .sidebar.collapsed .sidebar-head-trigger { display: grid; justify-items: center; gap: 0; padding: 7px 5px; }
   .sidebar.collapsed .brand { justify-content: center; }
   .sidebar.collapsed .brand-copy,
   .sidebar.collapsed .nav-group-label,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .auth-copy { display: none; }
-  .sidebar.collapsed .sidebar-toggle { width: 43px; }
+  .sidebar.collapsed .sidebar-toggle { display: none; }
   .sidebar.collapsed nav a { justify-content: center; padding: 0; }
   .sidebar.collapsed nav { gap: 12px; }
   .sidebar.collapsed .nav-group + .nav-group { padding-top: 12px; }
