@@ -152,7 +152,7 @@ The repository includes `prismtrail`:
 prismtrail init     Create a validated, git-ignored .env
 prismtrail doctor   Check Node, Docker, gcloud, ADC, and configuration
 prismtrail up       Build and start Docker Compose
-prismtrail skill    Print the bundled coding-agent skill path
+prismtrail skill    Print or install the bundled coding-agent skill
 ```
 
 Use it through `npm run setup -- <command>` without installing anything globally. The `bin` entry
@@ -169,6 +169,10 @@ instructed to read the file before modifying or operating the project.
 
 ```bash
 npm run setup -- skill
+# Codex: install the skill into ~/.codex/skills/prismtrail
+npm run setup -- skill --install codex
+# Claude Code: install a project-local skill under .claude/skills/prismtrail
+npm run setup -- skill --install claude
 ```
 
 ## Core workflow

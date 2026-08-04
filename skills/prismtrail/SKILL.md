@@ -9,6 +9,19 @@ Operate this repository as a local-first evaluation system for existing BigQuery
 Preserve the distinction between deterministic system requirements and Gemini-judged business
 requirements.
 
+## MCP-first execution
+
+When inspecting, registering, executing, or validating PrismTrail resources, use the configured
+PrismTrail MCP server and its API tools first. Do not use browser automation or open the PrismTrail
+UI to perform an operation when an MCP tool can do it.
+
+Use the browser only when the user explicitly asks for visual/UI verification, or when the MCP
+connection is unavailable and that limitation is reported before falling back. For a local
+instance, obtain the endpoint from the app's MCP configuration and use its `/mcp` endpoint
+(normally `http://127.0.0.1:4318/mcp`). Never expose or repeat the MCP token in output. If the
+matching MCP operation is unclear, inspect the available MCP tools and schemas rather than
+switching to the browser.
+
 ## Start safely
 
 1. Work from the repository root.

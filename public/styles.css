@@ -835,11 +835,17 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .mcp-client-select select { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; font: inherit; }
 .mcp-client-select small { grid-column: 2; color: var(--muted); font-size: 8px; font-weight: 400; }
 .mcp-setup-steps { display: grid; gap: 8px; margin-top: 14px; }
-.mcp-setup-steps article { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px; border: 1px solid rgba(133,174,204,.45); border-radius: 8px; background: rgba(255,255,255,.72); }
+.mcp-setup-steps article { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; gap: 9px; padding: 10px; border: 1px solid rgba(133,174,204,.45); border-radius: 8px; background: rgba(255,255,255,.72); }
 .mcp-step-number { display: grid; width: 22px; height: 22px; place-items: center; color: white; border-radius: 50%; background: #3478b5; font-size: 9px; font-weight: 700; }
+.mcp-step-content { min-width: 0; }
 .mcp-setup-steps strong { display: block; font-size: 9px; }
-.mcp-setup-steps code { display: block; overflow-x: auto; margin-top: 5px; color: #365573; font-size: 8px; white-space: pre-wrap; word-break: break-word; }
-.mcp-copy-setup { white-space: nowrap; }
+.mcp-setup-steps small { display: block; margin-top: 6px; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.mcp-command-terminal { display: flex; align-items: center; min-width: 0; gap: 8px; margin-top: 7px; padding: 7px 8px; border: 1px solid #263c58; border-radius: 7px; background: #172439; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
+.mcp-terminal-prompt { flex: 0 0 auto; color: #69d5a5; font: 700 9px/1 "DM Mono", monospace; }
+.mcp-command-terminal code { display: block; min-width: 0; overflow-x: auto; margin: 0; color: #e4efff; font: 8px/1.5 "DM Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcp-copy-setup { flex: 0 0 auto; white-space: nowrap; }
+.mcp-command-terminal .mcp-copy-setup { min-height: 27px; padding: 5px 8px; color: #eaf4ff; border-color: #58718f; background: #263c58; font-size: 8px; }
+.mcp-command-terminal .mcp-copy-setup:hover { border-color: #8ab7dc; background: #315170; }
 .mcp-config-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(133,174,204,.45); }
 .mcp-config-details summary { cursor: pointer; color: #245b87; font-size: 9px; font-weight: 700; }
 .mcp-config-details pre { overflow-x: auto; margin: 10px 0 8px; padding: 10px; border-radius: 7px; background: #172439; color: #dceafa; font: 8px/1.6 "DM Mono", monospace; white-space: pre-wrap; }
@@ -1058,8 +1064,9 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .mcp-issued-token { align-items: stretch; flex-direction: column; }
   .mcp-client-select { grid-template-columns: 1fr; }
   .mcp-client-select small { grid-column: auto; }
-  .mcp-setup-steps article { grid-template-columns: 24px minmax(0, 1fr); }
-  .mcp-setup-steps article .mcp-copy-setup { grid-column: 2; justify-self: start; }
+  .mcp-command-terminal { align-items: stretch; flex-wrap: wrap; }
+  .mcp-command-terminal code { flex: 1 1 calc(100% - 20px); }
+  .mcp-command-terminal .mcp-copy-setup { margin-left: 20px; }
 }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto!important; animation: none!important; } }
 @media print {
