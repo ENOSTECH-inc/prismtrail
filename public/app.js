@@ -59,6 +59,10 @@ const state = {
   selectedCaseIndex: 0,
   editorTab: "cases",
   selectedRun: null,
+  activeReport: null,
+  selectedReportCaseId: null,
+  reportCaseFilter: "all",
+  runDetailTab: "summary",
   suiteVersions: [],
   selectedSuiteVersionId: null,
   selectedSuiteVersion: null,
@@ -343,6 +347,111 @@ function pushQuickSearchRecent(entry) {
   localStorage.setItem(QUICK_SEARCH_RECENT_KEY, JSON.stringify(next));
 }
 
+function quickSearchScope() {
+  const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
+  if (parts[0] === "suites" && parts[1]) {
+    const suite = state.selectedSuite?.id === parts[1]
+      ? state.selectedSuite
+      : state.suites.find((item) => item.id === parts[1]);
+    return suite ? { type: "suite", suiteId: suite.id, suite, report: null } : null;
+  }
+  if (parts[0] === "reports" && parts[1]) {
+    const report = state.activeReport?.id === parts[1]
+      ? state.activeReport
+      : state.suiteRuns.find((item) => item.id === parts[1]);
+    if (!report) return null;
+    const suite = state.suites.find((item) => item.id === report.suiteId) || null;
+    return { type: "report", suiteId: report.suiteId, suite, report };
+  }
+  if (parts[0] === "runs" && parts[1]) {
+    const run = state.selectedRun?.id === parts[1]
+      ? state.selectedRun
+      : state.runs.find((item) => item.id === parts[1]);
+    const reportId = run?.context?.suiteRunId;
+    const report = state.activeReport?.id === reportId
+      ? state.activeReport
+      : state.suiteRuns.find((item) => item.id === reportId);
+    if (!report) return null;
+    const suite = state.suites.find((item) => item.id === report.suiteId) || null;
+    return { type: "run", suiteId: report.suiteId, suite, report, run };
+  }
+  return null;
+}
+
+function buildScopedQuickSearchCatalog(scope) {
+  const report = scope.report;
+  const suite = scope.suite;
+  const suiteId = scope.suiteId || report?.suiteId || suite?.id;
+  const sourceCases = report?.suiteSnapshot?.cases || suite?.cases || [];
+  const caseRuns = new Map((report?.caseRuns || []).map((item) => [item.caseId, item]));
+  const reportId = report?.id;
+  const cases = sourceCases.map((item, index) => {
+    const caseId = item.id || item.caseId || `case-${index + 1}`;
+    const href = reportId
+      ? `#/reports/${reportId}/cases/${encodeURIComponent(caseId)}`
+      : `#/suites/${suiteId}/edit/${encodeURIComponent(caseId)}`;
+    return {
+      id: `scope-case:${suiteId}:${caseId}`,
+      group: "cases",
+      groupLabel: tr("このテストスイートのケース", "Cases in this test suite"),
+      title: String(item.title || "").trim() || tr("無題のケース", "Untitled case"),
+      subtitle: `${String(index + 1).padStart(2, "0")} · ${caseId}`,
+      keywords: `${caseId} ${item.prompt || ""} ${item.memo || ""}`,
+      icon: "list-checks",
+      href,
+      suiteId,
+      caseId,
+      scoped: true
+    };
+  });
+  const runs = sourceCases.flatMap((item, index) => {
+    const caseId = item.id || item.caseId || `case-${index + 1}`;
+    const caseRun = caseRuns.get(caseId);
+    if (!caseRun?.runId) return [];
+    return [{
+      id: `scope-run:${caseRun.runId}`,
+      group: "runs",
+      groupLabel: tr("このテストスイートの実行詳細", "Run details in this test suite"),
+      title: tr("{title}の実行詳細", "Run details for {title}", { title: item.title || caseId }),
+      subtitle: `${caseId} · ${caseRun.runId}`,
+      keywords: `${caseId} ${caseRun.runId} ${item.title || ""}`,
+      icon: "list-tree",
+      href: `#/runs/${caseRun.runId}`,
+      suiteId,
+      caseId,
+      scoped: true
+    }];
+  });
+  const contextItems = [];
+  if (reportId) {
+    contextItems.push({
+      id: `scope-report:${reportId}`,
+      group: "context",
+      groupLabel: tr("このテストスイート", "This test suite"),
+      title: tr("評価レポートの全体サマリー", "Evaluation report summary"),
+      subtitle: suiteRunLabel(report),
+      keywords: `${reportId} ${report.suiteName || ""}`,
+      icon: "chart-no-axes-combined",
+      href: `#/reports/${reportId}`,
+      scoped: true
+    });
+  }
+  if (suiteId) {
+    contextItems.push({
+      id: `scope-suite:${suiteId}`,
+      group: "context",
+      groupLabel: tr("このテストスイート", "This test suite"),
+      title: tr("テストスイートを開く", "Open test suite"),
+      subtitle: suite?.name || report?.suiteName || suiteId,
+      keywords: `${suiteId} ${suite?.description || ""}`,
+      icon: "layers-3",
+      href: `#/suites/${suiteId}/edit`,
+      scoped: true
+    });
+  }
+  return [...cases, ...runs, ...contextItems];
+}
+
 function highlightFuseValue(text, indices = []) {
   const value = String(text || "");
   if (!value || !indices.length) return esc(value);
@@ -367,6 +476,8 @@ function highlightFuseValue(text, indices = []) {
 }
 
 function buildQuickSearchCatalog() {
+  const scope = quickSearchScope();
+  if (scope) return buildScopedQuickSearchCatalog(scope);
   const pages = [
     {
       id: "page:suites",
@@ -610,6 +721,10 @@ function activateQuickSearchItem(item) {
   if (!item) return;
   pushQuickSearchRecent(item);
   closeQuickSearch();
+  if (item.scoped && item.href) {
+    location.hash = item.href;
+    return;
+  }
   if (item.group === "cases" && item.suiteId && item.caseId) {
     const onEditor =
       state.selectedSuite?.id === item.suiteId &&
@@ -671,6 +786,7 @@ function mountQuickSearchDialog() {
   const existing = document.querySelector("#quick-search-dialog");
   if (existing) return existing;
   const shortcut = quickSearchShortcutLabel();
+  const scoped = Boolean(quickSearchScope());
   const dialog = document.createElement("dialog");
   dialog.id = "quick-search-dialog";
   dialog.className = "quick-search-dialog";
@@ -678,11 +794,12 @@ function mountQuickSearchDialog() {
     <div class="quick-search-shell">
       <label class="quick-search-input-row">
         <span>${icon("search", 18)}</span>
-        <input id="quick-search-input" type="text" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="${tr("ケース・スイート・レポートを検索…", "Search cases, suites, reports…")}" aria-controls="quick-search-results">
+        <input id="quick-search-input" type="text" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="${scoped ? tr("このテストスイート内を検索…", "Search within this test suite…") : tr("ケース・スイート・レポートを検索…", "Search cases, suites, reports…")}" aria-controls="quick-search-results">
         <kbd>${esc(shortcut)}</kbd>
       </label>
       <div id="quick-search-results" class="quick-search-results" role="listbox" aria-label="${tr("検索結果", "Search results")}"></div>
       <footer class="quick-search-foot">
+        ${scoped ? `<span class="quick-search-scope">${icon("focus", 12)}${tr("現在のテストスイート内", "Current test suite only")}</span>` : ""}
         <span><kbd>↑</kbd><kbd>↓</kbd> ${tr("移動", "Navigate")}</span>
         <span><kbd>↵</kbd> ${tr("開く", "Open")}</span>
         <span><kbd>Esc</kbd> ${tr("閉じる", "Close")}</span>
@@ -841,6 +958,37 @@ function gradeBadge(business) {
   return `<span class="grade-badge grade-${grade.toLowerCase()}" aria-label="${tr("精度評価 {grade}、{label}", "Accuracy grade {grade}: {label}", { grade, label: labels[grade] })}"><b>${grade}</b><small>${labels[grade]}</small></span>`;
 }
 
+function scoreGrade(score) {
+  if (score === null || score === undefined || score === "") return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  if (value >= 100) return "A";
+  if (value >= 90) return "B";
+  if (value >= 50) return "C";
+  return "D";
+}
+
+function scoreGradeBadge(score, { label = tr("総合等級", "Overall grade") } = {}) {
+  const grade = scoreGrade(score);
+  if (!grade) return `<span class="score-grade grade-none"><small>${esc(label)}</small><b>—</b><em>${tr("未評価", "Not evaluated")}</em></span>`;
+  const gradeLabel = { A: tr("優", "Excellent"), B: tr("良", "Good"), C: tr("可", "Fair"), D: tr("不可", "Poor") }[grade];
+  return `<span class="score-grade grade-${grade.toLowerCase()}"><small>${esc(label)}</small><b>${grade}</b><em>${gradeLabel} · ${formatLocaleNumber(score)}${tr("点", " pts")}</em></span>`;
+}
+
+function systemGradeCounts(report = {}) {
+  const initial = { A: 0, B: 0, C: 0, D: 0 };
+  const summaryCounts = report.summary?.systemGrades;
+  if (summaryCounts && Object.values(summaryCounts).some((value) => Number(value) > 0)) {
+    return Object.fromEntries(Object.keys(initial).map((grade) => [grade, Number(summaryCounts[grade] || 0)]));
+  }
+  return (report.caseRuns || []).reduce((counts, item) => {
+    if (!["passed", "failed", "review_required"].includes(item.status)) return counts;
+    const grade = scoreGrade(item.evaluation?.system?.score ?? item.evaluation?.score);
+    if (grade) counts[grade] += 1;
+    return counts;
+  }, initial);
+}
+
 function updateMethodLabel(method) {
   return {
     ui_create: tr("新規作成", "Created"),
@@ -988,11 +1136,54 @@ function navHeader({
     </header>`;
 }
 
+function reportToolbarActions(report, { jsonButtonId = "open-report-json", pdfButtonId = "export-report-pdf" } = {}) {
+  if (!report) return "";
+  const isLive = ["running", "cancelling"].includes(report.status);
+  const sheet = report.sheetExport?.status === "succeeded" && report.sheetExport?.spreadsheetUrl
+    ? `<a class="button report-action-sheet" href="${esc(report.sheetExport.spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>`
+    : "";
+  return `${sheet}<button id="${esc(jsonButtonId)}" class="button secondary report-action-json" type="button">${icon("braces", 15)}JSON</button><button id="${esc(pdfButtonId)}" class="button report-action-pdf" type="button" ${isLive ? "disabled" : ""}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button>`;
+}
+
+function openJsonViewer({ title, data }) {
+  document.querySelector("#json-viewer-dialog")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "json-viewer-dialog";
+  dialog.className = "json-viewer-dialog";
+  const raw = JSON.stringify(data, null, 2);
+  dialog.innerHTML = `<div class="json-viewer-shell">
+    <header><div>${icon("braces", 18)}<span><small>${tr("生データ", "Raw data")}</small><strong>${esc(title)}</strong></span></div><button type="button" class="json-viewer-close" aria-label="${tr("閉じる", "Close")}" title="${tr("閉じる", "Close")}">${icon("x", 18)}</button></header>
+    <p>${tr("この画面を構成している保存済みJSONを読み取り専用で表示しています。", "Read-only view of the persisted JSON used to render this screen.")}</p>
+    <pre tabindex="0"><code>${esc(raw)}</code></pre>
+    <footer><button type="button" class="button secondary json-viewer-copy">${icon("copy", 15)}${tr("JSONをコピー", "Copy JSON")}</button><button type="button" class="button json-viewer-done">${tr("閉じる", "Close")}</button></footer>
+  </div>`;
+  const close = () => dialog.close();
+  dialog.querySelector(".json-viewer-close")?.addEventListener("click", close);
+  dialog.querySelector(".json-viewer-done")?.addEventListener("click", close);
+  dialog.querySelector(".json-viewer-copy")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(raw);
+      notify(tr("JSONをコピーしました。", "Copied JSON."), "success");
+    } catch {
+      notify(tr("JSONをコピーできませんでした。", "Could not copy JSON."));
+    }
+  });
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    close();
+  });
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  refreshIcons();
+}
+
 function quickSearchTriggerHtml({ tone = "dark" } = {}) {
   const shortcut = quickSearchShortcutLabel();
+  const scoped = Boolean(quickSearchScope());
   return `<button id="open-quick-search" class="toolbar-search tone-${tone}" type="button" title="${tr("クイック検索 ({shortcut})", "Quick search ({shortcut})", { shortcut })}" aria-label="${tr("クイック検索", "Quick search")}">
     ${icon("search", 15)}
-    <span>${tr("ケースやスイートを検索…", "Search cases and suites…")}</span>
+    <span>${scoped ? tr("このテストスイート内を検索…", "Search this test suite…") : tr("ケースやスイートを検索…", "Search cases and suites…")}</span>
     <kbd>${esc(shortcut)}</kbd>
   </button>`;
 }
@@ -1541,6 +1732,20 @@ function clipPreviewText(value, max = 360) {
 }
 
 function extractRunEvidenceClient(run = {}) {
+  const sql = [...new Set((run.events || [])
+    .flatMap((event) => {
+      if (event.kind === "data.generated_sql") {
+        const payload = event.payload;
+        return [typeof payload === "string" ? payload : payload?.query || payload?.sql || payload?.sqlQuery || ""];
+      }
+      if (event.kind === "data.matched_query") {
+        return [event.payload?.sqlQuery || event.payload?.exampleQuery?.sqlQuery || ""];
+      }
+      return [];
+    })
+    .concat((run.jobs || []).map((job) => job?.configuration?.query?.query || ""))
+    .map((value) => String(value || "").trim())
+    .filter(Boolean))].join("\n\n-- 次の実行SQL --\n\n");
   const answer = clipPreviewText(
     (run.events || [])
       .filter((event) => event.kind === "text.final_response")
@@ -1581,24 +1786,154 @@ function extractRunEvidenceClient(run = {}) {
   );
   const chartCount = Math.max(chartEvents.length, Number(run.summary?.chartCount || 0));
   const marks = [];
+  const specs = [];
   for (const event of chartEvents) {
     let spec = event.payload;
-    if (typeof spec === "string") {
-      try {
-        spec = JSON.parse(spec);
-      } catch {
-        spec = null;
+    for (let depth = 0; depth < 5; depth += 1) {
+      if (typeof spec === "string") {
+        try {
+          spec = JSON.parse(spec);
+        } catch {
+          spec = null;
+        }
       }
+      if (!spec || typeof spec !== "object") break;
+      const nested = spec.vegaConfig || spec.spec || spec.vegaChartJson || spec.resultVegaChartJson;
+      if (!nested || nested === spec) break;
+      spec = nested;
     }
-    if (spec?.spec) spec = spec.spec;
+    if (spec && typeof spec === "object") specs.push(spec);
     const mark = typeof spec?.mark === "string" ? spec.mark : spec?.mark?.type;
     if (mark) marks.push(mark);
   }
   return {
+    sql,
     answer,
     table,
-    chart: chartCount ? { count: chartCount, marks: [...new Set(marks)] } : null
+    chart: chartCount ? { count: chartCount, marks: [...new Set(marks)], specs } : null
   };
+}
+
+function renderEvidenceChartSvg(spec) {
+  const values = Array.isArray(spec?.data?.values) ? spec.data.values : [];
+  const encoding = spec?.encoding || {};
+  const mark = typeof spec?.mark === "string" ? spec.mark : spec?.mark?.type;
+  const xField = encoding.x?.field;
+  const yField = encoding.y?.field;
+  if (!values.length || !xField || !yField || !["line", "area", "bar", "point", "circle"].includes(mark)) return "";
+
+  const width = 760;
+  const height = 320;
+  const margin = { top: 28, right: 24, bottom: 58, left: 72 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const xType = encoding.x?.type || "nominal";
+  const title = typeof spec.title === "string" ? spec.title : tr("Agentレスポンスのチャート", "Agent response chart");
+  const xTitle = encoding.x?.title || xField;
+  const yTitle = encoding.y?.title || yField;
+  const normalized = values
+    .map((row, index) => {
+      const rawX = row?.[xField];
+      return { rawX, x: index, y: Number(row?.[yField]) };
+    })
+    .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
+  if (!normalized.length) return "";
+
+  const yValues = normalized.map((item) => item.y);
+  const yMin = Math.min(0, ...yValues);
+  const yMax = Math.max(...yValues);
+  const ySpan = yMax - yMin || 1;
+  const yScale = (value) => margin.top + innerHeight - ((value - yMin) / ySpan) * innerHeight;
+  const band = innerWidth / normalized.length;
+  const xScale = (_item, index) => margin.left + band * index + band / 2;
+  const points = normalized.map((item, index) => ({ ...item, px: xScale(item, index), py: yScale(item.y) }));
+  const compactNumber = (value) => new Intl.NumberFormat(state.locale === "ja" ? "ja-JP" : "en-US", {
+    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
+    maximumFractionDigits: 1
+  }).format(value);
+  const xLabel = (item) => {
+    if (xType === "temporal") return new Intl.DateTimeFormat(state.locale === "ja" ? "ja-JP" : "en-US", { year: "2-digit", month: "short" }).format(new Date(item.rawX));
+    return clipPreviewText(item.rawX, 14);
+  };
+  const yTicks = Array.from({ length: 5 }, (_, index) => yMin + (ySpan * index) / 4);
+  const xTickStep = Math.max(1, Math.ceil(points.length / 7));
+  const grid = yTicks.map((value) => {
+    const y = yScale(value);
+    return `<g><line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="#e4ebf2"/><text x="${margin.left - 12}" y="${y + 4}" text-anchor="end" fill="#66778b" font-size="11">${esc(compactNumber(value))}</text></g>`;
+  }).join("");
+  const xTicks = points.filter((_, index) => index % xTickStep === 0 || index === points.length - 1).map((point) =>
+    `<text x="${point.px}" y="${height - margin.bottom + 24}" text-anchor="middle" fill="#66778b" font-size="11">${esc(xLabel(point))}</text>`
+  ).join("");
+  let marks = "";
+  if (mark === "bar") {
+    const barWidth = Math.max(4, Math.min(38, band * 0.68));
+    marks = points.map((point) => {
+      const baseline = yScale(0);
+      return `<rect x="${point.px - barWidth / 2}" y="${Math.min(point.py, baseline)}" width="${barWidth}" height="${Math.max(1, Math.abs(baseline - point.py))}" rx="3" fill="#2f6fb3"><title>${esc(`${xLabel(point)}: ${compactNumber(point.y)}`)}</title></rect>`;
+    }).join("");
+  } else {
+    const path = points.map((point, index) => `${index ? "L" : "M"}${point.px},${point.py}`).join(" ");
+    if (mark === "area") {
+      marks += `<path d="${path} L${points.at(-1).px},${yScale(0)} L${points[0].px},${yScale(0)} Z" fill="#dbeafe" stroke="none"/>`;
+    }
+    if (mark !== "point" && mark !== "circle") marks += `<path d="${path}" fill="none" stroke="#2f6fb3" stroke-width="3" stroke-linejoin="round"/>`;
+    marks += points.map((point) => `<circle cx="${point.px}" cy="${point.py}" r="4" fill="#ffffff" stroke="#2f6fb3" stroke-width="2"><title>${esc(`${xLabel(point)}: ${compactNumber(point.y)}`)}</title></circle>`).join("");
+  }
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(title)}" preserveAspectRatio="xMidYMid meet">
+    <title>${esc(title)}</title>
+    <text x="${margin.left}" y="18" fill="#173b5e" font-size="15" font-weight="700">${esc(title)}</text>
+    ${grid}${marks}${xTicks}
+    <line x1="${margin.left}" y1="${margin.top + innerHeight}" x2="${width - margin.right}" y2="${margin.top + innerHeight}" stroke="#9badbf"/>
+    <text x="${margin.left + innerWidth / 2}" y="${height - 8}" text-anchor="middle" fill="#53647a" font-size="12" font-weight="600">${esc(xTitle)}</text>
+    <text transform="translate(16 ${margin.top + innerHeight / 2}) rotate(-90)" text-anchor="middle" fill="#53647a" font-size="12" font-weight="600">${esc(yTitle)}</text>
+  </svg>`;
+}
+
+function renderEvidenceCharts(root = document) {
+  root.querySelectorAll("[data-chart-spec]").forEach((element) => {
+    let spec;
+    try {
+      spec = JSON.parse(decodeURIComponent(element.dataset.chartSpec || ""));
+    } catch {
+      return;
+    }
+    if (!spec || typeof spec !== "object") return;
+    const chartValues = Array.isArray(spec.data?.values) ? spec.data.values : [];
+    const chartXField = spec.encoding?.x?.field;
+    const chartYField = spec.encoding?.y?.field;
+    const chartRows = chartValues
+      .map((row) => ({ label: row?.[chartXField], value: Number(row?.[chartYField]) }))
+      .filter((row) => Number.isFinite(row.value))
+      .slice(0, 24);
+    if (chartRows.length) {
+      const chartMax = Math.max(...chartRows.map((row) => Math.abs(row.value)), 1);
+      const chartTitle = typeof spec.title === "string" ? spec.title : tr("Agentレスポンスのチャート", "Agent response chart");
+      const chartBars = chartRows.map((row) => `<div class="agent-chart-column"><span class="agent-chart-value">${esc(new Intl.NumberFormat(state.locale === "ja" ? "ja-JP" : "en-US", { notation: "compact", maximumFractionDigits: 1 }).format(row.value))}</span><i style="height:${Math.max(4, (Math.abs(row.value) / chartMax) * 156)}px"></i><small>${esc(clipPreviewText(row.label, 10))}</small></div>`).join("");
+      element.innerHTML = `<div class="agent-inline-chart" role="img" aria-label="${esc(chartTitle)}"><strong>${esc(chartTitle)}</strong><div class="agent-chart-plot">${chartBars}</div></div>`;
+      return;
+    }
+    let safeSvg = "";
+    try {
+      safeSvg = renderEvidenceChartSvg(spec);
+    } catch {}
+    if (safeSvg) {
+      element.innerHTML = safeSvg;
+      return;
+    }
+    if (typeof window.vegaEmbed !== "function") return;
+    window.vegaEmbed(element, spec, {
+      actions: false,
+      renderer: "svg",
+      mode: String(spec.$schema || "").includes("vega/") && !String(spec.$schema || "").includes("vega-lite") ? "vega" : "vega-lite",
+      config: {
+        axis: { labelColor: "#53647a", titleColor: "#173b5e", gridColor: "#e6ecf2" },
+        legend: { labelColor: "#53647a", titleColor: "#173b5e" },
+        view: { stroke: "transparent" }
+      }
+    }).catch(() => {
+      element.innerHTML = `<p class="muted-copy">${tr("チャートを描画できませんでした。", "The chart could not be rendered.")}</p>`;
+    });
+  });
 }
 
 async function loadReportCaseEvidence(report, { limit = 8 } = {}) {
@@ -1616,7 +1951,11 @@ async function loadReportCaseEvidence(report, { limit = 8 } = {}) {
   return Object.fromEntries(entries.filter(([, value]) => value));
 }
 
-function reportCaseCardHtml(item, { isLive = false, showPdf = true, evidence = null } = {}) {
+function reportSectionHeading(iconName, label, meta = "") {
+  return `<div class="report-section-heading">${icon(iconName, 20)}<div><h3>${esc(label)}</h3>${meta ? `<small>${esc(meta)}</small>` : ""}</div></div>`;
+}
+
+function reportCaseCardHtml(item, { evidence = null, showRunLink = true } = {}) {
   if (!item) return "";
   if (item.status === "skipped" || item.status === "cancelled") {
     return `<article class="report-case ${item.status}">
@@ -1626,36 +1965,37 @@ function reportCaseCardHtml(item, { isLive = false, showPdf = true, evidence = n
   }
   const system = item.evaluation?.system || item.evaluation || {};
   const business = item.evaluation?.business;
+  const businessConfigured = business && business.status !== "not_configured";
+  const chartSpec = evidence?.chart?.specs?.[0];
   const evidenceHtml = evidence
-    ? `<div class="run-evidence-preview">
-        <section><h4>${tr("回答プレビュー", "Answer preview")}</h4><p>${esc(evidence.answer || tr("（最終回答なし）", "(no final answer)"))}</p></section>
-        <section><h4>${tr("結果テーブル", "Result table")}</h4>${
+    ? `<div class="case-evidence-sections">
+        <section>${reportSectionHeading("message-square-more", tr("回答", "Answer"))}<div class="evidence-surface answer-surface"><p>${esc(evidence.answer || tr("（最終回答なし）", "(no final answer)"))}</p></div></section>
+        <section>${reportSectionHeading("table-2", tr("結果データ", "Result data"))}${
           evidence.table?.rows?.length
             ? `<div class="mini-table-wrap"><table class="mini-table"><thead><tr>${evidence.table.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${evidence.table.rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>${evidence.table.truncated ? `<small>${tr("先頭行の抜粋です", "Showing a sample of leading rows")}</small>` : ""}</div>`
             : `<p class="muted-copy">${tr("テーブル結果なし", "No table result")}</p>`
         }</section>
-        <section><h4>${tr("チャート", "Chart")}</h4><p>${
-          evidence.chart?.count
-            ? esc(
-                tr("あり（{count}件{marks}）", "Yes ({count}{marks})", {
-                  count: formatLocaleNumber(evidence.chart.count),
-                  marks: evidence.chart.marks?.length ? ` · ${evidence.chart.marks.join(", ")}` : ""
-                })
-              )
-            : tr("なし", "None")
-        }</p></section>
+        <section>${reportSectionHeading("chart-no-axes-combined", tr("チャート", "Chart"))}${chartSpec
+          ? `<div class="report-chart" data-chart-spec="${esc(encodeURIComponent(JSON.stringify(chartSpec)))}"></div>`
+          : `<p class="muted-copy">${evidence.chart?.count ? tr("チャート仕様を確認できませんでした。", "Chart specification was unavailable.") : tr("チャートなし", "No chart")}</p>`
+        }</section>
       </div>`
     : "";
-  return `<article class="report-case ${item.status}" data-case-id="${esc(item.caseId || "")}">
-    <header><span>${statusPill(item.status)}</span><div><strong>${esc(item.title)}</strong><small>${esc(item.caseId)}</small></div>${gradeBadge(business)}</header>
+  return `<article class="report-case report-case-detail ${item.status}" data-case-id="${esc(item.caseId || "")}">
+    <header class="case-detail-header"><div><span>${statusPill(item.status)}</span><small>${esc(item.caseId)}</small><h2 tabindex="-1">${esc(item.title)}</h2></div>${showRunLink && item.runId ? `<a class="case-detail-link" href="#/runs/${item.runId}">${icon("list-tree", 17)}<span>${tr("実行詳細を見る", "View run details")}</span>${icon("arrow-up-right", 15)}</a>` : ""}</header>
     ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
-    <div class="evaluation-layers">
-      <section><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{passed}/{total} 合格 · {score}点", "{passed}/{total} passed · {score} pts", { passed: formatLocaleNumber(system.passedCount || 0), total: formatLocaleNumber(system.checkCount || 0), score: formatLocaleNumber(system.score ?? 0) })}</b></div><div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></section>
-      <section class="business-result"><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(business)}</div>${business?.status === "not_configured" || !business ? `<p class="muted-copy">このケースには精度検証が設定されていません。</p>` : `${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${accuracySourceStatusHtml(business.accuracySources)}${weatherItemList(business, { showEmpty: true })}${(business.discrepancies || []).length || business.judgeAudit?.model ? `<details><summary>${tr("判定メタ情報", "Judgment metadata")}</summary><dl>${(business.discrepancies || []).length ? `<dt>${tr("差分", "Discrepancies")}</dt><dd>${esc(business.discrepancies.join(" / "))}</dd>` : ""}<dt>${tr("判定モデル", "Judge model")}</dt><dd>${esc(business.judgeAudit?.model || "—")}</dd></dl></details>` : ""}`}</section>
+    <div class="case-scoreboard">
+      ${scoreGradeBadge(item.evaluation?.score)}
+      ${scoreGradeBadge(system.score, { label: tr("システム等級", "System grade") })}
+      ${businessConfigured ? `<span class="score-grade grade-${esc((business.grade || "d").toLowerCase())}"><small>${tr("ビジネス等級", "Business grade")}</small><b>${esc(business.grade || "—")}</b><em>${formatLocaleNumber(business.score ?? 0)}${tr("点", " pts")}</em></span>` : ""}
+      <span class="case-stat"><small>${tr("実行時間", "Duration")}</small><b>${fmtDuration(item.runSummary?.durationMs || 0)}</b></span>
+      <span class="case-stat"><small>${tr("実行証跡", "Evidence")}</small><b>${formatLocaleNumber(item.runSummary?.sqlCount || 0)} / ${formatLocaleNumber(item.runSummary?.chartCount || 0)}</b><em>SQL / ${tr("チャート", "charts")}</em></span>
     </div>
+    <section class="case-requirement-section">${reportSectionHeading("shield-check", tr("システム要件の評価項目別結果", "System requirement results"), tr("{passed}/{total}項目を満たしています", "{passed}/{total} checks passed", { passed: formatLocaleNumber(system.passedCount || 0), total: formatLocaleNumber(system.checkCount || 0) }))}<div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></section>
+    ${businessConfigured ? `<section class="case-requirement-section business-result">${reportSectionHeading("briefcase-business", tr("ビジネス要件の評価項目別結果", "Business requirement results"))}${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${accuracySourceStatusHtml(business.accuracySources)}${weatherItemList(business, { showEmpty: true })}</section>` : ""}
+    <section class="case-input-section">${reportSectionHeading("message-square", tr("ユーザープロンプト", "User prompt"))}<div class="evidence-surface prompt-surface"><p>${esc(item.prompt || tr("プロンプトを取得できませんでした。", "Prompt unavailable."))}</p></div></section>
+    ${evidence?.sql ? `<section class="case-sql-section">${reportSectionHeading("database", tr("実行SQL本文", "Executed SQL"))}<pre>${esc(evidence.sql)}</pre></section>` : ""}
     ${evidenceHtml}
-    ${item.runId ? `<a href="#/runs/${item.runId}" class="text-link">実行トレースを見る ${icon("arrow-right", 14)}</a>` : ""}
-    ${!isLive && showPdf && item.caseId ? `<button type="button" class="text-link" data-export-case-run-pdf="${esc(item.caseId)}">${icon("file-down", 14)}${tr("このケースをPDF", "PDF this case")}</button>` : ""}
   </article>`;
 }
 
@@ -3633,7 +3973,7 @@ function suiteAiSummaryHtml(report, { isLive = false } = {}) {
     return `<section class="ai-summary-card succeeded">
       <div class="ai-summary-icon">${icon("sparkles", 22)}</div>
       <div class="ai-summary-content">
-        <span class="ai-summary-eyebrow">${tr("Gemini AIコメント", "Gemini AI comment")}</span>
+        <span class="ai-summary-eyebrow">${tr("サマリー", "Summary")}</span>
         <h2>${esc(summary.headline)}</h2>
         <p>${esc(summary.comment)}</p>
         ${groups.length ? `<div class="ai-summary-groups">${groups.map(([label, items]) => `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>`).join("")}</div>` : ""}
@@ -3643,12 +3983,35 @@ function suiteAiSummaryHtml(report, { isLive = false } = {}) {
     </section>`;
   }
   if (summary.status === "generating" || summary.status === "pending" || isLive) {
-    return `<section class="ai-summary-card generating"><span class="live-spinner"></span><div class="ai-summary-content"><span class="ai-summary-eyebrow">${tr("Gemini AIコメント", "Gemini AI comment")}</span><h2>${tr("全ケースの結果を要約しています", "Summarizing all case results")}</h2><p>${tr("確定した評価結果だけを使って、全体傾向と次のアクションを整理します。", "Using only finalized evaluations to identify overall trends and next actions.")}</p></div></section>`;
+    return `<section class="ai-summary-card generating"><span class="live-spinner"></span><div class="ai-summary-content"><span class="ai-summary-eyebrow">${tr("サマリー", "Summary")}</span><h2>${tr("全ケースの結果を要約しています", "Summarizing all case results")}</h2><p>${tr("確定した評価結果だけを使って、全体傾向と次のアクションを整理します。", "Using only finalized evaluations to identify overall trends and next actions.")}</p></div></section>`;
   }
-  return `<section class="ai-summary-card failed">${icon("triangle-alert", 22)}<div class="ai-summary-content"><span class="ai-summary-eyebrow">${tr("Gemini AIコメント", "Gemini AI comment")}</span><h2>${tr("AIコメントを生成できませんでした", "AI comment could not be generated")}</h2><p>${esc(translateApiMessage(summary.message || tr("まだ生成されていません。", "It has not been generated yet.")))}</p></div><button id="regenerate-ai-summary" class="button secondary" type="button">${icon("refresh-cw", 14)}${tr("再試行", "Retry")}</button></section>`;
+  return `<section class="ai-summary-card failed">${icon("triangle-alert", 22)}<div class="ai-summary-content"><span class="ai-summary-eyebrow">${tr("サマリー", "Summary")}</span><h2>${tr("サマリーを生成できませんでした", "Summary could not be generated")}</h2><p>${esc(translateApiMessage(summary.message || tr("まだ生成されていません。", "It has not been generated yet.")))}</p></div><button id="regenerate-ai-summary" class="button secondary" type="button">${icon("refresh-cw", 14)}${tr("再試行", "Retry")}</button></section>`;
 }
 
-function renderReport(report, { evidenceByCaseId = null } = {}) {
+function reportCaseNavItemHtml(entry, selectedCaseId) {
+  const { testCase, item, index, active } = entry;
+  const caseId = testCase.id || testCase.caseId;
+  const status = item?.status || (active ? "running" : "pending");
+  const score = item?.evaluation?.score;
+  const grade = scoreGrade(score);
+  return `<button type="button" class="report-case-nav-item ${status} ${caseId === selectedCaseId ? "selected" : ""}" data-report-case-id="${esc(caseId)}" aria-current="${caseId === selectedCaseId ? "true" : "false"}">
+    <span class="case-nav-index">${String(index + 1).padStart(2, "0")}</span>
+    <span class="case-nav-copy"><strong>${esc(item?.title || testCase.title || caseId)}</strong><small>${esc(caseId)}</small></span>
+    <span class="case-nav-result"><b>${grade || "—"}</b><small>${item ? fmtDuration(item.runSummary?.durationMs || 0) : active ? tr("実行中", "Running") : tr("待機", "Pending")}</small></span>
+  </button>`;
+}
+
+function systemGradeDistributionHtml(grades) {
+  const total = Object.values(grades).reduce((sum, value) => sum + Number(value || 0), 0);
+  const colors = { A: "#168464", B: "#315efb", C: "#d48723", D: "#c53b4d" };
+  return `<div class="grade-distribution" aria-label="${tr("システム等級分布", "System grade distribution")}">
+    <div class="grade-distribution-bar">${Object.entries(grades).map(([grade, count]) => Number(count) > 0 ? `<i style="width:${(Number(count) / Math.max(total, 1)) * 100}%;background:${colors[grade]}"></i>` : "").join("")}</div>
+    <div class="grade-distribution-legend">${Object.entries(grades).map(([grade, count]) => `<span><i style="background:${colors[grade]}"></i><b>${grade}</b> ${formatLocaleNumber(count)}</span>`).join("")}</div>
+  </div>`;
+}
+
+function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null } = {}) {
+  state.activeReport = report;
   const isRunning = report.status === "running";
   const isCancelling = report.status === "cancelling";
   const isLive = isRunning || isCancelling;
@@ -3667,23 +4030,32 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
   const focusCaseId = report.selectedCaseIds?.[0] || suiteCases[0]?.id || suiteCases[0]?.caseId || "";
   const focusCase =
     suiteCases.find((item) => (item.id || item.caseId) === focusCaseId) || suiteCases[0] || null;
-  const cases = suiteCases.map((testCase, index) => {
-    const item = completedCases.get(testCase.id || testCase.caseId);
-    if (item) {
-      return reportCaseCardHtml(item, {
-        isLive,
-        showPdf: !isPartial,
-        evidence: evidenceByCaseId?.[item.caseId] || null
-      });
-    }
-    const activeCases = report.activeCases?.length
-      ? report.activeCases
-      : report.currentCase
-        ? [report.currentCase]
-        : [];
-    const active = activeCases.find((entry) => entry.caseId === (testCase.id || testCase.caseId));
-    return reportCasePendingHtml(testCase, index, { active, isCancelling });
-  }).join("");
+  const activeCases = report.activeCases?.length
+    ? report.activeCases
+    : report.currentCase
+      ? [report.currentCase]
+      : [];
+  const caseEntries = suiteCases.map((testCase, index) => ({
+    testCase,
+    index,
+    item: completedCases.get(testCase.id || testCase.caseId) || null,
+    active: activeCases.find((entry) => entry.caseId === (testCase.id || testCase.caseId)) || null
+  }));
+  const requestedCaseId = selectedCaseId || state.selectedReportCaseId;
+  const fallbackEntry = caseEntries.find((entry) => ["failed", "review_required"].includes(entry.item?.status)) || caseEntries[0];
+  const selectedEntry = caseEntries.find((entry) => (entry.testCase.id || entry.testCase.caseId) === requestedCaseId) || fallbackEntry;
+  const selectedReportCaseId = selectedEntry ? selectedEntry.testCase.id || selectedEntry.testCase.caseId : null;
+  state.selectedReportCaseId = selectedReportCaseId;
+  const filteredEntries = state.reportCaseFilter === "issues"
+    ? caseEntries.filter((entry) => ["failed", "review_required", "error"].includes(entry.item?.status))
+    : caseEntries;
+  const caseNav = filteredEntries.map((entry) => reportCaseNavItemHtml(entry, selectedReportCaseId)).join("");
+  const selectedCaseDetail = selectedEntry?.item
+    ? reportCaseCardHtml({ ...selectedEntry.item, prompt: selectedEntry.item.prompt || selectedEntry.testCase.prompt }, { evidence: evidenceByCaseId?.[selectedEntry.item.caseId] || null })
+    : selectedEntry
+      ? reportCasePendingHtml(selectedEntry.testCase, selectedEntry.index, { active: selectedEntry.active, isCancelling })
+      : empty(tr("ケースがありません", "No cases"), tr("テストスイートにケースを追加してください。", "Add a case to the test suite."));
+  const systemGrades = systemGradeCounts(report);
   const runningCount = report.summary?.running ?? (report.activeCases?.length || (report.currentCase ? 1 : 0));
   const concurrency = report.summary?.concurrency || 30;
   const runningHeadline = isCancelling
@@ -3721,9 +4093,9 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
     });
   const sheetExport = report.sheetExport || { status: "pending" };
   const sheetPanel = sheetExport.status === "succeeded"
-    ? `<section class="sheet-export-status succeeded">${icon("sheet", 20)}<div><strong>${tr("評価レポートをGoogle Sheetsへ自動出力しました", "Evaluation report exported to Google Sheets")}</strong><p>${esc(sheetExport.spreadsheetTitle)} · ${esc(sheetExport.tabName)} · ${tr("{count}行", "{count} rows", { count: formatLocaleNumber(sheetExport.rowCount || 0) })}</p></div><a class="button accent" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${tr("シートを開く", "Open sheet")} ${icon("external-link", 14)}</a></section>`
+    ? ""
     : sheetExport.status === "exporting"
-      ? `<section class="sheet-export-status exporting"><span class="live-spinner"></span><div><strong>Google Sheetsへ評価レポートを書き戻しています</strong><p>レポートは完成しています。このまま自動出力の完了を待ちます。</p></div></section>`
+      ? ""
       : sheetExport.status === "failed"
         ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("Google Sheetsへの自動出力に失敗しました", "Automatic export to Google Sheets failed")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を確認", "Check Sheets integration")}</a></section>`
         : sheetExport.status === "skipped"
@@ -3734,7 +4106,7 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
     : isCancelling
       ? `<button class="button danger" type="button" disabled>${icon("square", 15)}${tr("中止中…", "Stopping…")}</button>`
       : "";
-  const actions = `${cancelAction}${sheetExport.status === "succeeded" ? `<a class="button secondary" href="${esc(sheetExport.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>` : ""}<button id="export-report-pdf" class="button secondary" type="button" ${isLive ? "disabled" : ""}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button><button onclick="window.print()" class="button secondary" ${isLive ? "disabled" : ""}>${icon("printer", 15)}${tr("印刷", "Print")}</button>`;
+  const actions = `${cancelAction}${reportToolbarActions(report)}`;
   const backHref =
     isPartial && report.suiteId && focusCaseId
       ? `#/suites/${report.suiteId}/edit/${encodeURIComponent(focusCaseId)}`
@@ -3762,14 +4134,42 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
       <div class="hero-copy">${statusPill(report.status)}${isPartial ? `<span class="partial-run-badge">${tr("個別実行", "Single-case")}</span>` : ""}<h2>${isLive ? runningHeadline : finishedHeadline}</h2><p>${isLive ? (isCancelling ? tr("進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled.") : isPartial ? tr("完了するまでこの画面で待機します。システム要件とビジネス要件の判定が順に表示されます。", "Stay on this screen until the run finishes. System and business checks appear as they complete.") : tr("ケースが完了するたびに、この評価レポートへ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear in this report as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) })) : finishedCopy}</p></div>
       ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
-    <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div><span>${tr("精度 A / B / C / D", "Accuracy A / B / C / D")}</span><strong>${report.summary?.accuracyGrades?.A || 0} / ${report.summary?.accuracyGrades?.B || 0} / ${report.summary?.accuracyGrades?.C || 0} / ${report.summary?.accuracyGrades?.D || 0}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
+    <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
     ${suiteAiSummaryHtml(report, { isLive })}
     ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
-    <div class="section-row"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${isLive ? tr("完了するまでスケルトン表示で待機します。", "Waiting with a skeleton view until the run completes.") : tr("失敗した条件から改善ポイントを特定できます。", "Use failed criteria to identify areas for improvement.")}</p></div><b class="live-updated">${isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
-    <section class="report-cases">${cases}</section>
+    <div class="section-row report-workbench-title"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${tr("左の一覧からケースを選択すると、評価・入力・実行結果を同じ順序で確認できます。", "Select a case to review its evaluation, input, and result in a consistent order.")}</p></div><b class="live-updated">${isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
+    <section class="report-workbench">
+      <aside class="report-case-nav" aria-label="${tr("テストケース一覧", "Test case list")}">
+        <div class="report-case-nav-head"><div><strong>${tr("テストケース", "Test cases")}</strong><small>${formatLocaleNumber(caseEntries.length)} ${tr("件", "cases")}</small></div><div class="case-filter" role="group" aria-label="${tr("ケース絞り込み", "Case filter")}"><button type="button" data-report-filter="all" class="${state.reportCaseFilter === "all" ? "active" : ""}">${tr("すべて", "All")}</button><button type="button" data-report-filter="issues" class="${state.reportCaseFilter === "issues" ? "active" : ""}">${tr("要対応", "Issues")}</button></div></div>
+        <div class="report-case-nav-list">${caseNav || `<p class="muted-copy">${tr("該当ケースはありません。", "No matching cases.")}</p>`}</div>
+      </aside>
+      <div class="report-case-detail-pane" tabindex="-1">${selectedCaseDetail}</div>
+    </section>
     `)}
   `, "reports", "detail");
+  renderEvidenceCharts();
+  document.querySelectorAll("[data-report-case-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nav = document.querySelector(".report-case-nav-list");
+      const scrollTop = nav?.scrollTop || 0;
+      state.selectedReportCaseId = button.dataset.reportCaseId;
+      history.replaceState(null, "", `#/reports/${report.id}/cases/${encodeURIComponent(state.selectedReportCaseId)}`);
+      renderReport(report, { evidenceByCaseId, selectedCaseId: state.selectedReportCaseId });
+      refreshIcons();
+      const nextNav = document.querySelector(".report-case-nav-list");
+      if (nextNav) nextNav.scrollTop = scrollTop;
+      document.querySelector(".report-case-detail-pane h2")?.focus({ preventScroll: true });
+      document.querySelector(".report-case-detail-pane")?.scrollTo({ top: 0, behavior: "instant" });
+    });
+  });
+  document.querySelectorAll("[data-report-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.reportCaseFilter = button.dataset.reportFilter;
+      renderReport(report, { evidenceByCaseId, selectedCaseId: state.selectedReportCaseId });
+      refreshIcons();
+    });
+  });
   document.querySelector("#regenerate-ai-summary")?.addEventListener("click", async () => {
     const button = document.querySelector("#regenerate-ai-summary");
     await withButtonBusy(button, tr("生成中…", "Generating…"), async () => {
@@ -3783,6 +4183,9 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
         notify(error.message);
       }
     });
+  });
+  document.querySelector("#open-report-json")?.addEventListener("click", () => {
+    openJsonViewer({ title: suiteRunLabel(report), data: report });
   });
   document.querySelector("#export-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-report-pdf");
@@ -3822,10 +4225,10 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
     })
   );
   if (!isLive && evidenceByCaseId == null && (report.caseRuns || []).some((item) => item.runId)) {
-    const limit = isPartial ? 2 : 6;
+    const limit = isPartial ? 2 : 50;
     loadReportCaseEvidence(report, { limit }).then((map) => {
-      if (location.hash !== `#/reports/${report.id}`) return;
-      renderReport(report, { evidenceByCaseId: map });
+      if (!location.hash.startsWith(`#/reports/${report.id}`)) return;
+      renderReport(report, { evidenceByCaseId: map, selectedCaseId: state.selectedReportCaseId });
       refreshIcons();
     });
   }
@@ -3856,7 +4259,7 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
   });
   if (isLive || sheetExport.status === "exporting" || report.aiSummary?.status === "generating") {
     state.reportPollTimer = setTimeout(async () => {
-      if (location.hash !== `#/reports/${report.id}`) return;
+      if (!location.hash.startsWith(`#/reports/${report.id}`)) return;
       try {
         const updated = await json(`/api/suite-runs/${report.id}`);
         state.suiteRuns = [updated, ...state.suiteRuns.filter((item) => item.id !== updated.id)];
@@ -3916,13 +4319,27 @@ function renderSingleRun() {
   });
 }
 
-function renderRunDetail(run) {
+function standaloneRunSummaryHtml(run, evidence) {
+  const chartSpec = evidence?.chart?.specs?.[0];
+  return `<article class="report-case report-case-detail run-summary-card">
+    <section class="case-input-section">${reportSectionHeading("message-square", tr("ユーザープロンプト", "User prompt"))}<div class="evidence-surface prompt-surface"><p>${esc(run.question)}</p></div></section>
+    ${evidence?.sql ? `<section class="case-sql-section">${reportSectionHeading("database", tr("実行SQL本文", "Executed SQL"))}<pre>${esc(evidence.sql)}</pre></section>` : ""}
+    <div class="case-evidence-sections">
+      <section>${reportSectionHeading("message-square-more", tr("回答", "Answer"))}<div class="evidence-surface answer-surface"><p>${esc(evidence?.answer || tr("（最終回答なし）", "(no final answer)"))}</p></div></section>
+      <section>${reportSectionHeading("table-2", tr("結果データ", "Result data"))}${evidence?.table?.rows?.length ? `<div class="mini-table-wrap"><table class="mini-table"><thead><tr>${evidence.table.headers.map((header) => `<th>${esc(header)}</th>`).join("")}</tr></thead><tbody>${evidence.table.rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<p class="muted-copy">${tr("テーブル結果なし", "No table result")}</p>`}</section>
+      <section>${reportSectionHeading("chart-no-axes-combined", tr("チャート", "Chart"))}${chartSpec ? `<div class="report-chart" data-chart-spec="${esc(encodeURIComponent(JSON.stringify(chartSpec)))}"></div>` : `<p class="muted-copy">${tr("チャートなし", "No chart")}</p>`}</section>
+    </div>
+  </article>`;
+}
+
+function renderRunDetailLegacy(run) {
   const context = run.context;
   const suiteRun = context ? state.suiteRuns.find((item) => item.id === context.suiteRunId) : null;
   const caseRun = suiteRun?.caseRuns?.find((item) => item.caseId === context?.caseId);
   const systemEvaluation = caseRun?.evaluation?.system || caseRun?.evaluation;
   const businessEvaluation = caseRun?.evaluation?.business;
   const isLive = run.summary?.status === "running";
+  const evidence = extractRunEvidenceClient(run);
   const events = (run.events || []).map((event, index) => {
     const matchedSql = event.kind === "data.matched_query"
       ? event.payload?.sqlQuery || event.payload?.exampleQuery?.sqlQuery || ""
@@ -3937,14 +4354,18 @@ function renderRunDetail(run) {
     return `<article class="trace-event"><span class="trace-dot ${event.severity}"></span><div><header><strong>${esc(translateApiMessage(event.label))}</strong><code>${esc(event.kind)} · #${index + 1}</code></header>${body}</div></article>`;
   }).join("");
   const title = context?.caseTitle || run.agentLabel || tr("単一テスト実行", "Single test run");
-  const subtitle = context
-    ? (context.suiteName || tr("評価レポート", "Evaluation report"))
-    : tr("単一プロンプトの実行", "Single prompt run");
+  const subtitle = state.runDetailTab === "trace"
+    ? tr("レスポンス詳細", "Response details")
+    : tr("実行サマリー", "Run summary");
   const backHref = context ? `#/reports/${context.suiteRunId}` : "#/run";
   const backLabel = context
     ? tr("評価レポートへ戻る", "Back to evaluation report")
     : tr("テスト実行へ戻る", "Back to test run");
-  const actions = `<button onclick="window.print()" class="button secondary">${icon("printer", 15)}${tr("印刷", "Print")}</button>`;
+  const actions = "";
+  const summaryContent = caseRun
+    ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, showRunLink: false })
+    : standaloneRunSummaryHtml(run, evidence);
+  const traceContent = `<section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンス詳細", "Response details")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>`;
   app.innerHTML = shell(`
     ${navHeader({ title, subtitle, backHref, backLabel, actions })}
     ${detailBody(`
@@ -3960,6 +4381,113 @@ function renderRunDetail(run) {
   if (isLive) {
     state.reportPollTimer = setTimeout(async () => {
       if (location.hash !== `#/runs/${run.id}`) return;
+      try {
+        const updated = await json(`/api/runs/${run.id}`);
+        state.runs = [updated, ...state.runs.filter((item) => item.id !== updated.id)];
+        state.selectedRun = updated;
+        renderRunDetail(updated);
+        refreshIcons();
+      } catch (error) {
+        notify(tr("進捗の更新に失敗しました: {message}", "Failed to refresh progress: {message}", { message: translateApiMessage(error.message) }));
+      }
+    }, 1500);
+  }
+}
+
+function renderRunDetail(run) {
+  state.selectedRun = run;
+  const context = run.context;
+  const suiteRun = context
+    ? (state.activeReport?.id === context.suiteRunId ? state.activeReport : state.suiteRuns.find((item) => item.id === context.suiteRunId))
+    : null;
+  const caseRun = suiteRun?.caseRuns?.find((item) => item.caseId === context?.caseId);
+  const isLive = run.summary?.status === "running";
+  const evidence = extractRunEvidenceClient(run);
+  const events = (run.events || []).map((event, index) => {
+    const matchedSql = event.kind === "data.matched_query"
+      ? event.payload?.sqlQuery || event.payload?.exampleQuery?.sqlQuery || ""
+      : "";
+    const body = event.kind.startsWith("text.")
+      ? `<p>${esc((event.payload?.parts || []).join("\n"))}</p>`
+      : event.kind === "data.generated_sql"
+        ? `<pre>${esc(typeof event.payload === "string" ? event.payload : JSON.stringify(event.payload, null, 2))}</pre>`
+        : matchedSql
+          ? `<div class="matched-sql-note">${icon("badge-check", 14)}${tr("検証済みクエリを再利用", "Reused verified query")}</div><pre>${esc(matchedSql)}</pre>`
+          : `<details><summary>${tr("イベントデータ", "Event data")}</summary><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></details>`;
+    return `<article class="trace-event"><span class="trace-dot ${event.severity}"></span><div><header><strong>${esc(translateApiMessage(event.label))}</strong><code>${esc(event.kind)} · #${index + 1}</code></header>${body}</div></article>`;
+  }).join("");
+  const title = context?.caseTitle || run.agentLabel || tr("単一テスト実行", "Single test run");
+  const subtitle = state.runDetailTab === "trace" ? tr("レスポンス詳細", "Response details") : tr("実行サマリー", "Run summary");
+  const backHref = context ? `#/reports/${context.suiteRunId}/cases/${encodeURIComponent(context.caseId || "")}` : "#/run";
+  const backLabel = context ? tr("評価レポートへ戻る", "Back to evaluation report") : tr("テスト実行へ戻る", "Back to test run");
+  const reportHeader = suiteRun
+    ? navHeader({
+        title: suiteRunLabel(suiteRun),
+        subtitle: suiteRun.id,
+        backHref: "#/reports",
+        backLabel: tr("評価レポート一覧に戻る", "Back to evaluation reports"),
+        actions: reportToolbarActions(suiteRun, { jsonButtonId: "open-context-report-json", pdfButtonId: "export-context-report-pdf" })
+      })
+    : navHeader({ title, subtitle, backHref, backLabel });
+  const contextHeader = context
+    ? `<section class="case-drilldown-header"><div class="case-drilldown-icon">${icon("list-tree", 19)}</div><div><span>${tr("テストケースの実行詳細を表示中", "Viewing test case run details")}</span><strong>${esc(context.caseTitle || title)}</strong><small>${esc(context.caseId || "")} · ${esc(subtitle)}</small></div><a class="case-drilldown-close" href="${esc(backHref)}" aria-label="${tr("実行詳細を閉じる", "Close run details")}" title="${tr("実行詳細を閉じる", "Close run details")}">${icon("x", 19)}</a></section>`
+    : `<section class="run-context"><div><span>${tr("選択中のケース", "Selected case")}</span><strong>${esc(title)}</strong></div><div><span>${tr("検証プロンプト", "Verification prompt")}</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>`;
+  const summaryContent = caseRun
+    ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, showRunLink: false })
+    : standaloneRunSummaryHtml(run, evidence);
+  const traceContent = `<section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンス詳細", "Response details")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>`;
+  app.innerHTML = shell(`
+    ${reportHeader}
+    ${detailBody(`
+      ${contextHeader}
+      <section class="report-metrics"><div><span>${tr("結果", "Result")}</span><strong>${statusPill(run.summary?.status || "running")}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${isLive ? tr("実行中…", "Running…") : fmtDuration(run.summary?.durationMs)}</strong></div><div><span>${tr("課金対象", "Bytes billed")}</span><strong>${fmtBytes(run.summary?.totalBytesBilled)}</strong></div><div><span>${tr("SQL / ジョブ", "SQL / jobs")}</span><strong>${run.summary?.sqlCount || 0} / ${run.summary?.jobCount || 0}</strong></div></section>
+      <div class="run-detail-tabs" role="tablist" aria-label="${tr("実行詳細の表示", "Run detail view")}">
+        <button type="button" role="tab" data-run-tab="summary" aria-selected="${state.runDetailTab === "summary"}" tabindex="${state.runDetailTab === "summary" ? "0" : "-1"}" class="${state.runDetailTab === "summary" ? "active" : ""}">${icon("layout-dashboard", 16)}${tr("サマリー", "Summary")}</button>
+        <button type="button" role="tab" data-run-tab="trace" aria-selected="${state.runDetailTab === "trace"}" tabindex="${state.runDetailTab === "trace" ? "0" : "-1"}" class="${state.runDetailTab === "trace" ? "active" : ""}">${icon("list-tree", 16)}${tr("レスポンス詳細", "Response details")}<small>${formatLocaleNumber((run.events || []).length)}</small></button>
+      </div>
+      <div class="run-tab-panel" role="tabpanel">${state.runDetailTab === "trace" ? traceContent : summaryContent}</div>
+    `)}
+  `, context ? "reports" : "run", "detail");
+  renderEvidenceCharts();
+  document.querySelector("#open-context-report-json")?.addEventListener("click", () => {
+    openJsonViewer({ title: suiteRunLabel(suiteRun), data: suiteRun });
+  });
+  document.querySelector("#export-context-report-pdf")?.addEventListener("click", async () => {
+    const button = document.querySelector("#export-context-report-pdf");
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        const filename = await downloadPdf(`/api/suite-runs/${suiteRun.id}/export/pdf`, `prismtrail-run-${suiteRun.id}.pdf`);
+        notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
+  });
+  const tabButtons = [...document.querySelectorAll("[data-run-tab]")];
+  tabButtons.forEach((button, index) => {
+    const activate = () => {
+      state.runDetailTab = button.dataset.runTab;
+      history.replaceState(null, "", `#/runs/${run.id}/${state.runDetailTab === "trace" ? "trace" : "summary"}`);
+      renderRunDetail(run);
+      refreshIcons();
+      window.scrollTo({ top: 0, behavior: "instant" });
+      document.querySelector(`[data-run-tab="${state.runDetailTab}"]`)?.focus({ preventScroll: true });
+    };
+    button.addEventListener("click", activate);
+    button.addEventListener("keydown", (event) => {
+      let nextIndex = null;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % tabButtons.length;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabButtons.length) % tabButtons.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = tabButtons.length - 1;
+      if (nextIndex === null) return;
+      event.preventDefault();
+      tabButtons[nextIndex].click();
+    });
+  });
+  if (isLive) {
+    state.reportPollTimer = setTimeout(async () => {
+      if (!location.hash.startsWith(`#/runs/${run.id}`)) return;
       try {
         const updated = await json(`/api/runs/${run.id}`);
         state.runs = [updated, ...state.runs.filter((item) => item.id !== updated.id)];
@@ -4006,9 +4534,24 @@ async function route() {
         renderSettings();
       }
       else if (parts[0] === "run") renderSingleRun();
-      else if (parts[0] === "reports" && parts[1]) renderReport(await json(`/api/suite-runs/${parts[1]}`));
+      else if (parts[0] === "reports" && parts[1]) {
+        const selectedCaseId = parts[2] === "cases" && parts[3] ? decodeURIComponent(parts[3]) : null;
+        const report = await json(`/api/suite-runs/${parts[1]}`);
+        state.activeReport = report;
+        renderReport(report, { selectedCaseId });
+      }
       else if (parts[0] === "reports") renderReports();
-      else if (parts[0] === "runs" && parts[1]) renderRunDetail(await json(`/api/runs/${parts[1]}`));
+      else if (parts[0] === "runs" && parts[1]) {
+        state.runDetailTab = parts[2] === "trace" ? "trace" : "summary";
+        const run = await json(`/api/runs/${parts[1]}`);
+        state.selectedRun = run;
+        if (run.context?.suiteRunId && state.activeReport?.id !== run.context.suiteRunId) {
+          state.activeReport = await json(`/api/suite-runs/${run.context.suiteRunId}`).catch(() =>
+            state.suiteRuns.find((item) => item.id === run.context.suiteRunId) || null
+          );
+        }
+        renderRunDetail(run);
+      }
       else if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
         const deepCaseId = parts[3] ? decodeURIComponent(parts[3]) : "";
         if (state.selectedSuite?.id !== parts[1]) {
@@ -4038,6 +4581,7 @@ async function route() {
         renderEditor();
       } else renderSuites();
       refreshIcons();
+      window.scrollTo({ top: 0, behavior: "instant" });
     } catch (error) {
       notify(error.message);
     }

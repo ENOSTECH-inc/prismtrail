@@ -131,6 +131,7 @@ test("summarizes system and business scores separately and weights the overall s
   assert.equal(summary.systemScore, 90);
   assert.equal(summary.businessScore, 75);
   assert.equal(summary.score, 81);
+  assert.deepEqual(summary.systemGrades, { A: 1, B: 0, C: 1, D: 0 });
   assert.deepEqual(summary.accuracyGrades, { A: 1, B: 0, C: 1, D: 0 });
 });
 
