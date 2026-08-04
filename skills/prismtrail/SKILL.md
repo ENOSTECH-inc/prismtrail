@@ -101,23 +101,24 @@ npm start
 Preferred path when the user asks to add or revise many cases:
 
 1. Confirm spreadsheet ID / connection and target suite (never invent them).
-2. Register the Data Agent if missing, then create or PATCH the suite via `/api/suites`.
-3. Push to Sheets with `POST /api/sheets/connections/:id/export-suite` and `{ "suiteId": "..." }`.
+2. Register the spreadsheet by `spreadsheetUrl` and its PrismTrail-managed `sheetName`, then link exactly one registered Data Agent. MCP `connect_google_sheet` requires `spreadsheetUrl`, `sheetName`, and the registered local `agentId`.
+3. Create or PATCH a suite whose default/case Agent IDs all resolve to that same Agent. Mixed-Agent suites cannot use Sheets.
+4. Push to Sheets with `POST /api/sheets/connections/:id/export-suite` and `{ "suiteId": "..." }`.
    This overwrites the managed `AgentEval_TestSuite` tab for that connection.
-4. Or open the editor UI → **テストケース** → **Gシートで編集** (save + export, then open).
-5. Edit rows in Sheets. Sheet **Data Agent ID** values are the GCP remote id
+5. Or open the editor UI → **テストケース** → **Gシートで編集** (save + export to that Agent's connection, then open).
+6. Edit rows in Sheets. Sheet **Data Agent ID** values are the GCP remote id
    (for example `agent_marketing_marts_core_adhoc_v1`), not PrismTrail local ids.
-6. Bring changes back with suite paste import (`/api/suites/import-paste`) or
+7. Bring changes back with suite paste import (`/api/suites/import-paste`) or
    `POST /api/sheets/connections/:id/import-suite`.
-7. Accept Sheets display formats such as `120,000 ms` / `0 bytes` when pasting; the importer
+8. Accept Sheets display formats such as `120,000 ms` / `0 bytes` when pasting; the importer
    normalizes them.
 
 Managed tabs owned by the app:
 
 - `AgentEval_TestSuite` — active suite definition (metadata + cases)
 - `AgentEval_Report` — run report export
-- `AgentEval_DataAgents` — registered agent catalog
-- `AgentEval_Suites` — suite catalog
+- `AgentEval_DataAgents` — only the Data Agent that owns this spreadsheet
+- `AgentEval_Suites` — only suites owned exclusively by that Data Agent
 
 Do not modify unrelated user tabs on the same spreadsheet.
 

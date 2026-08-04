@@ -199,12 +199,18 @@ of being converted into a fabricated D grade.
 
 ## Google Sheets
 
-Share a spreadsheet with the ADC identity and connect it from the application. The app owns only:
+Share spreadsheets with the ADC identity, register each spreadsheet by URL and a PrismTrail-managed
+sheet name, then link one registered Data Agent. Three agents therefore use three isolated spreadsheets. Suite import/export, report
+writeback, automatic export, and catalog synchronization run only when the resource's effective
+agent matches the connection owner. The app owns only:
 
 - `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including business acceptance conditions, structured accuracy-source JSON, and newline-separated provenance URLs
 - `AgentEval_Report` — read-only suite-run summary and case results
+- `AgentEval_DataAgents` — the single Data Agent that owns the spreadsheet
+- `AgentEval_Suites` — suites that use only that owning Data Agent
 
-The app clears and rewrites those fixed tabs while preserving their sheet IDs. It does not modify
+The app clears and rewrites those fixed tabs while preserving their sheet IDs. Mixed-agent suites
+and imports or exports targeting a different agent are rejected server-side. It does not modify
 user-created tabs. Imported values are validated server-side; hidden columns and pasted data are
 not trusted.
 
@@ -248,6 +254,10 @@ registration, upload, sync, search, and planning; Google Sheets connection, impo
 suite editing; and storage inspection/switching. Storage switching requires its own elevated scope
 plus a five-minute, token-bound preview confirmation. Source data is never deleted. Delete, purge,
 run-cancel, arbitrary HTTP, and shell tools are intentionally not registered.
+
+MCP `connect_google_sheet` requires `spreadsheetUrl`, the PrismTrail-managed `sheetName`, and the registered local `agentId`.
+Listing, checking, suite import/export, and report export enforce the same agent isolation rules as
+the UI and REST API.
 
 The MCP endpoint and token-management UI follow the same local-workstation boundary as the rest of
 PrismTrail. Do not expose the Docker port to an untrusted network. A remote deployment must add TLS

@@ -6,7 +6,7 @@
 - `TestSuite`: a reusable collection of prompts, selected agents, thinking modes, and deterministic expectations.
 - `Run`: the existing single-prompt execution capture, including normalized events and BigQuery job metadata.
 - `SuiteRun`: an immutable suite snapshot plus one evaluated result per case.
-- `SheetConnection`: metadata for one ADC-accessible Google Spreadsheet. Cell values and access tokens are not persisted.
+- `SheetConnection`: metadata for one ADC-accessible Google Spreadsheet. `sheetName` is the PrismTrail-managed display name, while `title` records the current Google-side title. The spreadsheet is owned by exactly one registered `DataAgent` through `agentId`. Cell values and access tokens are not persisted.
 
 Domain JSON is persisted through a switchable primary-storage interface. Local storage uses
 `data/<namespace>/<id>.json`; GCS uses
@@ -103,6 +103,15 @@ The same retrieval path grounds suite editing and the Data Agent planner. This k
 
 The local server calls Google Sheets API v4 with the same short-lived ADC access token used by the Google Cloud integrations. A connection stores only spreadsheet metadata and operation timestamps.
 
+Every registered Data Agent may own at most one Sheet connection, and one spreadsheet may belong to
+at most one Data Agent. All connection, bootstrap, suite import/export, report export, catalog sync,
+automatic report writeback, UI shortcuts, and MCP operations enforce that ownership on the server.
+`AgentEval_DataAgents` contains only the owning agent, while `AgentEval_Suites` contains only suites
+whose effective case agents resolve uniquely to that owner. Mixed-agent suites are never written to
+a sheet. Legacy unowned connections are auto-assigned only when exactly one registered agent and one
+unowned connection make the mapping unambiguous; otherwise they remain inactive until explicitly
+reconnected with an Agent.
+
 Exports use schema version 2; schema version 1 remains import-compatible:
 
 - `AgentEval_TestSuite`: editable suite metadata and case rows (including free-form case `memo`, which is not used for scoring)
@@ -122,7 +131,7 @@ Imports accept both the legacy machine-oriented English labels and the Japanese 
 
 `POST /api/suite-runs/:id/cancel` aborts the in-process controller for a live run (status becomes `cancelling`, then `cancelled`). Already finished case results are kept; in-flight Data Agent calls are aborted via `AbortSignal`; cases that never started are recorded as `cancelled`. If the process restarted and the in-memory controller is gone, cancel force-finalizes the persisted run as `cancelled` so the suite is not stuck behind a 409.
 
-Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The most recently used ready Sheets connection is the automatic destination. Export failure is recorded on the Run without changing the completed evaluation result.
+Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate the one-spreadsheet/one-agent invariant. After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The automatic destination is the one ready connection whose `agentId` matches the Suite Run's immutable suite snapshot; recent activity never changes routing. Export failure is recorded on the Run without changing the completed evaluation result.
 
 SQL evidence is normalized across three valid execution paths: a `data.generated_sql` event, a verified `data.matched_query` carrying `exampleQuery.sqlQuery`, or a BigQuery query job. This prevents the verified-query reuse path from failing `requireSql`. Run detail responses also resolve their originating Suite Run and case by stored context or reverse lookup, allowing old and new runs to render the same breadcrumb and back-navigation contract. Completed Suite Runs with the legacy false-negative SQL check are corrected in the API view without mutating the original trace.
 
