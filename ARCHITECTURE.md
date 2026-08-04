@@ -57,6 +57,23 @@ Node.js process may call `gcloud auth application-default print-access-token`; i
 to the active non-ADC gcloud user token. Access tokens remain in memory and are never written to
 JSON or sent to the browser.
 
+The server requests the complete application scope set (`cloud-platform` and `spreadsheets`) and
+exposes a token-free `GET /api/auth/readiness` preflight. It introspects the short-lived token,
+caches only public capability status for one minute, and reports Cloud and Sheets readiness
+separately. The shared UI renders failures on every page, links to the Settings authentication
+panel, and blocks known-incompatible external API mutations before sending them. An unavailable
+token-introspection service is reported as `unknown` and remains non-blocking so a temporary
+diagnostic outage does not disable otherwise valid credentials.
+Because Sheets is outside the Google Cloud scope set, recovery guidance uses keyless impersonation
+of a service account that has been granted access to each spreadsheet. The UI does not present the
+blocked bare-scope flow or a custom Desktop OAuth client flow.
+Managed local environments prefer keyless impersonation from user ADC. The design does not create
+downloaded service-account key JSON or store it in Secret Manager. The browser may interpolate a
+validated service-account email into setup commands, but credentials and tokens never enter browser
+state or API responses. Impersonated ADC uses the service account's project for quota and is not
+compatible with the user-credential-only `gcloud auth application-default set-quota-project`
+command.
+
 ## Execution
 
 Suite cases run sequentially to limit rate and cost surprises. Each case calls the same Data Agent execution path as the single test screen, then evaluates:

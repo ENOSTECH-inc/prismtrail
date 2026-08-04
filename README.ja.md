@@ -96,10 +96,20 @@ CLIは識別子を検証し、Git管理対象外の`.env`だけを書き込み�
 
 ```bash
 gcloud auth application-default login \
+  --impersonate-service-account=SERVICE_ACCOUNT_EMAIL \
   --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
-
-gcloud auth application-default set-quota-project your-google-cloud-project
 ```
+
+起動後は「設定 → Google認証」でADCと`cloud-platform` / `spreadsheets` scopeを事前診断できます。
+不足が判明している場合、全画面に警告を表示し、Data Agent実行、GCS、Google Sheetsなどの
+外部API操作をリクエスト送信前に停止します。アクセストークンはブラウザへ返しません。
+Google SheetsはGoogle Cloud外scopeのため、対象シートを共有したサービスアカウントを
+`--impersonate-service-account`で利用してください。
+組織管理のローカル利用では、ユーザーADCを元に短期トークンだけを発行する鍵なしImpersonationを
+推奨します。サービスアカウント鍵JSONをSecret Managerへ保存しません。設定画面でサービス
+アカウントのEメールを入力すると、IAM付与とADCログインのコマンドへ即時反映されます。
+Impersonation ADCではサービスアカウント所属プロジェクトがquota projectになるため、
+`gcloud auth application-default set-quota-project`は実行しません。
 
 ### 4. 診断して起動
 

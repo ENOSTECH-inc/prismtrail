@@ -31,6 +31,8 @@ const MCP_CLIENTS = Object.freeze({
 
 const state = {
   config: null,
+  authReadiness: null,
+  authServiceAccountEmail: "",
   agents: [],
   knowledgeSources: [],
   suites: [],
@@ -50,7 +52,9 @@ const state = {
   mcpConfig: null,
   mcpNewToken: null,
   mcpClient: "codex",
-  settingsTab: localStorage.getItem("prismtrail-settings-tab") === "mcp" ? "mcp" : "storage",
+  settingsTab: ["auth", "storage", "mcp"].includes(localStorage.getItem("prismtrail-settings-tab"))
+    ? localStorage.getItem("prismtrail-settings-tab")
+    : "auth",
   selectedSuite: null,
   selectedCaseIndex: 0,
   editorTab: "cases",
@@ -254,10 +258,63 @@ function askConfirm(message, { confirmLabel = tr("続ける", "Continue"), cance
 }
 
 async function json(url, options) {
+  const requiredFeature = googleAuthFeatureForRequest(url, options);
+  const readiness = requiredFeature
+    ? state.authReadiness?.features?.find((feature) => feature.id === requiredFeature)
+    : null;
+  if (readiness && ["missing", "unavailable"].includes(readiness.status)) {
+    throw new Error(tr(
+      "Google認証の準備が完了していません。設定 → Google認証でADCと必要scopeを確認してください。",
+      "Google authentication is not ready. Open Settings → Google authentication and verify ADC scopes."
+    ));
+  }
   const response = await fetch(url, options);
   const body = await response.json();
   if (!response.ok) throw new Error(translateApiMessage(body.error?.message || body.error || `HTTP ${response.status}`));
   return body;
+}
+
+function googleAuthFeatureForRequest(rawUrl, options = {}) {
+  const method = String(options?.method || "GET").toUpperCase();
+  const path = String(rawUrl || "").split("?")[0];
+  if (path.startsWith("/api/sheets/") && method !== "GET") return "sheets";
+  if (method === "POST" && (/^\/api\/runs$/.test(path) || /^\/api\/suites\/[^/]+\/run$/.test(path))) return "cloud";
+  if (method === "POST" && /^\/api\/agents\/[^/]+\/check$/.test(path)) return "cloud";
+  if (path.startsWith("/api/gcs/")) return "cloud";
+  if (/^\/api\/knowledge-sources\/[^/]+(?:\/(?:sync|upload))?$/.test(path)) return "cloud";
+  if (method === "POST" && (path === "/api/knowledge/plan" || /\/assistant$/.test(path))) return "cloud";
+  if (method !== "GET" && path.startsWith("/api/storage/")) {
+    try {
+      const body = JSON.parse(options?.body || "{}");
+      if (body.driver === "gcs" || body.destination?.driver === "gcs") return "cloud";
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function googleAuthStatus() {
+  const status = state.authReadiness?.status || "checking";
+  return {
+    status,
+    ready: status === "ready",
+    label: ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
+    detail: status === "ready"
+      ? tr("必要scopeを確認済み", "Required scopes verified")
+      : state.authReadiness?.message || tr("Google認証を確認しています", "Checking Google authentication")
+  };
+}
+
+function googleAuthBanner() {
+  const auth = googleAuthStatus();
+  if (auth.ready || auth.status === "checking") return "";
+  const iconName = auth.status === "unavailable" ? "circle-x" : auth.status === "unknown" ? "circle-help" : "triangle-alert";
+  return `<section class="global-auth-alert ${esc(auth.status)}" role="status">
+    ${icon(iconName, 18)}
+    <div><strong>${esc(auth.label)}</strong><p>${esc(auth.detail)}</p></div>
+    <a class="button secondary small" href="#/settings/auth">${tr("Google認証を確認", "Review Google authentication")}</a>
+  </section>`;
 }
 
 function isApplePlatform() {
@@ -848,6 +905,7 @@ function shell(content, active = "suites", mode = false) {
   const collapsed = state.sidebarCollapsed;
   const mainClass = mode === "detail" ? "main detail-mode" : "main";
   const storage = storageModeSummary();
+  const auth = googleAuthStatus();
   return `
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
@@ -884,14 +942,14 @@ function shell(content, active = "suites", mode = false) {
             <span class="live-dot" aria-hidden="true"></span>
             <span class="auth-copy"><strong>${esc(storage.label)}</strong><small>${esc(storage.detail)}</small></span>
           </a>
-          <div class="sidebar-status sidebar-auth" title="Google Cloud ADC">
+          <a class="sidebar-status sidebar-auth auth-${esc(auth.status)}" href="#/settings/auth" title="${esc(auth.detail)}">
             <span class="live-dot" aria-hidden="true"></span>
-            <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(state.config?.billingProject || tr("接続確認中", "Checking connection"))}</small></span>
-          </div>
+            <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(auth.label)}</small></span>
+          </a>
           ${localeSelector(collapsed)}
         </div>
       </aside>
-      <main class="${mainClass}">${content}</main>
+      <main class="${mainClass}">${googleAuthBanner()}${content}</main>
     </div>`;
 }
 
@@ -2772,7 +2830,7 @@ function bindKnowledge() {
 function renderAgents() {
   app.innerHTML = shell(`
     ${pageHead("データエージェント", "Google Cloud上の既存Data Agentを、テスト対象として安全に登録します。", `<button id="register-agent" class="button primary">${icon("plus", 16)}Agentを登録</button>`)}
-    <div class="auth-banner">${icon("shield-check", 22)}<div><strong>アプリケーション既定認証情報（ADC）</strong><p>ローカルADCを優先し、利用できない場合はgcloudログインへフォールバックします。トークンは保存しません。</p></div><code>gcloud auth application-default login</code></div>
+    <div class="auth-banner">${icon("shield-check", 22)}<div><strong>アプリケーション既定認証情報（ADC）</strong><p>ADCと必要scopeは共通の事前診断で確認します。トークンは保存しません。</p></div><a class="button secondary small" href="#/settings/auth">${icon("key-round", 13)}Google認証を確認</a></div>
     <section class="table-panel">
       <table><thead><tr><th>Data Agent</th><th>プロジェクト / ロケーション</th><th>専用Google Sheet</th><th>接続状態</th><th>最終確認</th><th></th></tr></thead>
       <tbody>${state.agents.map((agent) => {
@@ -2870,7 +2928,7 @@ function renderSheets() {
     ${pageHead("Google Sheets連携", "Googleスプレッドシートを登録し、その接続先としてData Agentを1つ選びます。Agent間のデータは混在しません。", `<a href="#/suites" class="button secondary">${icon("layers-3", 15)}スイートを作成・編集</a>`)}
     <section class="sheets-auth">
       <div class="sheets-auth-copy">${icon("shield-check", 24)}<div><strong>アプリケーション既定認証情報（ADC）で接続</strong><p>ADCのGoogleアカウントへ対象シートを共有してください。アクセストークンやセル内容は保存しません。</p></div></div>
-      <code>gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets</code>
+      <a class="button bright small" href="#/settings/auth">${icon("key-round", 13)}${tr("認証方式とscopeを確認", "Review authentication method and scopes")}</a>
     </section>
     <section class="sheet-connect-panel">
       <form id="sheet-connect-form">
@@ -3055,6 +3113,137 @@ function renderStorageOverview(overview, { candidate = false, destination = "" }
     </section>`;
 }
 
+function authFeatureStatusLabel(status) {
+  return ({
+    ready: tr("利用可能", "Available"),
+    missing: tr("scope不足", "Missing scope"),
+    unavailable: tr("ADC未設定", "ADC unavailable"),
+    unknown: tr("未確認", "Unverified")
+  })[status] || tr("確認中", "Checking");
+}
+
+function validServiceAccountEmail(value) {
+  return /^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/i.test(String(value || "").trim());
+}
+
+function resolvedAuthCommand(option, command) {
+  if (option?.id !== "service-account") return command;
+  return String(command || "").replaceAll(
+    "SERVICE_ACCOUNT_EMAIL",
+    validServiceAccountEmail(state.authServiceAccountEmail)
+      ? state.authServiceAccountEmail.trim()
+      : "SERVICE_ACCOUNT_EMAIL"
+  );
+}
+
+function authSetupOptionCopy() {
+  return {
+    title: tr("鍵なしでサービスアカウントをimpersonate", "Keyless service account impersonation"),
+    badge: tr("おすすめ", "Recommended"),
+    description: tr("ユーザーADCを元に短期トークンを発行します。サービスアカウント鍵JSONをダウンロードしたり、ローカルへ保存したりしません。", "Uses user ADC to mint short-lived tokens. No service account key JSON is downloaded or stored locally."),
+    caution: tr("利用者は現在のgcloudアクティブアカウントから自動取得します。最初のIAMコマンドは管理者が実行してください。", "The user is resolved from the active gcloud account. An administrator must run the first IAM command."),
+    steps: [
+      tr("管理者: PrismTrail専用サービスアカウントを用意し、必要最小限の権限だけを付与する。", "Admin: Create a dedicated PrismTrail service account with least-privilege roles."),
+      tr("管理者: 利用者へ Service Account Token Creator を付与する（下の1つ目のコマンド）。", "Admin: Grant the user Service Account Token Creator using the first command below."),
+      tr("シート管理者: 対象Googleスプレッドシートをサービスアカウントのメールアドレスへ共有する。", "Sheet owner: Share each target spreadsheet with the service account email."),
+      tr("利用者: 2つ目のコマンドでImpersonation付きADCログインを行う。quota projectの追加設定は不要です。", "User: Use the second command to sign in to ADC with impersonation. No separate quota-project command is needed."),
+      tr("PrismTrail: 「認証状態を再確認」を押してCloudとSheetsの両方が利用可能になったことを確認する。", "PrismTrail: Recheck authentication and confirm both Cloud and Sheets are available.")
+    ]
+  };
+}
+
+function renderGoogleAuthSettings() {
+  const auth = state.authReadiness;
+  if (!auth) {
+    return `<section class="settings-panel auth-readiness-panel"><div class="auth-readiness-loading">${icon("loader-circle", 18)}${tr("Google認証を確認しています…", "Checking Google authentication…")}</div></section>`;
+  }
+  const status = googleAuthStatus();
+  return `<section class="settings-panel auth-readiness-panel">
+    <div class="settings-section-head">
+      <div><h2>${tr("Google認証の事前診断", "Google authentication preflight")}</h2><p>${tr("外部APIを操作する前に、ADCと必要なOAuth scopeを確認します。アクセストークンは画面へ返しません。", "Verify ADC and required OAuth scopes before calling external APIs. Access tokens are never returned to the browser.")}</p></div>
+      <span class="auth-overall-status ${esc(auth.status)}">${icon(status.ready ? "badge-check" : "triangle-alert", 14)}${esc(status.label)}</span>
+    </div>
+    <div class="auth-feature-grid">${(auth.features || []).map((feature) => `
+      <article class="auth-feature-card ${esc(feature.status)}">
+        <header><span>${icon(feature.id === "sheets" ? "sheet" : "cloud", 18)}</span><div><strong>${esc(feature.label)}</strong><small>${esc(authFeatureStatusLabel(feature.status))}</small></div></header>
+        <code>${esc(feature.scope)}</code>
+        <p>${(feature.features || []).map(esc).join(" / ")}</p>
+      </article>`).join("")}</div>
+    <div class="auth-readiness-meta">
+      <span><b>${tr("認証元", "Auth source")}</b>${esc(auth.authSource || tr("未取得", "Unavailable"))}</span>
+      <span><b>${tr("最終確認", "Last checked")}</b>${fmtDate(auth.checkedAt)}</span>
+      <span><b>${tr("トークン期限", "Token expiry")}</b>${fmtDate(auth.expiresAt)}</span>
+    </div>
+    <div class="auth-setup-guide">
+      <strong>${tr("認証方式を選択", "Choose an authentication method")}</strong>
+      <p>${tr("SheetsはGoogle Cloud外scopeのため、鍵なしサービスアカウントImpersonationを使用します。", "Sheets is outside Google Cloud scopes, so use keyless service account impersonation.")}</p>
+      <aside class="auth-key-warning">
+        ${icon("shield-alert", 18)}
+        <div><strong>${tr("サービスアカウント鍵をSecret Managerへ保存しない", "Do not store service account keys in Secret Manager")}</strong><p>${tr("Secret Managerへアクセスする既存IDがあるなら、そのIDから鍵なしImpersonationを利用できます。長期鍵を作成・配布・ローテーションする運用は増やしません。", "If an existing identity can access Secret Manager, use that identity for keyless impersonation instead. Avoid creating, distributing, and rotating another long-lived key.")}</p></div>
+      </aside>
+      <div class="auth-setup-options">${(auth.setupOptions || []).map((option) => {
+        const copy = authSetupOptionCopy();
+        return `<article class="auth-setup-option ${option.recommended ? "recommended" : ""}">
+          <header><div><strong>${esc(copy.title)}</strong><span>${esc(copy.badge)}</span></div><div class="auth-doc-links"><a href="${esc(option.docsUrl)}" target="_blank" rel="noreferrer">${tr("公式手順", "Official guide")} ${icon("external-link", 12)}</a>${option.securityDocsUrl ? `<a href="${esc(option.securityDocsUrl)}" target="_blank" rel="noreferrer">${tr("鍵の安全指針", "Key security")} ${icon("external-link", 12)}</a>` : ""}</div></header>
+          <p>${esc(copy.description)}</p>
+          ${option.id === "service-account" ? `<label class="auth-service-account-field"><span>${tr("サービスアカウントのEメール", "Service account email")}</span><input id="auth-service-account-email" type="email" autocomplete="off" spellcheck="false" placeholder="prismtrail@project-id.iam.gserviceaccount.com" value="${esc(state.authServiceAccountEmail)}"><small id="auth-service-account-hint">${tr("入力すると下のコマンドへ即時反映されます。", "Commands update as soon as you enter an email.")}</small></label>` : ""}
+          ${copy.steps?.length ? `<ol class="auth-manual-steps">${copy.steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>` : ""}
+          <small>${icon("info", 12)}${esc(copy.caution)}</small>
+          ${(option.commands || []).map((command, index) => `<div class="auth-command" data-auth-command-option="${esc(option.id)}" data-auth-command-index="${index}"><code>${esc(resolvedAuthCommand(option, command))}</code><button class="button secondary small" type="button" data-copy-auth-command="${esc(option.id)}:${index}" ${option.id === "service-account" && !validServiceAccountEmail(state.authServiceAccountEmail) ? "disabled" : ""}>${icon("copy", 13)}${tr("コピー", "Copy")}</button></div>`).join("")}
+        </article>`;
+      }).join("")}</div>
+    </div>
+    <div class="settings-actions">
+      <button id="check-google-auth" class="button primary" type="button">${icon("refresh-cw", 15)}${tr("認証状態を再確認", "Recheck authentication")}</button>
+    </div>
+  </section>`;
+}
+
+function bindGoogleAuthSettings() {
+  document.querySelector("#check-google-auth")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withButtonBusy(button, tr("確認中…", "Checking…"), async () => {
+        state.authReadiness = await json("/api/auth/readiness?refresh=1");
+        renderSettings();
+        refreshIcons();
+      });
+    } catch (error) {
+      notify(error.message);
+    }
+  });
+  document.querySelector("#auth-service-account-email")?.addEventListener("input", (event) => {
+    state.authServiceAccountEmail = event.currentTarget.value.trim();
+    const valid = validServiceAccountEmail(state.authServiceAccountEmail);
+    const option = state.authReadiness?.setupOptions?.find((item) => item.id === "service-account");
+    document.querySelectorAll('[data-auth-command-option="service-account"]').forEach((row) => {
+      const command = option?.commands?.[Number(row.dataset.authCommandIndex)];
+      const code = row.querySelector("code");
+      const button = row.querySelector("button");
+      if (code && command) code.textContent = resolvedAuthCommand(option, command);
+      if (button) button.disabled = !valid;
+    });
+    const hint = document.querySelector("#auth-service-account-hint");
+    if (hint) {
+      hint.textContent = valid
+        ? tr("入力済みです。表示中のコマンドをそのままコピーできます。", "Ready. The displayed commands can be copied as-is.")
+        : tr("有効な .iam.gserviceaccount.com のEメールを入力してください。", "Enter a valid .iam.gserviceaccount.com email.");
+      hint.classList.toggle("valid", valid);
+    }
+  });
+  document.querySelectorAll("[data-copy-auth-command]").forEach((button) => button.addEventListener("click", async () => {
+    const [optionId, rawIndex] = button.dataset.copyAuthCommand.split(":");
+    const option = state.authReadiness?.setupOptions?.find((item) => item.id === optionId);
+    const command = resolvedAuthCommand(option, option?.commands?.[Number(rawIndex)]);
+    if (optionId === "service-account" && !validServiceAccountEmail(state.authServiceAccountEmail)) {
+      return notify(tr("サービスアカウントのEメールを入力してください。", "Enter the service account email."));
+    }
+    if (!command) return;
+    await navigator.clipboard.writeText(command);
+    notify(tr("コマンドをコピーしました。", "Command copied."), "success");
+  }));
+}
+
 function renderSettings() {
   const config = state.storageConfig || {
     driver: "gcs",
@@ -3074,11 +3263,15 @@ function renderSettings() {
   const test = state.storageTestResult;
 
   app.innerHTML = shell(`
-    ${pageHead("設定", "ストレージとMCP連携を整理して設定できます。")}
+    ${pageHead("設定", "Google認証、ストレージ、MCP連携を整理して設定できます。")}
     <nav class="settings-tabs" role="tablist" aria-label="設定カテゴリ">
+      <button class="settings-tab ${state.settingsTab === "auth" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "auth"}" data-settings-tab="auth">${icon("shield-check", 15)}<span><strong>${tr("Google認証", "Google authentication")}</strong><small>ADC · OAuth scope</small></span></button>
       <button class="settings-tab ${state.settingsTab === "storage" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "storage"}" data-settings-tab="storage">${icon("database", 15)}<span><strong>ストレージ</strong><small>保存先・移行・同期</small></span></button>
       <button class="settings-tab ${state.settingsTab === "mcp" ? "active" : ""}" type="button" role="tab" aria-selected="${state.settingsTab === "mcp"}" data-settings-tab="mcp">${icon("plug-zap", 15)}<span><strong>MCP連携</strong><small>トークン・接続設定</small></span></button>
     </nav>
+    <div class="settings-tab-panel ${state.settingsTab === "auth" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "auth" ? "hidden" : ""}>
+    ${renderGoogleAuthSettings()}
+    </div>
     <div class="settings-tab-panel ${state.settingsTab === "storage" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "storage" ? "hidden" : ""}>
     <form id="storage-settings-form" class="storage-settings-form">
       <section class="settings-panel">
@@ -3157,6 +3350,7 @@ function renderSettings() {
   }));
   bindStorageSettings();
   bindMcpSettings();
+  bindGoogleAuthSettings();
 }
 
 function mcpScopeLabel(scope) {
@@ -3746,12 +3940,18 @@ async function route() {
       else if (parts[0] === "sheets") renderSheets();
       else if (parts[0] === "agents") renderAgents();
       else if (parts[0] === "settings") {
-        const [storage, mcp] = await Promise.all([
+        if (["auth", "storage", "mcp"].includes(parts[1])) {
+          state.settingsTab = parts[1];
+          localStorage.setItem("prismtrail-settings-tab", state.settingsTab);
+        }
+        const [storage, mcp, authReadiness] = await Promise.all([
           state.storageConfig?.overview ? state.storageConfig : json("/api/storage/config").catch(() => state.storageConfig),
-          json("/api/mcp/config").catch(() => state.mcpConfig)
+          json("/api/mcp/config").catch(() => state.mcpConfig),
+          json("/api/auth/readiness").catch(() => state.authReadiness)
         ]);
         state.storageConfig = storage;
         state.mcpConfig = mcp;
+        state.authReadiness = authReadiness;
         renderSettings();
       }
       else if (parts[0] === "run") renderSingleRun();
@@ -3797,8 +3997,9 @@ async function initialize() {
   setBusyOverlay(true, tr("データを読み込み中…", "Loading data…"));
   setRouteProgress(true);
   try {
-    const [config, agents, knowledgeSources, suites, suiteRuns, sheetConnections, storageConfig] = await Promise.all([
+    const [config, authReadiness, agents, knowledgeSources, suites, suiteRuns, sheetConnections, storageConfig] = await Promise.all([
       json("/api/config"),
+      json("/api/auth/readiness").catch(() => null),
       json("/api/agents"),
       json("/api/knowledge-sources"),
       json("/api/suites"),
@@ -3808,6 +4009,7 @@ async function initialize() {
     ]);
     Object.assign(state, {
       config,
+      authReadiness,
       agents: agents.agents,
       knowledgeSources: knowledgeSources.sources,
       suites: suites.suites,

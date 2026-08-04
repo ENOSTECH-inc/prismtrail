@@ -11,6 +11,7 @@ import {
   generateAgentPlan,
   generateSuiteAssistantReply,
   getDataAgent,
+  GOOGLE_ADC_SCOPES,
   judgeBusinessAccuracy,
   judgeResponseWithContext,
   listGcsBuckets,
@@ -18,6 +19,7 @@ import {
   uploadGcsObject,
   validateGcpProjectId
 } from "./lib/google-cloud.mjs";
+import { diagnoseGoogleAuth, googleAuthSetupOptions } from "./lib/google-auth-readiness.mjs";
 import { normalizeMessages, summarizeRun } from "./lib/normalize.mjs";
 import {
   appendContextEvaluation,
@@ -223,6 +225,21 @@ const host = process.env.HOST || "127.0.0.1";
 const SUITE_RUN_MAX_CONCURRENCY = 30;
 const SHEET_CONNECTION_SCHEMA_VERSION = 3;
 const storageSwitchConfirmations = new Map();
+let cachedGoogleAuthReadiness = { value: null, expiresAt: 0 };
+
+async function googleAuthReadiness({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && cachedGoogleAuthReadiness.value && cachedGoogleAuthReadiness.expiresAt > now) {
+    return cachedGoogleAuthReadiness.value;
+  }
+  const readiness = await diagnoseGoogleAuth();
+  const value = {
+    ...readiness,
+    setupOptions: googleAuthSetupOptions(config.billingProject)
+  };
+  cachedGoogleAuthReadiness = { value, expiresAt: now + 60_000 };
+  return value;
+}
 
 async function writeMcpAudit(event) {
   await mkdir(path.dirname(mcpAuditPath), { recursive: true, mode: 0o700 });
@@ -434,7 +451,7 @@ async function resolveUpdatedBy() {
   try {
     const { GoogleAuth } = await import("google-auth-library");
     const auth = new GoogleAuth({
-      scopes: ["https://www.googleapis.com/auth/cloud-platform"]
+      scopes: GOOGLE_ADC_SCOPES
     });
     const credentials = await auth.getCredentials();
     if (credentials?.client_email) value = credentials.client_email;
@@ -2230,6 +2247,10 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/config") {
       sendJson(response, 200, config);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/auth/readiness") {
+      sendJson(response, 200, await googleAuthReadiness({ force: url.searchParams.get("refresh") === "1" }));
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/storage/config") {

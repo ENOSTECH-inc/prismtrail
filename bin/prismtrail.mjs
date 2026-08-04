@@ -8,6 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { diagnoseGoogleAuth } from "../lib/google-auth-readiness.mjs";
 
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = path.join(rootDirectory, ".env");
@@ -174,7 +175,7 @@ async function initialize(flags) {
     await writeFile(envPath, contents, { encoding: "utf8", mode: 0o600 });
     console.log(`Created ${envPath}`);
     if (existing) console.log(`Backup: ${envPath}.backup`);
-    console.log("Next: gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets");
+    console.log("Next: use Settings → Google authentication to configure keyless service-account impersonation");
     console.log("Then: npm run setup -- doctor");
   } finally {
     terminal?.close();
@@ -192,6 +193,18 @@ async function doctor(flags) {
     name: "Application Default Credentials",
     ok: commandAvailable("gcloud", ["auth", "application-default", "print-access-token"])
   });
+  try {
+    const readiness = await diagnoseGoogleAuth();
+    checks.push({
+      name: "Required Google OAuth scopes",
+      ok: readiness.status === "ready" || readiness.status === "unknown",
+      detail: readiness.status === "ready"
+        ? "cloud-platform + spreadsheets"
+        : `${readiness.missingScopes.join(", ") || readiness.message}; use keyless --impersonate-service-account authentication`
+    });
+  } catch (error) {
+    checks.push({ name: "Required Google OAuth scopes", ok: false, detail: error.message });
+  }
 
   const envExists = await fileExists(envPath);
   checks.push({ name: ".env configuration", ok: envExists });
