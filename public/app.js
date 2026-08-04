@@ -3622,6 +3622,32 @@ function renderReports() {
   app.innerHTML = shell(`${pageHead("評価レポート", "スイートの品質、速度、BigQuery利用量をチーム共有向けにまとめます。")}<section class="table-panel"><table><thead><tr><th>実行ログ</th><th>結果</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("レポートがありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
 }
 
+function suiteAiSummaryHtml(report, { isLive = false } = {}) {
+  const summary = report.aiSummary || { status: isLive ? "pending" : "missing" };
+  if (summary.status === "succeeded") {
+    const groups = [
+      [tr("良かった点", "Strengths"), summary.strengths],
+      [tr("確認ポイント", "Concerns"), summary.concerns],
+      [tr("次のアクション", "Next actions"), summary.nextActions]
+    ].filter(([, items]) => Array.isArray(items) && items.length);
+    return `<section class="ai-summary-card succeeded">
+      <div class="ai-summary-icon">${icon("sparkles", 22)}</div>
+      <div class="ai-summary-content">
+        <span class="ai-summary-eyebrow">${tr("Gemini AIコメント", "Gemini AI comment")}</span>
+        <h2>${esc(summary.headline)}</h2>
+        <p>${esc(summary.comment)}</p>
+        ${groups.length ? `<div class="ai-summary-groups">${groups.map(([label, items]) => `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>`).join("")}</div>` : ""}
+        <small>${tr("確定済み評価の要約です。合否・点数は変更しません。", "This summarizes finalized evaluations and does not change scores or pass/fail results.")} · ${esc(summary.model || "Gemini")}</small>
+      </div>
+      <button id="regenerate-ai-summary" class="button secondary" type="button">${icon("refresh-cw", 14)}${tr("再生成", "Regenerate")}</button>
+    </section>`;
+  }
+  if (summary.status === "generating" || summary.status === "pending" || isLive) {
+    return `<section class="ai-summary-card generating"><span class="live-spinner"></span><div class="ai-summary-content"><span class="ai-summary-eyebrow">${tr("Gemini AIコメント", "Gemini AI comment")}</span><h2>${tr("全ケースの結果を要約しています", "Summarizing all case results")}</h2><p>${tr("確定した評価結果だけを使って、全体傾向と次のアクションを整理します。", "Using only finalized evaluations to identify overall trends and next actions.")}</p></div></section>`;
+  }
+  return `<section class="ai-summary-card failed">${icon("triangle-alert", 22)}<div class="ai-summary-content"><span class="ai-summary-eyebrow">${tr("Gemini AIコメント", "Gemini AI comment")}</span><h2>${tr("AIコメントを生成できませんでした", "AI comment could not be generated")}</h2><p>${esc(translateApiMessage(summary.message || tr("まだ生成されていません。", "It has not been generated yet.")))}</p></div><button id="regenerate-ai-summary" class="button secondary" type="button">${icon("refresh-cw", 14)}${tr("再試行", "Retry")}</button></section>`;
+}
+
 function renderReport(report, { evidenceByCaseId = null } = {}) {
   const isRunning = report.status === "running";
   const isCancelling = report.status === "cancelling";
@@ -3737,12 +3763,27 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
       ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
     <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div><span>${tr("精度 A / B / C / D", "Accuracy A / B / C / D")}</span><strong>${report.summary?.accuracyGrades?.A || 0} / ${report.summary?.accuracyGrades?.B || 0} / ${report.summary?.accuracyGrades?.C || 0} / ${report.summary?.accuracyGrades?.D || 0}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
+    ${suiteAiSummaryHtml(report, { isLive })}
     ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
     <div class="section-row"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${isLive ? tr("完了するまでスケルトン表示で待機します。", "Waiting with a skeleton view until the run completes.") : tr("失敗した条件から改善ポイントを特定できます。", "Use failed criteria to identify areas for improvement.")}</p></div><b class="live-updated">${isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
     <section class="report-cases">${cases}</section>
     `)}
   `, "reports", "detail");
+  document.querySelector("#regenerate-ai-summary")?.addEventListener("click", async () => {
+    const button = document.querySelector("#regenerate-ai-summary");
+    await withButtonBusy(button, tr("生成中…", "Generating…"), async () => {
+      try {
+        const updated = await json(`/api/suite-runs/${report.id}/ai-summary`, { method: "POST" });
+        state.suiteRuns = [updated, ...state.suiteRuns.filter((item) => item.id !== updated.id)];
+        renderReport(updated);
+        refreshIcons();
+        notify(tr("AIコメントを更新しました。", "Updated the AI comment."), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    });
+  });
   document.querySelector("#export-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-report-pdf");
     await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
@@ -3813,7 +3854,7 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
       if (button) button.disabled = false;
     }
   });
-  if (isLive || sheetExport.status === "exporting") {
+  if (isLive || sheetExport.status === "exporting" || report.aiSummary?.status === "generating") {
     state.reportPollTimer = setTimeout(async () => {
       if (location.hash !== `#/reports/${report.id}`) return;
       try {

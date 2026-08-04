@@ -458,6 +458,21 @@ dialog footer { justify-content: end; gap: 8px; margin-top: 18px; }
 .report-metrics span { color: var(--muted); font-size: 9px; }
 .report-metrics strong { margin-top: 7px; font: 600 17px "DM Mono",monospace; }
 .report-metrics small { display: block; margin-top: 4px; color: #8290a2; font-size: 8px; }
+.ai-summary-card { max-width: 1480px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: start; gap: 15px; margin: 0 auto 18px; padding: 20px 22px; border: 1px solid #cddbf0; border-radius: 13px; background: linear-gradient(135deg,#f7f9ff,#eef4ff); box-shadow: 0 9px 24px rgba(40,72,125,.07); }
+.ai-summary-card > svg,.ai-summary-icon { color: #356ee6; }
+.ai-summary-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background: #fff; box-shadow: 0 4px 12px rgba(53,110,230,.12); }
+.ai-summary-content { min-width: 0; }
+.ai-summary-content h2,.ai-summary-content p { margin: 0; }
+.ai-summary-eyebrow { display: block; margin-bottom: 5px; color: #356ee6; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.ai-summary-content h2 { color: var(--navy); font-size: 17px; }
+.ai-summary-content > p { margin-top: 7px; color: #52647d; font-size: 11px; line-height: 1.75; }
+.ai-summary-content > small { display: block; margin-top: 12px; color: #7b8aa0; font-size: 8px; }
+.ai-summary-groups { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 14px; }
+.ai-summary-groups > div { padding: 11px 12px; border: 1px solid rgba(151,174,211,.45); border-radius: 9px; background: rgba(255,255,255,.7); }
+.ai-summary-groups strong { color: var(--navy); font-size: 9px; }
+.ai-summary-groups ul { margin: 7px 0 0; padding-left: 16px; color: #5b6d86; font-size: 9px; line-height: 1.55; }
+.ai-summary-card.generating { align-items: center; }
+.ai-summary-card.failed { border-color: #f0d2d5; background: #fff7f7; }
 .report-cases { max-width: 1100px; display: grid; gap: 10px; margin: 0 auto; }
 .report-case { padding: 16px; border: 1px solid var(--line); border-left: 4px solid #26b47e; border-radius: 10px; background: #fff; }
 .report-case.failed { border-left-color: var(--red); }
@@ -1082,6 +1097,7 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .accuracy-source-head { grid-template-columns: 1fr auto; }
   .accuracy-source-head [data-source-description] { grid-column: 1/-1; grid-row: 2; }
   .report-metrics { grid-template-columns: repeat(2,1fr); }
+  .ai-summary-groups { grid-template-columns: 1fr; }
   .sheet-export-status { grid-template-columns: auto 1fr; }
   .sheet-export-status .button { grid-column: 1/-1; justify-self: start; }
   .head-actions { flex-wrap: wrap; }

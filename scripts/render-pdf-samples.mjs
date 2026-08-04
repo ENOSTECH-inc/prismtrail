@@ -327,8 +327,27 @@ const report = {
 const runsById = {
   run_revenue_01: {
     id: "run_revenue_01",
+    createdAt: "2026-07-31T00:30:01.000Z",
+    question: cases[0].prompt,
     summary: { chartCount: 1 },
     events: [
+      {
+        kind: "data.generated_sql",
+        payload: `SELECT
+  calendar.month,
+  SUM(revenue.net_amount) AS revenue,
+  SAFE_DIVIDE(
+    SUM(revenue.net_amount) - LAG(SUM(revenue.net_amount), 12) OVER (ORDER BY calendar.month),
+    LAG(SUM(revenue.net_amount), 12) OVER (ORDER BY calendar.month)
+  ) AS yoy
+FROM \`analytics.fact_revenue\` AS revenue
+JOIN \`analytics.dim_calendar\` AS calendar
+  ON revenue.date_key = calendar.date_key
+WHERE calendar.month BETWEEN '2025-06' AND '2026-06'
+  AND revenue.is_cancelled = FALSE
+GROUP BY calendar.month
+ORDER BY calendar.month`
+      },
       {
         kind: "text.final_response",
         payload: {
@@ -348,7 +367,25 @@ const runsById = {
           ]
         }
       },
-      { kind: "chart.result", payload: { mark: "bar", title: "月次売上高と前年同月比" } }
+      {
+        kind: "chart.result",
+        payload: {
+          mark: { type: "bar", cornerRadiusTopLeft: 4, cornerRadiusTopRight: 4 },
+          title: "月次売上高",
+          data: {
+            values: [
+              { month: "2026-04", revenue: 108.42 },
+              { month: "2026-05", revenue: 115.8 },
+              { month: "2026-06", revenue: 124.5 }
+            ]
+          },
+          encoding: {
+            x: { field: "month", type: "nominal", title: "月" },
+            y: { field: "revenue", type: "quantitative", title: "売上高（百万円）" },
+            color: { value: "#2563A8" }
+          }
+        }
+      }
     ]
   },
   run_customers_01: {
