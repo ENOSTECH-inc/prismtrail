@@ -119,6 +119,8 @@ The same retrieval path grounds suite editing and the Data Agent planner. This k
 ## Google Sheets connector
 
 The local server calls Google Sheets API v4 with the same short-lived ADC access token used by the Google Cloud integrations. A connection stores only spreadsheet metadata and operation timestamps.
+The connection UI lives under the Settings `Google Sheets` tab (`#/settings/sheets`); the legacy
+`#/sheets` route redirects there and the sidebar has no separate integration group.
 
 Every registered Data Agent may own at most one Sheet connection, and one spreadsheet may belong to
 at most one Data Agent. All connection, bootstrap, suite import/export, report export, catalog sync,
