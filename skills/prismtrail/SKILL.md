@@ -70,6 +70,9 @@ npm start
   suite, and confirm the Suite ID and case count.
 - Case `memo` is free-form reference text (model/metrics notes). It is stored and synced to Sheets,
   but is not used by evaluation scoring.
+- Store provenance links in case `relatedUrls` as an array of up to 20 HTTP(S) URLs. Use the
+  original Slack message, ticket, document, or other source URL when it explains why the case was
+  added or changed. The links round-trip through the UI, MCP, Sheets, history, and case-spec PDFs.
 - Prefer suite evaluation over ad-hoc `/api/runs` when the user cares about pass/fail criteria.
 - From the suite editor, **このケースを実行** runs one case via `POST /api/suites/:id/run` with `{ "caseIds": [...] }`, then opens the evaluation detail (`#/reports/:id`) with a live skeleton until results appear; **スイートを実行** still runs the full suite and opens the same report page.
 - For stakeholder handoff, prefer PDF export over screenshots:

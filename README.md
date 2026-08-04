@@ -46,7 +46,8 @@ This project models those concerns explicitly:
 | Layer | What it checks | Result |
 |---|---|---|
 | System requirements | final response, errors, SQL evidence, chart evidence, duration, billed bytes, required phrases | pass/fail checks and score |
-| Business requirements | expected values, period, units, tolerance, and answer evidence | Gemini judge grade A/B/C/D |
+| Business requirements | qualitative and quantitative acceptance conditions | Gemini judge grade A/B/C/D |
+| Accuracy sources | manual text, a public evidence URL, or a read-only BigQuery SQL result | Ground truth supplied to the Gemini judge |
 | Reporting | suite progress, trace, cost, scores, evidence, and errors | web report and managed Google Sheet |
 
 ## Features
@@ -55,6 +56,7 @@ This project models those concerns explicitly:
 - Reusable test suites with live progress and resumable report URLs
 - Separate system and business-accuracy scores
 - A/B/C/D business grading with evidence and review-required judge failures
+- Separate business acceptance conditions and structured text / URL / BigQuery SQL accuracy sources
 - BigQuery SQL evidence from generated SQL, matched verified queries, and query jobs
 - BigQuery duration and billed-byte reporting
 - Existing Data Agent registry using full Google Cloud resource names
@@ -195,12 +197,20 @@ of being converted into a fabricated D grade.
 
 Share a spreadsheet with the ADC identity and connect it from the application. The app owns only:
 
-- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases
+- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including business acceptance conditions, structured accuracy-source JSON, and newline-separated provenance URLs
 - `AgentEval_Report` — read-only suite-run summary and case results
 
 The app clears and rewrites those fixed tabs while preserving their sheet IDs. It does not modify
 user-created tabs. Imported values are validated server-side; hidden columns and pasted data are
 not trusted.
+
+Accuracy-source URLs are different from provenance `relatedUrls`: they are fetched for scoring.
+Only public HTTP(S) pages on standard ports are allowed; DNS answers and every redirect are checked
+against private, loopback, link-local, metadata, and reserved IP ranges, and text responses are size-
+and time-bounded. Accuracy-source BigQuery SQL uses ADC, accepts only one `SELECT`/`WITH` statement,
+runs a dry run first, and defaults to a 100 MiB billed-byte cap, 100 returned rows, and 30 seconds.
+The limits can be lowered with `ACCURACY_BQ_MAX_BYTES_BILLED`, `ACCURACY_BQ_MAX_ROWS`, and
+`ACCURACY_BQ_TIMEOUT_MS`; use `ACCURACY_BQ_LOCATION` when the referenced datasets require a location.
 
 ## Storage
 
@@ -218,6 +228,27 @@ GCS writes use generation preconditions so stale clients cannot silently overwri
 Migration validates and copies data before switching; it does not delete the source.
 
 ## Security model
+
+### MCP coding-agent integration
+
+Settings can issue a dedicated, expiring token for external coding agents. Connect a Streamable
+HTTP MCP client to `http://127.0.0.1:4318/mcp` and send the token as an
+`Authorization: Bearer ...` header. The plaintext token is shown only once; PrismTrail stores only
+its SHA-256 digest, prefix, fingerprint, scopes, expiry, revocation state, and last-used time in a
+local credential file that is not copied during primary-storage migration.
+
+The 42 MCP tools cover suite and test-case listing, creation, history, bulk paste, and
+optimistic-concurrency updates; Data Agent registration and connection checks; single-prompt and
+suite execution; run evidence; report polling and case/report PDF downloads; GCS knowledge
+registration, upload, sync, search, and planning; Google Sheets connection, import, and export; AI
+suite editing; and storage inspection/switching. Storage switching requires its own elevated scope
+plus a five-minute, token-bound preview confirmation. Source data is never deleted. Delete, purge,
+run-cancel, arbitrary HTTP, and shell tools are intentionally not registered.
+
+The MCP endpoint and token-management UI follow the same local-workstation boundary as the rest of
+PrismTrail. Do not expose the Docker port to an untrusted network. A remote deployment must add TLS
+and authentication/authorization for **all** `/api` routes, not only `/mcp`; otherwise callers could
+bypass MCP policy through the existing local UI API.
 
 This is a trusted-local-tool architecture:
 

@@ -30,6 +30,8 @@ const state = {
   storageConfig: null,
   storageDraft: null,
   storageTestResult: null,
+  mcpConfig: null,
+  mcpNewToken: null,
   selectedSuite: null,
   selectedCaseIndex: 0,
   editorTab: "cases",
@@ -38,9 +40,6 @@ const state = {
   selectedSuiteVersionId: null,
   selectedSuiteVersion: null,
   suiteVersionsBusy: false,
-  assistantMessages: [],
-  assistantPatch: null,
-  assistantOpen: false,
   knowledgePlan: null,
   selectedKnowledgeDetail: null,
   reportPollTimer: null,
@@ -62,6 +61,22 @@ const esc = (value) =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+
+function relatedUrlLinks(urls = []) {
+  return (Array.isArray(urls) ? urls : [])
+    .map((value) => {
+      const raw = String(value || "").trim();
+      try {
+        const parsed = new URL(raw);
+        if (!["http:", "https:"].includes(parsed.protocol)) return "";
+        return `<a href="${esc(raw)}" target="_blank" rel="noopener noreferrer">${icon("external-link", 12)}<span>${esc(raw)}</span></a>`;
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean)
+    .join("");
+}
 
 function fmtDate(value) {
   return value ? formatLocaleDate(value, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : tr("未実行", "Never");
@@ -98,6 +113,64 @@ function notify(message, kind = "error") {
   toast.hidden = false;
   clearTimeout(notify.timer);
   notify.timer = setTimeout(() => (toast.hidden = true), 7000);
+}
+
+const routeProgress = document.querySelector("#route-progress");
+const busyOverlay = document.querySelector("#busy-overlay");
+const busyOverlayLabel = document.querySelector("#busy-overlay-label");
+let routeProgressDepth = 0;
+let busyOverlayDepth = 0;
+
+function setRouteProgress(active) {
+  if (!routeProgress) return;
+  routeProgressDepth = Math.max(0, routeProgressDepth + (active ? 1 : -1));
+  const on = routeProgressDepth > 0;
+  routeProgress.hidden = !on;
+  routeProgress.setAttribute("aria-hidden", on ? "false" : "true");
+  routeProgress.classList.toggle("is-active", on);
+  document.body.classList.toggle("is-routing", on);
+}
+
+function setBusyOverlay(active, label = "") {
+  if (!busyOverlay) return;
+  busyOverlayDepth = Math.max(0, busyOverlayDepth + (active ? 1 : -1));
+  const on = busyOverlayDepth > 0;
+  if (active && label && busyOverlayLabel) busyOverlayLabel.textContent = label;
+  busyOverlay.hidden = !on;
+  document.body.classList.toggle("is-app-busy", on);
+}
+
+async function withRouteProgress(task) {
+  setRouteProgress(true);
+  try {
+    return await task();
+  } finally {
+    setRouteProgress(false);
+  }
+}
+
+async function withButtonBusy(button, busyLabel, task, { overlay = false } = {}) {
+  if (!button) return task();
+  if (button.dataset.busy === "1") return undefined;
+  const originalHtml = button.innerHTML;
+  button.dataset.busy = "1";
+  button.disabled = true;
+  button.classList.add("is-busy");
+  button.setAttribute("aria-busy", "true");
+  button.innerHTML = `${icon("loader-circle", 15)}${esc(busyLabel)}`;
+  refreshIcons();
+  if (overlay) setBusyOverlay(true, busyLabel);
+  try {
+    return await task();
+  } finally {
+    if (overlay) setBusyOverlay(false);
+    button.dataset.busy = "0";
+    button.disabled = false;
+    button.classList.remove("is-busy");
+    button.setAttribute("aria-busy", "false");
+    button.innerHTML = originalHtml;
+    refreshIcons();
+  }
 }
 
 /** In-app confirm — native window.confirm can be silently blocked by the browser. */
@@ -679,10 +752,52 @@ function localeSelector(compact = false) {
   </div>`;
 }
 
+function storageModeSummary(config = state.storageConfig) {
+  const driver = config?.driver || (config?.status === "setup_required" ? "local" : null);
+  const isLocal = driver === "local" || config?.status === "setup_required";
+  if (!config && !driver) {
+    return {
+      mode: "unknown",
+      isLocal: false,
+      label: tr("保存先確認中", "Checking storage"),
+      detail: tr("読み込み中", "Loading"),
+      title: tr("プライマリーストレージの状態を確認しています", "Checking primary storage status")
+    };
+  }
+  if (isLocal) {
+    const temporary = config?.status === "setup_required" || config?.configured === false;
+    const detail = temporary
+      ? tr("一時ローカル", "Temporary local")
+      : String(config?.localPath || "").replace(/^\/app\//, "/") || tr("ローカルファイル", "Local files");
+    return {
+      mode: "local",
+      isLocal: true,
+      label: tr("Localモード", "Local mode"),
+      detail,
+      title: temporary
+        ? tr("プライマリーストレージ: Localモード（GCS未接続のため一時ローカル）", "Primary storage: Local mode (temporary local; GCS not connected)")
+        : tr("プライマリーストレージ: Localモード（{path}）", "Primary storage: Local mode ({path})", {
+          path: config?.localPath || detail
+        })
+    };
+  }
+  const bucket = config?.bucket ? `gs://${config.bucket}/${config.prefix || ""}`.replace(/\/+$/, "/") : "";
+  return {
+    mode: "storage",
+    isLocal: false,
+    label: tr("Storageモード", "Storage mode"),
+    detail: bucket || config?.projectId || "Google Cloud Storage",
+    title: tr("プライマリーストレージ: Storageモード（{destination}）", "Primary storage: Storage mode ({destination})", {
+      destination: bucket || config?.projectId || "GCS"
+    })
+  };
+}
+
 function shell(content, active = "suites", mode = false) {
   if (mode === true || mode === "editor") return content;
   const collapsed = state.sidebarCollapsed;
   const mainClass = mode === "detail" ? "main detail-mode" : "main";
+  const storage = storageModeSummary();
   return `
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
@@ -715,8 +830,12 @@ function shell(content, active = "suites", mode = false) {
           </section>
         </nav>
         <div class="sidebar-foot">
-          <div class="sidebar-auth">
-            <span class="live-dot"></span>
+          <a class="sidebar-status storage-mode ${storage.mode}" href="#/settings" title="${esc(storage.title)}" aria-label="${esc(storage.title)}">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span class="auth-copy"><strong>${esc(storage.label)}</strong><small>${esc(storage.detail)}</small></span>
+          </a>
+          <div class="sidebar-status sidebar-auth" title="Google Cloud ADC">
+            <span class="live-dot" aria-hidden="true"></span>
             <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(state.config?.billingProject || tr("接続確認中", "Checking connection"))}</small></span>
           </div>
           ${localeSelector(collapsed)}
@@ -905,6 +1024,7 @@ function caseNav(suite) {
           const title = String(item.title || "").trim() || tr("無題のケース", "Untitled case");
           const system = item.expectations?.systemRequirements || item.expectations || {};
           const business = item.expectations?.businessRequirements || {};
+          const accuracy = item.expectations?.accuracyValidation || {};
           const agent =
             state.agents.find((entry) => entry.id === item.agentId)?.displayName ||
             item.agentId ||
@@ -917,7 +1037,7 @@ function caseNav(suite) {
               ? `<span class="case-nav-flag">${icon("database", 11)}SQL</span>`
               : "",
             system.requireChart ? `<span class="case-nav-flag">${icon("chart-column", 11)}${tr("チャート", "Chart")}</span>` : "",
-            business.enabled && ((business.criteriaItems || []).length || business.accuracyCriteria)
+            accuracy.enabled && accuracy.sources?.length
               ? `<span class="case-nav-flag accent">${icon("sparkles", 11)}${tr("精度", "Accuracy")}</span>`
               : ""
           ]
@@ -943,6 +1063,7 @@ function caseNav(suite) {
 function caseForm(item, index) {
   const system = item.expectations?.systemRequirements || item.expectations || {};
   const business = item.expectations?.businessRequirements || {};
+  const accuracy = item.expectations?.accuracyValidation || {};
   return `<article class="case-editor" data-case-index="${index}">
     <div class="case-titlebar">
       <span class="case-number">${String(index + 1).padStart(2, "0")}</span>
@@ -960,6 +1081,7 @@ function caseForm(item, index) {
         </select>
         <small class="field-help">${tr("未選択の場合はスイート共通ナレッジを使います。選択時はVertex AIが回答と関連チャンクの整合性を評価します。", "If none are selected, the suite-level knowledge is used. When selected, Vertex AI evaluates consistency between the answer and relevant chunks.")}</small>
       </label>
+      <label class="span-2">${tr("関連URL", "Related URLs")}<textarea data-related-urls rows="3" maxlength="40979" placeholder="https://...">${esc((item.relatedUrls || []).join("\n"))}</textarea><small class="field-help">${tr("このケースを追加・更新した根拠へのリンクを1行に1件、最大20件まで登録できます。", "Add up to 20 provenance links for this case, one HTTP(S) URL per line.")}</small><div class="related-url-list">${relatedUrlLinks(item.relatedUrls)}</div></label>
       <label class="span-2">${tr("メモ", "Memo")}<textarea data-field="memo" rows="5" maxlength="20000" placeholder="${tr("自由記述。モデル定義・指標レイヤー・参照メモなど。評価には使いません。", "Free-form notes. Model definitions, metrics layer, references, etc. Not used in evaluation.")}">${esc(item.memo || "")}</textarea><small class="field-help">${tr("評価判定には使わない、ケース単位の参照メモです。", "Case-level reference notes; not used for scoring.")}</small></label>
     </div>
     <details class="expectations" open>
@@ -977,14 +1099,19 @@ function caseForm(item, index) {
         </div>
       </fieldset>
       <fieldset class="requirement-section business-requirements">
-        <legend>${tr("ビジネス要件", "Business requirements")} <small>${tr("精度チェック", "Accuracy check")}</small></legend>
-        <p>${tr("チェック項目ごとに、Data AgentレスポンスJSON全体を根拠にGeminiが☀️/☁️/☔️で採点します。総合A〜Dはマーク比率から自動算出されます。", "Gemini scores each checklist item as sun/cloud/rain against the full Data Agent response JSON. Overall A–D is derived from mark weights.")}</p>
+        <legend>${tr("ビジネス要件", "Business requirements")} <small>${tr("受入条件", "Acceptance criteria")}</small></legend>
+        <p>${tr("回答が満たすべき定性・定量条件を1項目ずつ定義します。正解の根拠は次の「精度検証」で別に設定します。", "Define qualitative and quantitative acceptance conditions. Configure the source of truth separately under Accuracy validation.")}</p>
         <div class="business-toggle-row">
-          <label class="check"><input type="checkbox" data-business-enabled ${business.enabled && (business.criteriaItems?.length || business.accuracyCriteria) ? "checked" : ""}> ${tr("AIで回答精度を判定", "Evaluate answer accuracy with AI")}</label>
           <label>${tr("合格ライン", "Passing grade")}<select data-business-passing-grade><option value="B" ${business.passingGrade !== "C" ? "selected" : ""}>${tr("B以上（推奨）", "B or higher (recommended)")}</option><option value="C" ${business.passingGrade === "C" ? "selected" : ""}>${tr("C以上", "C or higher")}</option></select></label>
         </div>
         ${businessCriteriaEditorHtml(business)}
         <div class="grade-legend">${gradeBadge({ grade: "A", status: "passed" })}${gradeBadge({ grade: "B", status: "passed" })}${gradeBadge({ grade: "C", status: "review" })}${gradeBadge({ grade: "D", status: "failed" })} <span class="muted-copy">☀️=OK · ☁️=部分 · ☔️=NG</span></div>
+      </fieldset>
+      <fieldset class="requirement-section accuracy-validation">
+        <legend>${tr("精度検証", "Accuracy validation")} <small>${tr("正解根拠", "Ground truth")}</small></legend>
+        <p>${tr("Geminiが参照する正解根拠を登録します。URLは安全な公開ページだけを取得し、BigQuery SQLは読み取り専用・課金上限付きで実行します。", "Register ground-truth evidence for Gemini. URLs are fetched only from safe public pages; BigQuery SQL is read-only and cost-capped.")}</p>
+        <label class="check"><input type="checkbox" data-accuracy-enabled ${accuracy.enabled && accuracy.sources?.length ? "checked" : ""}> ${tr("このケースで精度検証を実行", "Run accuracy validation for this case")}</label>
+        ${accuracySourcesEditorHtml(accuracy.sources || [])}
       </fieldset>
     </details>
   </article>`;
@@ -1039,43 +1166,13 @@ function renderEditor() {
   const sheetShortcut = connectedSheet
     ? `<button id="open-linked-sheet" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}</button>`
     : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`;
-  const assistantToggle = `<button id="toggle-assistant" class="button secondary${state.assistantOpen ? " active" : ""}" type="button" aria-pressed="${state.assistantOpen ? "true" : "false"}">${icon("sparkles", 15)}${state.assistantOpen ? tr("AIを閉じる", "Close AI") : tr("AIアシスタント", "AI assistant")}</button>`;
-  const messages = state.assistantMessages
-    .map((message) => `<div class="chat ${message.role}"><span>${message.role === "assistant" ? "AI" : "YOU"}</span><p>${esc(message.text)}</p></div>`)
-    .join("");
   const showCaseNav = onCasesTab && suite.cases.length > 0;
   const columnClass = [
     "editor-columns",
-    showCaseNav ? "has-cases" : "no-cases",
-    state.assistantOpen ? "assistant-open" : ""
+    showCaseNav ? "has-cases" : "no-cases"
   ]
     .filter(Boolean)
     .join(" ");
-  const assistantPanel = state.assistantOpen
-    ? `<aside class="assistant-panel" aria-label="AIテストスイートアシスタント">
-          <header>
-            <span class="assistant-icon">${icon("sparkles", 20)}</span>
-            <div><strong>AIテストスイートアシスタント</strong><small>Vertex AI · ${esc(state.config.vertexModel)} · RAG ${suite.knowledgeSourceIds?.length || 0}</small></div>
-            <button id="close-assistant" class="icon-button" type="button" aria-label="${tr("AIパネルを閉じる", "Close AI panel")}">${icon("x", 16)}</button>
-            <span class="adc-badge"><i></i> ADC</span>
-          </header>
-          <div class="assistant-body">
-            ${messages || `<div class="assistant-intro"><div class="assistant-orb">${icon("wand-sparkles", 25)}</div><h2>業務シナリオから<br>テスト設計を作れます</h2><p>選択したGCS資料から関連箇所を検索し、プロンプトと評価条件の提案に使います。</p></div>
-            <div class="quick-actions">
-              <button data-assistant-prompt="このスイートのカバレッジ不足を調べて、実業務向けケースを提案して">カバレッジを確認${icon("chevron-right")}</button>
-              <button data-assistant-prompt="システム要件の動作チェックを実運用に耐えるよう厳密にして">システム要件を厳密にする${icon("chevron-right")}</button>
-              <button data-assistant-prompt="各ケースのビジネス上の正解条件を確認し、不明な値は捏造せず質問して">ビジネス正解条件を整える${icon("chevron-right")}</button>
-              <button data-assistant-prompt="プロンプトの表現と粒度を統一して">プロンプトを整える${icon("chevron-right")}</button>
-            </div>`}
-            ${state.assistantPatch ? `<div class="proposal"><strong>${icon("file-diff", 16)}変更案があります</strong><pre>${esc(JSON.stringify(state.assistantPatch, null, 2))}</pre><div><button id="discard-patch" class="button secondary">破棄</button><button id="apply-patch" class="button accent">変更を適用</button></div></div>` : ""}
-          </div>
-          <form id="assistant-form" class="assistant-composer">
-            <textarea id="assistant-input" rows="3" placeholder="例: 販売チャネル別の成長率を評価するケースを追加して"></textarea>
-            <button type="submit" aria-label="送信" ${state.busy ? "disabled" : ""}>${state.busy ? icon("loader-circle") : icon("arrow-up")}</button>
-            <small>ADC認証でVertex AIに接続します。変更は確認後に適用されます。</small>
-          </form>
-        </aside>`
-    : "";
   const basicsPanel = `<section class="basic-panel">
             <label>${tr("スイート名", "Suite name")}<input id="suite-name" value="${esc(suite.name)}"></label>
             <label>${tr("接続先Data Agent", "Target Data Agent")}
@@ -1104,7 +1201,6 @@ function renderEditor() {
             <div class="suite-start-options">
               <button id="start-with-paste" class="start-option primary" type="button"><span>${icon("clipboard-paste", 19)}</span><strong>表で入力する <em>おすすめ</em></strong><small>Sheets・Excelの複数ケースを一括追加</small>${icon("arrow-right", 15)}</button>
               <button id="start-manually" class="start-option" type="button"><span>${icon("square-pen", 19)}</span><strong>1件ずつ追加</strong><small>フォームでプロンプトと条件を設定</small>${icon("arrow-right", 15)}</button>
-              <button id="start-with-ai" class="start-option" type="button"><span>${icon("sparkles", 19)}</span><strong>AIで作成</strong><small>業務シナリオを伝えて設計案を作る</small>${icon("arrow-right", 15)}</button>
             </div>
             <div class="sheet-direct-row">
               <span class="sheet-direct-icon">${icon("sheet", 18)}</span>
@@ -1190,7 +1286,7 @@ function renderEditor() {
         subtitleHtml: `<em id="save-state">${tr("保存済み", "Saved")}</em> · ${tr("テストスイート", "Test suites")}`,
         backHref: "#/suites",
         backLabel: tr("テストスイート一覧に戻る", "Back to test suites"),
-        actions: `${localeSelector(true)}${assistantToggle}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
+        actions: `${localeSelector(true)}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
       })}
       <div class="${columnClass}">
         ${showCaseNav ? caseNav(suite) : ""}
@@ -1217,7 +1313,6 @@ function renderEditor() {
           <div class="editor-tab-panel" data-tab-panel="cases" ${state.editorTab === "cases" ? "" : "hidden"}>${casesPanel}</div>
           <div class="editor-tab-panel" data-tab-panel="history" ${state.editorTab === "history" ? "" : "hidden"}>${historyPanel}</div>
         </main>
-        ${assistantPanel}
       </div>
       ${suitePasteDialog(suite)}
     </div>`, "suites", "editor");
@@ -1242,7 +1337,7 @@ function businessCriteriaEditorHtml(business = {}) {
   const rows = items.length ? items : [""];
   return `<div class="criteria-editor" data-criteria-editor>
     <div class="criteria-editor-head">
-      <strong>${tr("チェック項目", "Checklist items")}</strong>
+      <strong>${tr("受入条件", "Acceptance criteria")}</strong>
       <button type="button" class="button secondary compact" data-add-criteria>${icon("plus", 14)}${tr("項目を追加", "Add item")}</button>
     </div>
     <ol class="criteria-rows">
@@ -1256,8 +1351,42 @@ function businessCriteriaEditorHtml(business = {}) {
         )
         .join("")}
     </ol>
-    <small class="field-help">${tr("1行が1つの判定ルールです（最大20件）。Sheets連携時は ; 区切りで入出力します。", "Each row is one scoring rule (max 20). Sheets import/export uses semicolon separators.")} Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
+    <small class="field-help">${tr("1行が1つの受入条件です（最大20件）。Sheets連携時は ; 区切りで入出力します。", "Each row is one acceptance condition (max 20). Sheets import/export uses semicolon separators.")} Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
   </div>`;
+}
+
+function accuracySourceRowHtml(source = {}, index = 0) {
+  const type = ["text", "url", "bigquery_sql"].includes(source.type) ? source.type : "text";
+  return `<li class="accuracy-source-row" data-accuracy-source data-source-id="${esc(source.id || `source_${index + 1}`)}">
+    <div class="accuracy-source-head">
+      <select data-source-type aria-label="${tr("ソースタイプ", "Source type")}">
+        <option value="text" ${type === "text" ? "selected" : ""}>${tr("テキスト", "Text")}</option>
+        <option value="url" ${type === "url" ? "selected" : ""}>URL</option>
+        <option value="bigquery_sql" ${type === "bigquery_sql" ? "selected" : ""}>BigQuery SQL</option>
+      </select>
+      <input data-source-description maxlength="500" value="${esc(source.description || "")}" placeholder="${tr("説明（任意）", "Description (optional)")}">
+      <button type="button" class="icon-button danger" data-remove-accuracy-source aria-label="${tr("ソースを削除", "Remove source")}">${icon("trash-2", 14)}</button>
+    </div>
+    <textarea data-source-content rows="${type === "bigquery_sql" ? 6 : 3}" maxlength="20000" placeholder="${type === "url" ? "https://..." : type === "bigquery_sql" ? "SELECT ..." : tr("正解となる事実・数値・定義", "Ground-truth facts, values, or definitions")}">${esc(source.content || source.value || "")}</textarea>
+  </li>`;
+}
+
+function accuracySourcesEditorHtml(sources = []) {
+  const rows = sources.length ? sources : [{}];
+  return `<div class="accuracy-sources-editor">
+    <div class="criteria-editor-head"><strong>${tr("検証ソース", "Validation sources")}</strong><button type="button" class="button secondary compact" data-add-accuracy-source>${icon("plus", 14)}${tr("ソースを追加", "Add source")}</button></div>
+    <ol class="accuracy-source-rows">${rows.map(accuracySourceRowHtml).join("")}</ol>
+    <small class="field-help">${tr("最大20件。BigQuery SQLはSELECT / WITHのみ、既定100MB・100行・30秒までです。", "Up to 20 sources. BigQuery SQL is limited to SELECT/WITH, 100 MB, 100 rows, and 30 seconds by default.")}</small>
+  </div>`;
+}
+
+function collectAccuracySourcesFromCard(card) {
+  return [...card.querySelectorAll("[data-accuracy-source]")].map((row, index) => ({
+    id: row.dataset.sourceId || `source_${index + 1}`,
+    type: row.querySelector("[data-source-type]")?.value || "text",
+    description: row.querySelector("[data-source-description]")?.value.trim().slice(0, 500) || "",
+    content: row.querySelector("[data-source-content]")?.value.trim().slice(0, 20000) || ""
+  })).filter((source) => source.content).slice(0, 20);
 }
 
 function collectBusinessCriteriaFromCard(card) {
@@ -1415,7 +1544,7 @@ function reportCaseCardHtml(item, { isLive = false, showPdf = true, evidence = n
     ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
     <div class="evaluation-layers">
       <section><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{passed}/{total} 合格 · {score}点", "{passed}/{total} passed · {score} pts", { passed: formatLocaleNumber(system.passedCount || 0), total: formatLocaleNumber(system.checkCount || 0), score: formatLocaleNumber(system.score ?? 0) })}</b></div><div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></section>
-      <section class="business-result"><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(business)}</div>${business?.status === "not_configured" || !business ? `<p class="muted-copy">このケースには精度条件が設定されていません。</p>` : `${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${weatherItemList(business, { showEmpty: true })}${(business.discrepancies || []).length || business.judgeAudit?.model ? `<details><summary>${tr("判定メタ情報", "Judgment metadata")}</summary><dl>${(business.discrepancies || []).length ? `<dt>${tr("差分", "Discrepancies")}</dt><dd>${esc(business.discrepancies.join(" / "))}</dd>` : ""}<dt>${tr("判定モデル", "Judge model")}</dt><dd>${esc(business.judgeAudit?.model || "—")}</dd></dl></details>` : ""}`}</section>
+      <section class="business-result"><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(business)}</div>${business?.status === "not_configured" || !business ? `<p class="muted-copy">このケースには精度検証が設定されていません。</p>` : `${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${accuracySourceStatusHtml(business.accuracySources)}${weatherItemList(business, { showEmpty: true })}${(business.discrepancies || []).length || business.judgeAudit?.model ? `<details><summary>${tr("判定メタ情報", "Judgment metadata")}</summary><dl>${(business.discrepancies || []).length ? `<dt>${tr("差分", "Discrepancies")}</dt><dd>${esc(business.discrepancies.join(" / "))}</dd>` : ""}<dt>${tr("判定モデル", "Judge model")}</dt><dd>${esc(business.judgeAudit?.model || "—")}</dd></dl></details>` : ""}`}</section>
     </div>
     ${evidenceHtml}
     ${item.runId ? `<a href="#/runs/${item.runId}" class="text-link">実行トレースを見る ${icon("arrow-right", 14)}</a>` : ""}
@@ -1529,6 +1658,11 @@ function weatherItemList(business, { showEmpty = false } = {}) {
     .join("")}</ol>`;
 }
 
+function accuracySourceStatusHtml(sources = []) {
+  if (!Array.isArray(sources) || !sources.length) return "";
+  return `<div class="accuracy-source-status"><strong>${tr("精度検証ソース", "Accuracy sources")}</strong><ul>${sources.map((source) => `<li><span class="status-dot ${source.status === "resolved" ? "ok" : "error"}"></span><code>${esc(source.type || "source")}</code> ${esc(source.description || source.id || "")}${source.error ? `<small>${esc(source.error)}</small>` : ""}</li>`).join("")}</ul></div>`;
+}
+
 function wireCriteriaRowControls(row) {
   if (!row || row.dataset.wired === "1") return;
   row.dataset.wired = "1";
@@ -1569,10 +1703,12 @@ function addCaseToSuite() {
     agentId: defaultAgentId,
     thinkingMode: "FAST",
     status: "draft",
+    relatedUrls: [],
     memo: "",
     expectations: {
       systemRequirements: { requireSql: true, requireChart: false, maxDurationMs: 120000, maxBytesBilled: 0, requiredPhrases: [], requiredSqlTables: [] },
-      businessRequirements: { enabled: false, criteriaItems: [], accuracyCriteria: "", passingGrade: "B" }
+      businessRequirements: { enabled: false, criteriaItems: [], accuracyCriteria: "", passingGrade: "B" },
+      accuracyValidation: { enabled: false, sources: [] }
     }
   });
   state.selectedCaseIndex = state.selectedSuite.cases.length - 1;
@@ -1649,53 +1785,39 @@ function bindEditor() {
     const testCase = state.selectedSuite?.cases?.[state.selectedCaseIndex];
     if (!suiteId || !testCase?.id) return;
     const button = document.querySelector("#export-case-pdf");
-    if (button) button.disabled = true;
-    try {
-      await saveSuite({ silent: true });
-      const filename = await downloadPdf(
-        `/api/suites/${suiteId}/export/case-pdf?caseId=${encodeURIComponent(testCase.id)}`,
-        `prismtrail-case-${testCase.id}.pdf`
-      );
-      notify(tr("PDFをダウンロードしました: {name}", "Downloaded PDF: {name}", { name: filename }), "success");
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      if (button) button.disabled = false;
-      refreshIcons();
-    }
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        await saveSuite({ silent: true });
+        const filename = await downloadPdf(
+          `/api/suites/${suiteId}/export/case-pdf?caseId=${encodeURIComponent(testCase.id)}`,
+          `prismtrail-case-${testCase.id}.pdf`
+        );
+        notify(tr("PDFをダウンロードしました: {name}", "Downloaded PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
   });
   document.querySelector("#export-cases-pdf")?.addEventListener("click", async () => {
     const suiteId = state.selectedSuite?.id;
     if (!suiteId || !(state.selectedSuite?.cases || []).length) return;
     const button = document.querySelector("#export-cases-pdf");
-    if (button) button.disabled = true;
-    try {
-      await saveSuite({ silent: true });
-      const filename = await downloadPdf(
-        `/api/suites/${suiteId}/export/cases-pdf`,
-        `prismtrail-suite-${suiteId}-cases.pdf`
-      );
-      notify(tr("全ケースのPDFをダウンロードしました: {name}", "Downloaded all-cases PDF: {name}", { name: filename }), "success");
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      if (button) button.disabled = false;
-      refreshIcons();
-    }
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        await saveSuite({ silent: true });
+        const filename = await downloadPdf(
+          `/api/suites/${suiteId}/export/cases-pdf`,
+          `prismtrail-suite-${suiteId}-cases.pdf`
+        );
+        notify(tr("全ケースのPDFをダウンロードしました: {name}", "Downloaded all-cases PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
   });
   document.querySelector("#start-manually")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#paste-cases")?.addEventListener("click", openSuitePaste);
   document.querySelector("#start-with-paste")?.addEventListener("click", openSuitePaste);
-  document.querySelector("#start-with-ai")?.addEventListener("click", () => {
-    state.editorTab = "cases";
-    state.assistantOpen = true;
-    renderEditor();
-    const input = document.querySelector("#assistant-input");
-    if (input) {
-      input.value = "実業務で使う代表的なテストケースを提案して";
-      input.focus();
-    }
-  });
   document.querySelectorAll("[data-editor-tab]").forEach((button) => {
     button.addEventListener("click", async () => {
       const next = button.dataset.editorTab;
@@ -1713,14 +1835,6 @@ function bindEditor() {
   document.querySelectorAll("[data-restore-version]").forEach((button) => {
     button.addEventListener("click", () => restoreSuiteVersion(button.dataset.restoreVersion));
   });
-  const setAssistantOpen = (open) => {
-    if (state.assistantOpen === open) return;
-    if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
-    state.assistantOpen = open;
-    renderEditor();
-  };
-  document.querySelector("#toggle-assistant")?.addEventListener("click", () => setAssistantOpen(!state.assistantOpen));
-  document.querySelector("#close-assistant")?.addEventListener("click", () => setAssistantOpen(false));
   document.querySelectorAll("[data-select-case]").forEach((button) =>
     button.addEventListener("click", () => {
       const nextIndex = Number(button.dataset.selectCase);
@@ -1849,19 +1963,24 @@ function bindEditor() {
     wireCriteriaRowControls(list.lastElementChild);
   });
   document.querySelectorAll(".criteria-row").forEach((row) => wireCriteriaRowControls(row));
-  document.querySelectorAll("[data-assistant-prompt]").forEach((button) => button.addEventListener("click", () => sendAssistant(button.dataset.assistantPrompt)));
-  document.querySelector("#assistant-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const input = document.querySelector("#assistant-input");
-    if (input?.value.trim()) sendAssistant(input.value.trim());
+  document.querySelector("[data-add-accuracy-source]")?.addEventListener("click", () => {
+    const list = document.querySelector(".accuracy-source-rows");
+    if (!list || list.children.length >= 20) return notify(tr("精度検証ソースは最大20件です。", "Accuracy sources are limited to 20."));
+    list.insertAdjacentHTML("beforeend", accuracySourceRowHtml({}, list.children.length));
+    refreshIcons();
+    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
   });
-  document.querySelector("#discard-patch")?.addEventListener("click", () => {
-    state.assistantPatch = null;
-    renderEditor();
+  document.querySelector(".accuracy-source-rows")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-accuracy-source]");
+    if (!button) return;
+    const list = button.closest(".accuracy-source-rows");
+    button.closest("[data-accuracy-source]")?.remove();
+    if (list && !list.children.length) list.insertAdjacentHTML("beforeend", accuracySourceRowHtml({}, 0));
+    refreshIcons();
+    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
   });
-  document.querySelector("#apply-patch")?.addEventListener("click", applyPatch);
   document.querySelectorAll("input,textarea,select").forEach((input) => {
-    if (input.closest("#assistant-form") || input.closest("#suite-paste-dialog")) return;
+    if (input.closest("#suite-paste-dialog")) return;
     input.addEventListener("input", () => {
       document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
       const activeCard = document.querySelector(".case-nav-item.active");
@@ -1902,6 +2021,11 @@ function bindEditor() {
           badge.textContent = draft ? tr("下書き", "Draft") : tr("実行可", "Runnable");
         }
       }
+      if (input.hasAttribute("data-related-urls")) {
+        const list = input.parentElement?.querySelector(".related-url-list");
+        if (list) list.innerHTML = relatedUrlLinks(input.value.split(/\r?\n/));
+        refreshIcons();
+      }
     });
   });
 }
@@ -1912,15 +2036,20 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   const next = {
     ...source,
     expectations: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       systemRequirements: { ...previousSystem },
-      businessRequirements: { ...previousBusiness }
+      businessRequirements: { ...previousBusiness },
+      accuracyValidation: { ...(source.expectations?.accuracyValidation || {}) }
     }
   };
   card.querySelectorAll("[data-field]").forEach((input) => (next[input.dataset.field] = input.value));
   if (!String(next.agentId || "").trim()) next.agentId = defaultAgentId;
   const knowledgeSelect = card.querySelector("[data-knowledge]");
   next.knowledgeSourceIds = knowledgeSelect ? [...knowledgeSelect.selectedOptions].map((option) => option.value) : [];
+  next.relatedUrls = (card.querySelector("[data-related-urls]")?.value || "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
   card.querySelectorAll("[data-system-expect]").forEach((input) => {
     const key = input.dataset.systemExpect;
     if (input.type === "checkbox") next.expectations.systemRequirements[key] = input.checked;
@@ -1931,10 +2060,15 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   });
   const criteriaItems = collectBusinessCriteriaFromCard(card);
   next.expectations.businessRequirements = {
-    enabled: card.querySelector("[data-business-enabled]").checked && criteriaItems.length > 0,
+    enabled: criteriaItems.length > 0,
     criteriaItems,
     accuracyCriteria: criteriaItems.join("; "),
     passingGrade: card.querySelector("[data-business-passing-grade]").value
+  };
+  const accuracySources = collectAccuracySourcesFromCard(card);
+  next.expectations.accuracyValidation = {
+    enabled: Boolean(card.querySelector("[data-accuracy-enabled]")?.checked) && accuracySources.length > 0,
+    sources: accuracySources
   };
   return next;
 }
@@ -2042,48 +2176,6 @@ async function restoreSuiteVersion(versionId) {
   } catch (error) {
     notify(error.message);
   }
-}
-
-async function sendAssistant(text) {
-  if (state.busy) return;
-  try {
-    state.selectedSuite = collectSuite();
-    state.assistantOpen = true;
-    state.assistantMessages.push({ role: "user", text });
-    state.busy = true;
-    renderEditor();
-    const reply = await json("/api/assistant", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ suite: state.selectedSuite, messages: state.assistantMessages })
-    });
-    state.assistantMessages.push({ role: "assistant", text: reply.message || "変更案を作成しました。" });
-    state.assistantPatch = reply.patch && Object.keys(reply.patch).length ? reply.patch : null;
-  } catch (error) {
-    state.assistantMessages.push({ role: "assistant", text: tr("Vertex AIに接続できませんでした: {message}", "Could not connect to Vertex AI: {message}", { message: translateApiMessage(error.message) }) });
-    notify(error.message);
-  } finally {
-    state.busy = false;
-    renderEditor();
-  }
-}
-
-async function applyPatch() {
-  const patch = state.assistantPatch || {};
-  if (patch.name) state.selectedSuite.name = patch.name;
-  if (patch.description) state.selectedSuite.description = patch.description;
-  if (Array.isArray(patch.cases)) {
-    const cases = new Map(state.selectedSuite.cases.map((item) => [item.id, item]));
-    patch.cases.forEach((item) => {
-      const id = item.id && cases.has(item.id) ? item.id : `case_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
-      cases.set(id, { ...(cases.get(id) || {}), ...item, id });
-    });
-    state.selectedSuite.cases = [...cases.values()];
-  }
-  state.assistantPatch = null;
-  clampSelectedCaseIndex();
-  renderEditor();
-  await saveSuite();
 }
 
 async function runSuite(id) {
@@ -2980,8 +3072,88 @@ function renderSettings() {
         </div>
       </section>
     </form>
+    ${renderMcpSettings()}
   `, "settings");
   bindStorageSettings();
+  bindMcpSettings();
+}
+
+function mcpScopeLabel(scope) {
+  return ({
+    "suites:read": tr("スイート・ケース参照", "Read suites and cases"),
+    "suites:write": tr("スイート・ケース作成・更新", "Create and update suites and cases"),
+    "runs:read": tr("実行状況参照", "Read run status"),
+    "runs:execute": tr("テスト実行", "Execute tests"),
+    "reports:read": tr("評価レポート参照・PDF取得", "Read reports and download PDFs"),
+    "agents:read": tr("Data Agent参照", "Read Data Agents"),
+    "agents:write": tr("Data Agent登録", "Register Data Agents"),
+    "knowledge:read": tr("GCSナレッジ参照・検索", "Read and search GCS knowledge"),
+    "knowledge:write": tr("GCSナレッジ登録・同期・アップロード", "Register, sync, and upload GCS knowledge"),
+    "sheets:read": tr("Google Sheets接続参照", "Read Google Sheets connections"),
+    "sheets:write": tr("Google Sheets接続・入出力", "Connect, import, and export Google Sheets"),
+    "assistant:write": tr("AIによるスイート編集", "Edit suites with AI"),
+    "storage:read": tr("ストレージ設定参照・接続テスト", "Read and test storage"),
+    "storage:switch": tr("ストレージ切替（高権限）", "Switch storage (elevated)")
+  })[scope] || scope;
+}
+
+function renderMcpSettings() {
+  const config = state.mcpConfig;
+  if (!config) return `<section class="mcp-settings-panel settings-panel"><p>${tr("MCP設定を読み込んでいます…", "Loading MCP settings…")}</p></section>`;
+  const endpoint = `${location.origin}${config.endpointPath}`;
+  const issued = state.mcpNewToken;
+  const rows = (config.tokens || []).map((token) => {
+    const status = token.revokedAt ? "revoked" : token.expiresAt && Date.parse(token.expiresAt) <= Date.now() ? "expired" : "active";
+    const label = { active: tr("有効", "Active"), expired: tr("期限切れ", "Expired"), revoked: tr("失効済み", "Revoked") }[status];
+    return `<article class="mcp-token-row">
+      <div><strong>${esc(token.name)}</strong><code>${esc(token.prefix)}•••• · ${esc(token.fingerprint)}</code><small>${(token.scopes || []).map(mcpScopeLabel).map(esc).join(" / ")}</small></div>
+      <div><span class="mcp-token-status ${status}">${esc(label)}</span><small>${tr("最終利用", "Last used")}: ${esc(token.lastUsedAt ? fmtDate(token.lastUsedAt) : tr("未使用", "Never"))}<br>${tr("期限", "Expires")}: ${esc(token.expiresAt ? fmtDate(token.expiresAt) : tr("無期限", "Never"))}</small></div>
+      ${status === "active" ? `<button class="button secondary" type="button" data-revoke-mcp="${esc(token.id)}">${icon("ban", 14)}${tr("失効", "Revoke")}</button>` : ""}
+    </article>`;
+  }).join("");
+  return `<section class="mcp-settings-panel settings-panel">
+    <div class="settings-section-head"><div><h2>${tr("MCP連携", "MCP integration")}</h2><p>${tr("外部コーディングエージェントから、削除を除くPrismTrail操作を安全な専用トークンで実行します。", "Connect external coding agents using a dedicated token. Delete operations are unavailable.")}</p></div><span class="adc-inline">${icon("shield-check", 13)}Streamable HTTP</span></div>
+    <div class="mcp-security-note">${icon("lock-keyhole", 17)}<div><strong>${tr("localhost専用の安全境界", "Localhost security boundary")}</strong><p>${tr("外部ネットワークへ公開する場合は、MCPトークンに加えてTLSと既存REST API全体の認証が必要です。", "Remote exposure requires TLS and authentication for the complete REST API in addition to MCP tokens.")}</p></div></div>
+    <label>${tr("MCPエンドポイント", "MCP endpoint")}<div class="mcp-endpoint"><code>${esc(endpoint)}</code><button class="text-button" id="copy-mcp-endpoint" type="button">${icon("copy", 13)}${tr("コピー", "Copy")}</button></div></label>
+    ${issued ? `<div class="mcp-issued-token"><div>${icon("key-round", 18)}<div><strong>${tr("トークンを発行しました（再表示できません）", "Token issued (it cannot be shown again)")}</strong><p>${tr("今すぐコピーして、安全な場所に保存してください。画面にはマスク値だけを表示しています。", "Copy it now and store it securely. Only a masked value is rendered on screen.")}</p><code>${esc(issued.metadata.prefix)}••••••••••••••••••••</code></div></div><div><button id="copy-mcp-token" class="button primary" type="button">${icon("copy", 14)}${tr("トークンをコピー", "Copy token")}</button><button id="dismiss-mcp-token" class="button secondary" type="button">${tr("閉じる", "Close")}</button></div></div>` : ""}
+    <form id="mcp-token-form" class="mcp-token-form">
+      <label>${tr("接続名", "Connection name")}<input name="name" maxlength="120" required placeholder="Codex / Claude Code"></label>
+      <label>${tr("有効期間", "Expiration")}<select name="expiresInDays"><option value="7">7${tr("日", " days")}</option><option value="30">30${tr("日", " days")}</option><option value="90" selected>90${tr("日", " days")}</option><option value="365">365${tr("日", " days")}</option></select></label>
+      <fieldset><legend>${tr("許可する操作", "Allowed operations")}</legend>${config.scopes.map((scope) => `<label class="mcp-scope ${scope === "storage:switch" ? "elevated" : ""}"><input type="checkbox" name="scopes" value="${esc(scope)}" ${config.defaultScopes.includes(scope) ? "checked" : ""}><span><strong>${esc(mcpScopeLabel(scope))}</strong><small>${esc(scope)}</small></span></label>`).join("")}</fieldset>
+      <button class="button primary" type="submit">${icon("key-round", 15)}${tr("専用トークンを発行", "Issue token")}</button>
+    </form>
+    <div class="mcp-token-list"><header><strong>${tr("発行済みトークン", "Issued tokens")}</strong><span>${config.tokens.length}</span></header>${rows || `<p>${tr("まだMCPトークンはありません。", "No MCP tokens have been issued.")}</p>`}</div>
+  </section>`;
+}
+
+function bindMcpSettings() {
+  if (!state.mcpConfig) return;
+  document.querySelector("#copy-mcp-endpoint")?.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(`${location.origin}${state.mcpConfig.endpointPath}`);
+    notify(tr("MCPエンドポイントをコピーしました。", "MCP endpoint copied."), "success");
+  });
+  document.querySelector("#copy-mcp-token")?.addEventListener("click", async () => {
+    if (!state.mcpNewToken?.token) return;
+    await navigator.clipboard.writeText(state.mcpNewToken.token);
+    notify(tr("トークンをコピーしました。", "Token copied."), "success");
+  });
+  document.querySelector("#dismiss-mcp-token")?.addEventListener("click", () => { state.mcpNewToken = null; renderSettings(); });
+  document.querySelector("#mcp-token-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const scopes = [...form.querySelectorAll('input[name="scopes"]:checked')].map((input) => input.value);
+    try {
+      state.mcpNewToken = await json("/api/mcp/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.elements.name.value, expiresInDays: Number(form.elements.expiresInDays.value), scopes }) });
+      state.mcpConfig = await json("/api/mcp/config");
+      renderSettings();
+    } catch (error) { notify(error.message); }
+  });
+  document.querySelectorAll("[data-revoke-mcp]").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm(tr("このMCPトークンを失効しますか？接続中のエージェントは直ちに利用できなくなります。", "Revoke this token? Connected agents will immediately lose access."))) return;
+    await json(`/api/mcp/tokens/${button.dataset.revokeMcp}/revoke`, { method: "POST" });
+    state.mcpConfig = await json("/api/mcp/config");
+    renderSettings();
+  }));
 }
 
 function bindStorageSettings() {
@@ -3212,43 +3384,39 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
   `, "reports", "detail");
   document.querySelector("#export-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-report-pdf");
-    if (button) button.disabled = true;
-    try {
-      const pdfPath =
-        isPartial && focusCaseId
-          ? `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(focusCaseId)}`
-          : `/api/suite-runs/${report.id}/export/pdf`;
-      const filename = await downloadPdf(
-        pdfPath,
-        isPartial && focusCaseId
-          ? `prismtrail-run-case-${focusCaseId}.pdf`
-          : `prismtrail-run-${report.id}.pdf`
-      );
-      notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      if (button && !isLive) button.disabled = false;
-      refreshIcons();
-    }
+    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+      try {
+        const pdfPath =
+          isPartial && focusCaseId
+            ? `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(focusCaseId)}`
+            : `/api/suite-runs/${report.id}/export/pdf`;
+        const filename = await downloadPdf(
+          pdfPath,
+          isPartial && focusCaseId
+            ? `prismtrail-run-case-${focusCaseId}.pdf`
+            : `prismtrail-run-${report.id}.pdf`
+        );
+        notify(tr("評価レポートPDFをダウンロードしました: {name}", "Downloaded evaluation report PDF: {name}", { name: filename }), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
   });
   document.querySelectorAll("[data-export-case-run-pdf]").forEach((button) =>
     button.addEventListener("click", async () => {
       const caseId = button.dataset.exportCaseRunPdf;
       if (!caseId) return;
-      button.disabled = true;
-      try {
-        const filename = await downloadPdf(
-          `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(caseId)}`,
-          `prismtrail-run-case-${caseId}.pdf`
-        );
-        notify(tr("ケースPDFをダウンロードしました: {name}", "Downloaded case PDF: {name}", { name: filename }), "success");
-      } catch (error) {
-        notify(error.message);
-      } finally {
-        button.disabled = false;
-        refreshIcons();
-      }
+      await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
+        try {
+          const filename = await downloadPdf(
+            `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(caseId)}`,
+            `prismtrail-run-case-${caseId}.pdf`
+          );
+          notify(tr("ケースPDFをダウンロードしました: {name}", "Downloaded case PDF: {name}", { name: filename }), "success");
+        } catch (error) {
+          notify(error.message);
+        }
+      }, { overlay: true });
     })
   );
   if (!isLive && evidenceByCaseId == null && (report.caseRuns || []).some((item) => item.runId)) {
@@ -3300,10 +3468,26 @@ function renderReport(report, { evidenceByCaseId = null } = {}) {
 }
 
 function renderSingleRun() {
+  const recent = state.runs.slice(0, 8);
   app.innerHTML = shell(`
     ${pageHead("テスト実行", "ひとつのプロンプトをすぐに試し、レスポンストレースを確認します。")}
-    <section class="single-run-layout"><form id="single-run-form" class="form-panel"><label>対象Data Agent<select id="single-agent">${state.agents.map((a) => `<option value="${a.id}">${esc(a.displayName)}</option>`).join("")}</select></label><label>検証プロンプト<textarea id="single-prompt" rows="7" required placeholder="分析したい内容を入力してください"></textarea></label><div class="form-row"><label>思考モード<select id="single-mode"><option>FAST</option><option>THINKING</option></select></label><button id="single-run-submit" class="button primary" type="submit">${icon("play", 15)}テストを実行</button></div></form><aside class="recent-panel"><h2>最近の実行</h2>${state.runs.slice(0, 8).map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("") || empty("履歴なし", "実行結果がここに並びます。")}</aside></section>
+    <section class="single-run-layout"><form id="single-run-form" class="form-panel"><label>対象Data Agent<select id="single-agent">${state.agents.map((a) => `<option value="${a.id}">${esc(a.displayName)}</option>`).join("")}</select></label><label>検証プロンプト<textarea id="single-prompt" rows="7" required placeholder="分析したい内容を入力してください"></textarea></label><div class="form-row"><label>思考モード<select id="single-mode"><option>FAST</option><option>THINKING</option></select></label><button id="single-run-submit" class="button primary" type="submit">${icon("play", 15)}テストを実行</button></div></form><aside class="recent-panel"><h2>最近の実行</h2><div id="recent-runs-list">${recent.map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("") || `<div class="loading-line">${tr("履歴を読み込み中…", "Loading history…")}</div>`}</div></aside></section>
   `, "run");
+  if (!state.runs.length) {
+    json("/api/runs")
+      .then((payload) => {
+        state.runs = payload.runs || [];
+        if (location.hash !== "#/run") return;
+        const list = document.querySelector("#recent-runs-list");
+        if (!list) return;
+        list.innerHTML = state.runs.slice(0, 8).map((run) => `<a href="#/runs/${run.id}"><span class="run-dot ${run.summary?.status}"></span><span><strong>${esc(run.question)}</strong><small>${fmtDate(run.createdAt)}</small></span></a>`).join("")
+          || empty("履歴なし", "実行結果がここに並びます。");
+      })
+      .catch((error) => {
+        const list = document.querySelector("#recent-runs-list");
+        if (list) list.innerHTML = empty(tr("履歴を読み込めませんでした", "Could not load history"), translateApiMessage(error.message));
+      });
+  }
   document.querySelector("#single-run-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const agent = state.agents.find((a) => a.id === document.querySelector("#single-agent").value);
@@ -3391,67 +3575,76 @@ async function route() {
   clearTimeout(state.reportPollTimer);
   state.reportPollTimer = null;
   const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
-  try {
-    if (parts[0] === "knowledge" && parts[1]) {
-      state.selectedKnowledgeDetail = await json(`/api/knowledge-sources/${parts[1]}`);
-      renderKnowledgeDetail();
-    }
-    else if (parts[0] === "knowledge") renderKnowledge();
-    else if (parts[0] === "sheets") renderSheets();
-    else if (parts[0] === "agents") renderAgents();
-    else if (parts[0] === "settings") renderSettings();
-    else if (parts[0] === "run") renderSingleRun();
-    else if (parts[0] === "reports" && parts[1]) renderReport(await json(`/api/suite-runs/${parts[1]}`));
-    else if (parts[0] === "reports") renderReports();
-    else if (parts[0] === "runs" && parts[1]) renderRunDetail(await json(`/api/runs/${parts[1]}`));
-    else if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
-      const deepCaseId = parts[3] ? decodeURIComponent(parts[3]) : "";
-      if (state.selectedSuite?.id !== parts[1]) {
-        state.suitePasteOpen = false;
-        state.suitePasteText = "";
-        state.suitePasteValidation = null;
-        state.suitePasteError = "";
-        state.selectedCaseIndex = 0;
-        state.editorTab = "cases";
-        state.assistantOpen = false;
-        state.suiteVersions = [];
-        state.selectedSuiteVersionId = null;
-        state.selectedSuiteVersion = null;
+  if (parts[0] !== "settings") state.mcpNewToken = null;
+  await withRouteProgress(async () => {
+    try {
+      if (parts[0] === "knowledge" && parts[1]) {
+        state.selectedKnowledgeDetail = await json(`/api/knowledge-sources/${parts[1]}`);
+        renderKnowledgeDetail();
       }
-      if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
-        state.preserveEditorOnLocale = false;
-      } else {
-        state.selectedSuite = await json(`/api/suites/${parts[1]}`);
-        state.assistantMessages = [];
-        state.assistantPatch = null;
-        state.selectedCaseIndex = 0;
+      else if (parts[0] === "knowledge") renderKnowledge();
+      else if (parts[0] === "sheets") renderSheets();
+      else if (parts[0] === "agents") renderAgents();
+      else if (parts[0] === "settings") {
+        const [storage, mcp] = await Promise.all([
+          state.storageConfig?.overview ? state.storageConfig : json("/api/storage/config").catch(() => state.storageConfig),
+          json("/api/mcp/config").catch(() => state.mcpConfig)
+        ]);
+        state.storageConfig = storage;
+        state.mcpConfig = mcp;
+        renderSettings();
       }
-      if (deepCaseId && state.selectedSuite?.cases) {
-        const index = state.selectedSuite.cases.findIndex((item) => item.id === deepCaseId);
-        if (index >= 0) {
-          state.selectedCaseIndex = index;
+      else if (parts[0] === "run") renderSingleRun();
+      else if (parts[0] === "reports" && parts[1]) renderReport(await json(`/api/suite-runs/${parts[1]}`));
+      else if (parts[0] === "reports") renderReports();
+      else if (parts[0] === "runs" && parts[1]) renderRunDetail(await json(`/api/runs/${parts[1]}`));
+      else if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
+        const deepCaseId = parts[3] ? decodeURIComponent(parts[3]) : "";
+        if (state.selectedSuite?.id !== parts[1]) {
+          state.suitePasteOpen = false;
+          state.suitePasteText = "";
+          state.suitePasteValidation = null;
+          state.suitePasteError = "";
+          state.selectedCaseIndex = 0;
           state.editorTab = "cases";
+          state.suiteVersions = [];
+          state.selectedSuiteVersionId = null;
+          state.selectedSuiteVersion = null;
         }
-      }
-      renderEditor();
-    } else renderSuites();
-    refreshIcons();
-  } catch (error) {
-    notify(error.message);
-  }
+        if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
+          state.preserveEditorOnLocale = false;
+        } else {
+          state.selectedSuite = await json(`/api/suites/${parts[1]}`);
+          state.selectedCaseIndex = 0;
+        }
+        if (deepCaseId && state.selectedSuite?.cases) {
+          const index = state.selectedSuite.cases.findIndex((item) => item.id === deepCaseId);
+          if (index >= 0) {
+            state.selectedCaseIndex = index;
+            state.editorTab = "cases";
+          }
+        }
+        renderEditor();
+      } else renderSuites();
+      refreshIcons();
+    } catch (error) {
+      notify(error.message);
+    }
+  });
 }
 
 async function initialize() {
+  setBusyOverlay(true, tr("データを読み込み中…", "Loading data…"));
+  setRouteProgress(true);
   try {
-    const [config, agents, knowledgeSources, suites, suiteRuns, runs, sheetConnections, storageConfig] = await Promise.all([
+    const [config, agents, knowledgeSources, suites, suiteRuns, sheetConnections, storageConfig] = await Promise.all([
       json("/api/config"),
       json("/api/agents"),
       json("/api/knowledge-sources"),
       json("/api/suites"),
       json("/api/suite-runs"),
-      json("/api/runs"),
       json("/api/sheets/connections"),
-      json("/api/storage/config").catch(() => null)
+      json("/api/storage/config?lite=1").catch(() => null)
     ]);
     Object.assign(state, {
       config,
@@ -3459,15 +3652,26 @@ async function initialize() {
       knowledgeSources: knowledgeSources.sources,
       suites: suites.suites,
       suiteRuns: suiteRuns.suiteRuns,
-      runs: runs.runs,
+      runs: state.runs || [],
       sheetConnections: sheetConnections.connections,
       sheetFormat: sheetConnections.format,
       storageConfig
     });
     if (!location.hash) location.hash = "#/suites";
     await route();
+    // Single-run history is secondary — load after first paint so GCS cold start feels lighter.
+    json("/api/runs")
+      .then((payload) => {
+        state.runs = payload.runs || [];
+      })
+      .catch(() => {
+        /* keep empty; run page can retry */
+      });
   } catch (error) {
     app.innerHTML = empty(tr("起動できませんでした", "Could not start the application"), translateApiMessage(error.message));
+  } finally {
+    setBusyOverlay(false);
+    setRouteProgress(false);
   }
 }
 

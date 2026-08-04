@@ -139,6 +139,25 @@ Live (`running` / `cancelling`) suite runs return `409`. The UI exposes download
 
 Each PDF page includes a clickable link back into the app (base URL defaults to `http://127.0.0.1:4318`, overridable via `PRISMTRAIL_APP_BASE_URL`). Case specs open `#/suites/:suiteId/edit/:caseId`; suite-run covers open `#/reports/:suiteRunId`; case result pages open `#/runs/:runId` when a run id exists. Links are attached as PDF URI annotations after pdfme generation.
 
+## MCP integration
+
+`/mcp` implements stateless Streamable HTTP JSON-RPC for protocol versions `2025-11-25` and
+`2025-06-18`. Its 42-tool registry covers all non-destructive UI integration boundaries and is an
+explicit allow-list; it never proxies arbitrary REST paths.
+Each tool declares a narrow scope, and the server checks that scope again immediately before the
+handler. Input schemas reject unknown top-level arguments, requests are capped at 1 MiB, Origins
+are same-host by default, and each token has an in-memory request rate limit.
+
+MCP credentials and the metadata-only audit trail live under the local bootstrap data directory,
+outside the switchable domain-storage namespaces. Plaintext tokens are generated from 256 bits of
+randomness, returned once, and never persisted. Suite and case writes require the caller's last
+observed `updatedAt`, preventing a coding agent from silently replacing a concurrent edit.
+
+Primary-storage switching is a two-step capability. A dry-run validates the destination, checks
+conflicts, binds a confirmation ID to the token and storage revision, and expires it after five
+minutes. The switch repeats validation and the conflict scan, copies without deleting the source,
+then atomically updates the bootstrap configuration and swaps the in-process backend.
+
 ## Deployment boundary
 
 The server bind address is configurable. Direct Node.js startup defaults to `127.0.0.1`; the

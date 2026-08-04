@@ -24,6 +24,7 @@ const suite = {
       agentId: "agent_x",
       thinkingMode: "FAST",
       status: "active",
+      relatedUrls: ["https://example.com/slack/thread-1"],
       memo: "参照メモ",
       expectations: {
         systemRequirements: {
@@ -152,6 +153,7 @@ test("builds case-spec inputs with checklist and system lines", () => {
   assert.equal(inputs[0].specCriteriaHead1, "受入基準");
   assert.match(inputs[0].openLink, /ケースを開く/);
   assert.equal(inputs[0].openLinkUrl, caseEditorUrl("suite_demo", "case_1"));
+  assert.match(inputs[0].relatedUrls, /https:\/\/example.com\/slack\/thread-1/);
 });
 
 test("builds suite-run cover plus case pages, or a single case page", () => {

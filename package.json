@@ -29,8 +29,8 @@
     "@pdfme/schemas": "^6.1.12",
     "fontkit": "^2.0.4",
     "fuse.js": "^7.5.0",
-    "google-auth-library": "^10.3.0",
-    "lucide": "^1.27.0",
+    "google-auth-library": "^11.0.0",
+    "lucide": "^1.28.0",
     "vega": "^6.3.1",
     "vega-embed": "^7.1.0",
     "vega-lite": "^6.4.3"

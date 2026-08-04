@@ -33,6 +33,19 @@ The default Docker Compose configuration publishes the service only on `127.0.0.
 that binding or expose the service to an untrusted network without adding TLS, authentication,
 authorization, request auditing, and workload identity.
 
+The `/mcp` endpoint requires a dedicated bearer token, but this does not convert the rest of the
+local application into an authenticated network service. Token administration is restricted to a
+localhost Host by default. Remote deployments must protect every `/api` route at the same trusted
+reverse-proxy boundary. MCP tokens are scoped, expiring, revocable, rate-limited, stored only as
+hashes, and excluded from primary-storage migration. Delete tools are not part of the MCP allow-list.
+
+Accuracy validation treats all source content as untrusted evidence, never as instructions. URL
+sources are limited to public HTTP(S) endpoints on standard ports, with DNS/IP pinning, redirect
+revalidation, content-type filtering, timeouts, and a 512 KiB response cap to reduce SSRF exposure.
+BigQuery sources accept only a single read-only `SELECT`/`WITH` statement, reject mutation/script and
+`EXTERNAL_QUERY` constructs, perform a dry run, and enforce billed-byte, row, and time limits. They
+execute with the local ADC identity, so operators should still grant that identity least privilege.
+
 ## Sensitive data
 
 The following files and values must never be committed:
