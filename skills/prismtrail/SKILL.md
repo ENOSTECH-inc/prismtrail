@@ -40,11 +40,25 @@ Use Application Default Credentials only:
 
 ```bash
 gcloud auth application-default login \
+  --impersonate-service-account=SERVICE_ACCOUNT_EMAIL \
   --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
-gcloud auth application-default set-quota-project GOOGLE_CLOUD_PROJECT
 ```
 
+Google Sheets is outside the Google Cloud scope set. Use
+`--impersonate-service-account=SERVICE_ACCOUNT_EMAIL` and share every target spreadsheet with that
+service account. Never recommend the bare `--scopes=...spreadsheets` or custom Desktop OAuth client
+flow in PrismTrail recovery guidance.
+Prefer keyless service-account impersonation from user ADC for managed local environments. This
+stores the user's ADC and impersonation configuration locally, not a service-account private key.
+Do not recommend storing service-account key JSON in Secret Manager: an identity that can read the
+secret can normally impersonate the service account directly without creating a long-lived key.
+Do not run `gcloud auth application-default set-quota-project` for impersonated ADC; it updates
+user ADC only and fails for impersonated service-account credentials.
+
 Do not substitute `gcloud auth print-access-token` or place credentials in source files.
+Before a Google-backed operation, inspect **Settings → Google authentication** or
+`GET /api/auth/readiness`. Treat `limited` and `unavailable` as blocking; `unknown` means token
+introspection failed and should be verified through the target API. Never expose the token.
 
 ## Run
 
