@@ -1058,13 +1058,15 @@ function shell(content, active = "suites", mode = false) {
     <div class="app-shell ${collapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${collapsed ? "collapsed" : ""}">
         <div class="sidebar-head">
-          <a class="brand" href="#/suites" aria-label="${tr("PrismTrail ホーム", "PrismTrail home")}">
-            <span class="brand-icon"><img src="/assets/prismtrail-mark.png" alt="" width="32" height="32"></span>
-            <span class="brand-copy"><strong>PrismTrail</strong><small>${tr("データエージェント評価", "Data agent evaluation")}</small></span>
-          </a>
-          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}" aria-expanded="${!collapsed}" title="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</button>
+          <button id="sidebar-toggle" class="sidebar-head-trigger" type="button" aria-label="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}" aria-controls="primary-sidebar-navigation" aria-expanded="${!collapsed}" title="${collapsed ? tr("サイドバーを展開", "Expand sidebar") : tr("サイドバーを折りたたむ", "Collapse sidebar")}">
+            <span class="brand">
+              <span class="brand-icon"><img src="/assets/prismtrail-mark.png" alt="" width="32" height="32"></span>
+              <span class="brand-copy"><strong>PrismTrail</strong><small>${tr("データエージェント評価", "Data agent evaluation")}</small></span>
+            </span>
+            <span class="sidebar-toggle" aria-hidden="true">${icon(collapsed ? "panel-left-open" : "panel-left-close", 16)}</span>
+          </button>
         </div>
-        <nav aria-label="${tr("メインナビゲーション", "Main navigation")}">
+        <nav id="primary-sidebar-navigation" aria-label="${tr("メインナビゲーション", "Main navigation")}">
           <section class="nav-group ${["suites", "run", "reports"].includes(active) ? "active-group" : ""}" aria-labelledby="nav-evaluation">
             <h2 id="nav-evaluation" class="nav-group-label">${tr("評価ワークフロー", "Evaluation")}</h2>
             <a class="${active === "suites" ? "active" : ""}" href="#/suites" title="${tr("テストスイート", "Test suites")}">${icon("layers-3")}<span class="nav-label">${tr("テストスイート", "Test suites")}</span></a>
