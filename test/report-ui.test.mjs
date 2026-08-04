@@ -1,0 +1,45 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+
+test("evaluation report uses a master-detail case workbench", () => {
+  assert.match(app, /class="report-workbench"/);
+  assert.match(app, /data-report-case-id/);
+  assert.match(styles, /\.report-workbench\s*\{/);
+  assert.match(styles, /\.report-case-nav-item\.selected/);
+});
+
+test("run details separate the summary from raw response events", () => {
+  assert.match(app, /data-run-tab="summary"/);
+  assert.match(app, /data-run-tab="trace"/);
+  assert.match(app, /role="tablist"/);
+  assert.match(app, /window\.scrollTo\(\{ top: 0, behavior: "instant" \}\)/);
+});
+
+test("report actions have distinct Sheets, PDF, and raw JSON treatments", () => {
+  assert.match(app, /report-action-sheet/);
+  assert.match(app, /report-action-pdf/);
+  assert.match(app, /report-action-json/);
+  assert.match(styles, /\.report-action-sheet\s*\{/);
+  assert.match(styles, /\.report-action-pdf\s*\{/);
+  assert.match(styles, /\.report-action-json\s*\{/);
+  assert.match(app, /function openJsonViewer\(/);
+  assert.doesNotMatch(app, /window\.print\(/);
+});
+
+test("run detail keeps the report header and provides a closeable case context", () => {
+  assert.match(app, /case-drilldown-header/);
+  assert.match(app, /case-drilldown-close/);
+  assert.match(app, /reportToolbarActions\(suiteRun/);
+  assert.match(styles, /\.case-drilldown-header\s*\{/);
+});
+
+test("quick search scopes report and run pages to the current test suite", () => {
+  assert.match(app, /function quickSearchScope\(/);
+  assert.match(app, /function buildScopedQuickSearchCatalog\(/);
+  assert.match(app, /このテストスイート内を検索/);
+  assert.match(app, /item\.scoped && item\.href/);
+});
