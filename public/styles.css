@@ -777,7 +777,7 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .sheets-auth > code { max-width: 610px; overflow: auto; padding: 8px 10px; color: #b8c8dd; border-radius: 6px; background: #0b172b; font-size: 8px; white-space: nowrap; }
 .sheet-connect-panel { max-width: 1480px; display: grid; grid-template-columns: minmax(0,1.1fr) minmax(360px,.9fr); gap: 14px; margin: 0 auto 16px; }
 .sheet-connect-panel > form,.format-note { padding: 17px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
-.sheet-connect-panel > form { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 10px; }
+.sheet-connect-panel > form { display: grid; grid-template-columns: minmax(160px,.7fr) minmax(250px,1.3fr) minmax(180px,.9fr) auto; align-items: end; gap: 10px; }
 .format-note { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; }
 .format-note > span { width: 34px; height: 34px; display: grid; place-content: center; color: var(--blue); border-radius: 9px; background: #edf2ff; }
 .format-note strong,.format-note p { display: block; margin: 0; }
@@ -789,6 +789,7 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .sheet-card > header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; }
 .sheet-mark { width: 38px; height: 38px; display: grid; place-content: center; color: #168464; border-radius: 10px; background: #e9f7f1; }
 .sheet-card h2 { margin: 0 0 4px; font-size: 13px; }
+.sheet-agent-name { display: flex; align-items: center; gap: 5px; margin: 2px 0 4px; color: #176c54; font-size: 9px; }
 .sheet-card header code { display: block; overflow: hidden; color: #8795a7; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .sheet-meta { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 14px 0; }
 .sheet-meta span { padding: 9px; color: #4e627b; border-radius: 7px; background: #f7f9fb; font: 500 9px "DM Mono",monospace; }
@@ -964,6 +965,8 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .card-grid { grid-template-columns: repeat(2,1fr); }
   .knowledge-grid { grid-template-columns: repeat(2,1fr); }
   .sheet-actions { grid-template-columns: 1fr; }
+  .sheet-connect-panel { grid-template-columns: 1fr; }
+  .sheet-connect-panel > form { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .editor-columns.has-cases { grid-template-columns: 240px minmax(0,1fr); }
   .main { padding: 30px 25px 60px; }
   .main.detail-mode { padding: 0; }

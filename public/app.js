@@ -108,6 +108,37 @@ function suiteRunLabel(run) {
   return `${when}_${name}`;
 }
 
+function suiteAgentIds(suite = {}) {
+  const fallback = String(suite.defaultAgentId || "").trim();
+  const ids = new Set(fallback ? [fallback] : []);
+  for (const testCase of suite.cases || []) {
+    const agentId = String(testCase.agentId || fallback).trim();
+    if (agentId) ids.add(agentId);
+  }
+  return [...ids];
+}
+
+function suiteAgentId(suite = {}) {
+  const ids = suiteAgentIds(suite);
+  return ids.length === 1 ? ids[0] : null;
+}
+
+function suiteRunAgentId(run = {}) {
+  return suiteAgentId(run.suiteSnapshot || state.suites.find((suite) => suite.id === run.suiteId) || {});
+}
+
+function sheetConnectionForAgent(agentId, { readyOnly = false } = {}) {
+  return state.sheetConnections.find((connection) =>
+    connection.agentId === agentId &&
+    connection.spreadsheetUrl &&
+    (!readyOnly || connection.status === "ready")
+  ) || null;
+}
+
+function agentLabel(agentId) {
+  return state.agents.find((agent) => agent.id === agentId)?.displayName || agentId || tr("未割当", "Unassigned");
+}
+
 function fmtDuration(ms = 0) {
   if (ms < 1000) return `${ms} ms`;
   return ms < 60000
@@ -1179,10 +1210,13 @@ function renderEditor() {
   const selectedCase = suite.cases[state.selectedCaseIndex];
   const onCasesTab = state.editorTab === "cases";
   const onHistoryTab = state.editorTab === "history";
-  const connectedSheet =
-    state.sheetConnections.find((connection) => connection.status === "ready" && connection.spreadsheetUrl) ||
-    state.sheetConnections.find((connection) => connection.spreadsheetUrl);
-  const sheetShortcut = connectedSheet
+  const editorAgentId = suiteAgentId(suite);
+  const connectedSheet = editorAgentId
+    ? sheetConnectionForAgent(editorAgentId, { readyOnly: true }) || sheetConnectionForAgent(editorAgentId)
+    : null;
+  const sheetShortcut = !editorAgentId
+    ? `<button class="button secondary" type="button" disabled title="${esc(tr("Data Agentを1つに統一してください。", "Use exactly one Data Agent in this suite."))}">${icon("triangle-alert", 15)}${tr("複数Agentのため連携不可", "Mixed-agent suite")}</button>`
+    : connectedSheet
     ? `<button id="open-linked-sheet" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("Gシートで編集", "Edit in Sheets")}${icon("external-link", 13)}</button>`
     : `<a class="button secondary" href="#/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`;
   const showCaseNav = onCasesTab && suite.cases.length > 0;
@@ -1876,9 +1910,14 @@ function bindEditor() {
     window.lucide?.createIcons();
   };
   const openLinkedSheet = async () => {
-    const connection =
-      state.sheetConnections.find((item) => item.status === "ready" && item.spreadsheetUrl) ||
-      state.sheetConnections.find((item) => item.spreadsheetUrl);
+    const agentId = suiteAgentId(state.selectedSuite);
+    const connection = agentId
+      ? sheetConnectionForAgent(agentId, { readyOnly: true }) || sheetConnectionForAgent(agentId)
+      : null;
+    if (!agentId) {
+      notify(tr("スイート内のData Agentを1つに統一してください。", "Use exactly one Data Agent in the suite before linking Sheets."));
+      return;
+    }
     if (!connection) {
       location.hash = "#/sheets";
       return;
@@ -2735,8 +2774,14 @@ function renderAgents() {
     ${pageHead("データエージェント", "Google Cloud上の既存Data Agentを、テスト対象として安全に登録します。", `<button id="register-agent" class="button primary">${icon("plus", 16)}Agentを登録</button>`)}
     <div class="auth-banner">${icon("shield-check", 22)}<div><strong>アプリケーション既定認証情報（ADC）</strong><p>ローカルADCを優先し、利用できない場合はgcloudログインへフォールバックします。トークンは保存しません。</p></div><code>gcloud auth application-default login</code></div>
     <section class="table-panel">
-      <table><thead><tr><th>Data Agent</th><th>プロジェクト / ロケーション</th><th>接続状態</th><th>最終確認</th><th></th></tr></thead>
-      <tbody>${state.agents.map((agent) => `<tr><td><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></td><td>${esc(agent.projectId)}<small>${esc(agent.location)}</small></td><td>${statusPill(agent.status)}</td><td>${fmtDate(agent.lastCheckedAt)}</td><td><button class="button secondary small" data-check-agent="${agent.id}">${icon("plug-zap", 14)}接続確認</button></td></tr>`).join("")}</tbody>
+      <table><thead><tr><th>Data Agent</th><th>プロジェクト / ロケーション</th><th>専用Google Sheet</th><th>接続状態</th><th>最終確認</th><th></th></tr></thead>
+      <tbody>${state.agents.map((agent) => {
+        const sheet = sheetConnectionForAgent(agent.id);
+        const sheetCell = sheet
+          ? `<a class="text-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 13)}${esc(sheet.sheetName || sheet.title)}</a>`
+          : `<a class="text-link" href="#/sheets">${icon("link", 13)}${tr("未連携", "Not connected")}</a>`;
+        return `<tr><td><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></td><td>${esc(agent.projectId)}<small>${esc(agent.location)}</small></td><td>${sheetCell}</td><td>${statusPill(agent.status)}</td><td>${fmtDate(agent.lastCheckedAt)}</td><td><button class="button secondary small" data-check-agent="${agent.id}">${icon("plug-zap", 14)}接続確認</button></td></tr>`;
+      }).join("")}</tbody>
       </table>
     </section>
     <dialog id="agent-dialog"><form method="dialog" id="agent-form"><header><h2>Data Agentを登録</h2><button value="cancel" class="icon-button">${icon("x")}</button></header><label>表示名<input name="displayName" required placeholder="例: 売上分析エージェント"></label><label>リソース名<input name="resourceName" required placeholder="projects/.../locations/global/dataAgents/..."></label><label>説明<textarea name="description" rows="3"></textarea></label><footer><button value="cancel" class="button secondary">キャンセル</button><button id="save-agent" value="default" class="button primary">登録する</button></footer></form></dialog>
@@ -2766,18 +2811,29 @@ function renderAgents() {
 }
 
 function renderSheets() {
-  const suiteOptions = state.suites
-    .map((suite) => `<option value="${suite.id}">${esc(suite.name)} · ${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</option>`)
-    .join("");
-  const reportOptions = state.suiteRuns
-    .map((run) => `<option value="${run.id}">${esc(suiteRunLabel(run))} · ${run.summary?.passRate || 0}%</option>`)
-    .join("");
+  const selectedAgentId = suiteAgentId(state.selectedSuite || {}) || "";
+  const agentOptions = state.agents.map((agent) => {
+    const connection = sheetConnectionForAgent(agent.id);
+    const suffix = connection ? ` · ${tr("連携済み", "Connected")}` : "";
+    return `<option value="${agent.id}" ${selectedAgentId === agent.id ? "selected" : ""}>${esc(agent.displayName)}${esc(suffix)}</option>`;
+  }).join("");
   const connections = state.sheetConnections
-    .map((connection) => `
+    .map((connection) => {
+      const linkedAgent = state.agents.find((agent) => agent.id === connection.agentId);
+      const scopedSuites = state.suites.filter((suite) => suiteAgentId(suite) === connection.agentId);
+      const scopedReports = state.suiteRuns.filter((run) => suiteRunAgentId(run) === connection.agentId);
+      const suiteOptions = scopedSuites
+        .map((suite) => `<option value="${suite.id}">${esc(suite.name)} · ${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</option>`)
+        .join("");
+      const reportOptions = scopedReports
+        .map((run) => `<option value="${run.id}">${esc(suiteRunLabel(run))} · ${run.summary?.passRate || 0}%</option>`)
+        .join("");
+      const assigned = Boolean(linkedAgent);
+      return `
       <article class="sheet-card" data-sheet-card="${connection.id}">
         <header>
           <span class="sheet-mark">${icon("sheet", 20)}</span>
-          <div><h2>${esc(connection.title)}</h2><code>${esc(connection.spreadsheetId)}</code></div>
+          <div><h2>${esc(connection.sheetName || connection.title)}</h2><small>${tr("Google上の名前", "Google title")}: ${esc(connection.title)}</small><strong class="sheet-agent-name">${icon("bot", 13)}${esc(linkedAgent?.displayName || tr("Data Agent未割当", "Unassigned Data Agent"))}</strong><code>${esc(connection.spreadsheetId)}</code></div>
           ${statusPill(connection.status)}
         </header>
         <div class="sheet-meta">
@@ -2788,43 +2844,50 @@ function renderSheets() {
         <div class="sheet-actions">
           <form data-export-suite="${connection.id}">
             <label>アプリ → Sheets：テストスイート
-              <select name="suiteId" ${state.suites.length ? "" : "disabled"}>${suiteOptions}</select>
+              <select name="suiteId" ${scopedSuites.length ? "" : "disabled"}>${suiteOptions}</select>
             </label>
-            <button class="button secondary" ${state.suites.length ? "" : "disabled"}>${icon("upload", 14)}固定フォーマットで出力</button>
+            <button class="button secondary" ${scopedSuites.length ? "" : "disabled"}>${icon("upload", 14)}固定フォーマットで出力</button>
           </form>
           <div class="sheet-import">
             <div><strong>Sheets → アプリ：テストスイート</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code>を検証して取り込みます。同じsuite_idがあれば更新します。</p></div>
-            <button class="button accent" data-import-suite="${connection.id}">${icon("download", 14)}取り込む</button>
+            <button class="button accent" data-import-suite="${connection.id}" ${assigned ? "" : "disabled"}>${icon("download", 14)}取り込む</button>
           </div>
           <form data-export-report="${connection.id}">
             <label>アプリ → Sheets：評価レポート
-              <select name="suiteRunId" ${state.suiteRuns.length ? "" : "disabled"}>${reportOptions}</select>
+              <select name="suiteRunId" ${scopedReports.length ? "" : "disabled"}>${reportOptions}</select>
             </label>
-            <button class="button secondary" ${state.suiteRuns.length ? "" : "disabled"}>${icon("file-output", 14)}結果を書き出す</button>
+            <button class="button secondary" ${scopedReports.length ? "" : "disabled"}>${icon("file-output", 14)}結果を書き出す</button>
           </form>
         </div>
         <footer>
-          <button class="text-button" data-check-sheet="${connection.id}">${icon("refresh-cw", 13)}接続を再確認</button>
+          <button class="text-button" data-check-sheet="${connection.id}" ${assigned ? "" : "disabled"}>${icon("refresh-cw", 13)}${assigned ? tr("接続を再確認", "Recheck connection") : tr("Agentを選んで再接続してください", "Reconnect with an agent")}</button>
           <a class="text-link" href="${esc(connection.spreadsheetUrl)}" target="_blank" rel="noreferrer">スプレッドシートを開く ${icon("external-link", 13)}</a>
         </footer>
-      </article>`)
+      </article>`;
+    })
     .join("");
   app.innerHTML = shell(`
-    ${pageHead("Google Sheets連携", "スプレッドシートの接続、同期、評価レポートの書き戻しを管理します。", `<a href="#/suites" class="button secondary">${icon("layers-3", 15)}スイートを作成・編集</a>`)}
+    ${pageHead("Google Sheets連携", "Googleスプレッドシートを登録し、その接続先としてData Agentを1つ選びます。Agent間のデータは混在しません。", `<a href="#/suites" class="button secondary">${icon("layers-3", 15)}スイートを作成・編集</a>`)}
     <section class="sheets-auth">
       <div class="sheets-auth-copy">${icon("shield-check", 24)}<div><strong>アプリケーション既定認証情報（ADC）で接続</strong><p>ADCのGoogleアカウントへ対象シートを共有してください。アクセストークンやセル内容は保存しません。</p></div></div>
       <code>gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets</code>
     </section>
     <section class="sheet-connect-panel">
       <form id="sheet-connect-form">
+        <label>シート名
+          <input name="sheetName" required maxlength="120" placeholder="例: 営業分析シート">
+        </label>
         <label>GoogleスプレッドシートURL / Spreadsheet ID
           <input name="spreadsheetUrl" required placeholder="https://docs.google.com/spreadsheets/d/.../edit">
         </label>
-        <button class="button primary">${icon("link", 15)}接続を追加</button>
+        <label>紐付けるData Agent
+          <select name="agentId" required ${state.agents.length ? "" : "disabled"}><option value="">${tr("選択してください", "Select an agent")}</option>${agentOptions}</select>
+        </label>
+        <button class="button primary" ${state.agents.length ? "" : "disabled"}>${icon("link", 15)}スプレッドシートを登録</button>
       </form>
       <div class="format-note">
         <span>${icon("lock-keyhole", 17)}</span>
-        <div><strong>${tr("固定タブと列定義", "Managed tabs and columns")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> / <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("はUI操作で都度書き換えます。", "are rewritten by UI actions.")} <code>${esc(state.sheetFormat?.agentsTab || "AgentEval_DataAgents")}</code> / <code>${esc(state.sheetFormat?.suitesTab || "AgentEval_Suites")}</code> ${tr("は登録済みAgent・スイートを全件表示します。ユーザー作成タブは変更しません。", "always list all registered agents and suites. User-created tabs are left unchanged.")}</p></div>
+        <div><strong>${tr("Agent専用の固定タブ", "Agent-scoped managed tabs")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> / <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("はUI操作で都度書き換えます。", "are rewritten by UI actions.")} <code>${esc(state.sheetFormat?.agentsTab || "AgentEval_DataAgents")}</code> / <code>${esc(state.sheetFormat?.suitesTab || "AgentEval_Suites")}</code> ${tr("には接続したAgentと、そのAgentだけを使うスイートのみを書き出します。", "contain only the linked agent and suites owned by that agent.")}</p></div>
         <b>${tr("スキーマ", "Schema")} v${state.sheetFormat?.schemaVersion || 1}</b>
       </div>
     </section>
@@ -2847,7 +2910,9 @@ function bindSheets() {
     button.disabled = true;
     try {
       const payload = Object.fromEntries(new FormData(event.currentTarget));
-      if (state.selectedSuite?.id) payload.suiteId = state.selectedSuite.id;
+      if (state.selectedSuite?.id && suiteAgentId(state.selectedSuite) === payload.agentId) {
+        payload.suiteId = state.selectedSuite.id;
+      }
       const connection = await json("/api/sheets/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2857,14 +2922,14 @@ function bindSheets() {
       if (connection.bootstrap?.suiteBootstrapped || connection.bootstrap?.reportBootstrapped || connection.bootstrap?.catalogsBootstrapped) {
         notify(
           tr(
-            "{title} に接続し、管理タブ（Agent一覧 / スイート一覧含む）を同期しました。",
-            "Connected to {title} and synced managed tabs (including agent and suite catalogs).",
-            { title: connection.title }
+            "{title} をData Agent専用シートとして接続し、隔離された管理タブを同期しました。",
+            "Connected {title} as the Data Agent's dedicated sheet and synced isolated managed tabs.",
+            { title: connection.sheetName || connection.title }
           ),
           "success"
         );
       } else {
-        notify(tr("{title} に接続しました。", "Connected to {title}.", { title: connection.title }), "success");
+        notify(tr("{title} に接続しました。", "Connected to {title}.", { title: connection.sheetName || connection.title }), "success");
       }
       renderSheets(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
@@ -2875,7 +2940,11 @@ function bindSheets() {
       const connection = await json(`/api/sheets/connections/${button.dataset.checkSheet}/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suiteId: state.selectedSuite?.id || undefined })
+        body: JSON.stringify({
+          suiteId: state.selectedSuite?.id && suiteAgentId(state.selectedSuite) === state.sheetConnections.find((item) => item.id === button.dataset.checkSheet)?.agentId
+            ? state.selectedSuite.id
+            : undefined
+        })
       });
       updateSheetConnection(connection);
       if (connection.bootstrap?.suiteBootstrapped || connection.bootstrap?.reportBootstrapped || connection.bootstrap?.catalogsBootstrapped) {
