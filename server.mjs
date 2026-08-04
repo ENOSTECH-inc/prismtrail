@@ -2035,7 +2035,7 @@ const mcpOperations = {
   },
   async checkAgent(agentId) {
     const agent = await agentStore.get(agentId);
-    const remote = await getDataAgent({ resourceName: agent.resourceName, billingProject: config.billingProject });
+    const remote = await getDataAgent({ resourceName: agent.resourceName, billingProject: agent.projectId || config.billingProject });
     const updated = await agentStore.save({
       ...agent,
       displayName: remote.agent.displayName || agent.displayName,
@@ -2486,6 +2486,30 @@ const server = createServer(async (request, response) => {
       sendJson(response, 200, { agents: await agentStore.list() });
       return;
     }
+    const agentDetailMatch = url.pathname.match(/^\/api\/agents\/([a-zA-Z0-9_-]+)$/);
+    if (request.method === "GET" && agentDetailMatch) {
+      const agent = await agentStore.get(agentDetailMatch[1]);
+      try {
+        const remote = await getDataAgent({
+          resourceName: agent.resourceName,
+          billingProject: agent.projectId || config.billingProject
+        });
+        sendJson(response, 200, {
+          ...agent,
+          displayName: remote.agent.displayName || agent.displayName,
+          description: remote.agent.description || agent.description,
+          remoteConfiguration: remote.agent,
+          configurationFetchedAt: new Date().toISOString(),
+          authSource: remote.authSource
+        });
+      } catch (error) {
+        sendJson(response, 200, {
+          ...agent,
+          configurationError: error.message
+        });
+      }
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/api/knowledge-sources") {
       sendJson(response, 200, { sources: await knowledgeSourceStore.list() });
@@ -2623,7 +2647,7 @@ const server = createServer(async (request, response) => {
     const agentCheckMatch = url.pathname.match(/^\/api\/agents\/([a-zA-Z0-9_-]+)\/check$/);
     if (request.method === "POST" && agentCheckMatch) {
       const agent = await agentStore.get(agentCheckMatch[1]);
-      const remote = await getDataAgent({ resourceName: agent.resourceName, billingProject: config.billingProject });
+      const remote = await getDataAgent({ resourceName: agent.resourceName, billingProject: agent.projectId || config.billingProject });
       const updated = await agentStore.save({
         ...agent,
         displayName: remote.agent.displayName || agent.displayName,
@@ -2634,7 +2658,11 @@ const server = createServer(async (request, response) => {
         updatedAt: new Date().toISOString()
       });
       syncReadySheetCatalogs(updated.id).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
-      sendJson(response, 200, updated);
+      sendJson(response, 200, {
+        ...updated,
+        remoteConfiguration: remote.agent,
+        configurationFetchedAt: updated.lastCheckedAt
+      });
       return;
     }
 

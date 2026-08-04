@@ -1066,10 +1066,10 @@ function shell(content, active = "suites", mode = false) {
             <span class="live-dot" aria-hidden="true"></span>
             <span class="auth-copy"><strong>${esc(storage.label)}</strong><small>${esc(storage.detail)}</small></span>
           </a>
-          <a class="sidebar-status sidebar-auth auth-${esc(auth.status)}" href="#/settings/auth" title="${esc(auth.detail)}">
+          ${!auth.ready && auth.status !== "checking" ? `<a class="sidebar-status sidebar-auth auth-${esc(auth.status)}" href="#/settings/auth" title="${esc(auth.detail)}">
             <span class="live-dot" aria-hidden="true"></span>
             <span class="auth-copy"><strong>Google Cloud ADC</strong><small>${esc(auth.label)}</small></span>
-          </a>
+          </a>` : ""}
           ${localeSelector(collapsed)}
         </div>
       </aside>
@@ -1428,8 +1428,6 @@ function renderEditor() {
   if (!["basics", "cases", "runs", "history"].includes(state.editorTab)) state.editorTab = "cases";
   const selectedCase = suite.cases[state.selectedCaseIndex];
   const onCasesTab = state.editorTab === "cases";
-  const onRunsTab = state.editorTab === "runs";
-  const onHistoryTab = state.editorTab === "history";
   const editorAgentId = suiteAgentId(suite);
   const connectedSheet = editorAgentId
     ? sheetConnectionForAgent(editorAgentId, { readyOnly: true }) || sheetConnectionForAgent(editorAgentId)
@@ -1479,10 +1477,10 @@ function renderEditor() {
                 : `<a class="button secondary" href="#/settings/sheets">${icon("sheet", 15)}${tr("Google Sheetsを連携", "Connect Google Sheets")}</a>`}
             </div>
           </section>`}
-          <div class="section-row">
-            <div>
-              <h2>${tr("テストケース", "Test cases")}</h2>
-              <p>${tr("左の一覧から選択して編集します。上から順に実行されます。", "Select a case from the left list to edit. Cases run from top to bottom.")}</p>
+          <div class="case-workspace-toolbar">
+            <div class="selected-case-heading">
+              <span>${icon("mouse-pointer-2", 14)}${tr("現在選択中", "Currently selected")}</span>
+              <h2>${esc(selectedCase?.title || tr("テストケース未選択", "No test case selected"))}</h2>
             </div>
             <div class="case-action-groups">
               <div class="case-action-group primary-actions"><button id="run-selected-case" class="button primary" type="button" ${selectedCase && selectedCase.status !== "draft" ? "" : "disabled"}>${icon("play", 15)}${tr("選択ケースを実行", "Run selected case")}</button><button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button></div>
@@ -1562,23 +1560,6 @@ function renderEditor() {
       <div class="${columnClass}">
         ${showCaseNav ? caseNav(suite) : ""}
         <main class="suite-workspace">
-          <div class="workspace-title">
-            <div>
-              <h1>${tr("テスト設計を編集", "Edit test design")}</h1>
-              <p>${onHistoryTab
-                ? tr("定義の変更履歴を確認し、必要なら復元できます。", "Review definition history and restore a past version if needed.")
-                : onRunsTab
-                ? tr("このスイートから実行したテスト結果を時系列で確認します。", "Review test results from this suite in chronological order.")
-                : onCasesTab
-                ? tr("プロンプトと合格条件をケースごとに定義します。", "Define the prompt and passing criteria for each case.")
-                : tr("スイート全体の名前と接続先Data Agentを設定します。", "Configure the suite name and target Data Agent.")}</p>
-            </div>
-            <span class="count-badge">${onHistoryTab
-              ? tr("{count} 件の履歴", "{count} versions", { count: formatLocaleNumber(state.suiteVersions.length) })
-              : onRunsTab
-              ? tr("{count} 件の実行", "{count} runs", { count: formatLocaleNumber(suiteRunHistory.length) })
-              : tr("{count} ケース", "{count} cases", { count: formatLocaleNumber(suite.cases.length) })}</span>
-          </div>
           <div class="editor-tabs" role="tablist" aria-label="${tr("編集モード", "Edit mode")}">
             <button type="button" class="editor-tab${state.editorTab === "basics" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "basics" ? "true" : "false"}" data-editor-tab="basics">${icon("sliders-horizontal", 15)}${tr("基本情報", "Basics")}</button>
             <button type="button" class="editor-tab${state.editorTab === "cases" ? " active" : ""}" role="tab" aria-selected="${state.editorTab === "cases" ? "true" : "false"}" data-editor-tab="cases">${icon("list-checks", 15)}${tr("テストケース", "Test cases")}<em>${formatLocaleNumber(suite.cases.length)}</em></button>
@@ -3147,20 +3128,31 @@ function bindKnowledge() {
 }
 
 function renderAgents() {
+  const cards = state.agents.map((agent) => {
+    const sheet = sheetConnectionForAgent(agent.id);
+    const checked = agent.lastCheckedAt ? fmtDate(agent.lastCheckedAt) : tr("未確認", "Not checked");
+    return `<a class="agent-card" href="#/agents/${agent.id}" aria-label="${esc(tr("{name}の設定情報を開く", "Open configuration for {name}", { name: agent.displayName }))}">
+      <header>
+        <span class="agent-card-icon">${icon("bot", 21)}</span>
+        ${statusPill(agent.status)}
+      </header>
+      <div class="agent-card-copy">
+        <h2>${esc(agent.displayName)}</h2>
+        <p>${esc(agent.description || tr("Google Cloud Data Agentの設定と疎通状態を確認します。", "Review this Google Cloud Data Agent configuration and connectivity."))}</p>
+        <code>${esc(agent.resourceName)}</code>
+      </div>
+      <dl>
+        <div><dt>${tr("プロジェクト", "Project")}</dt><dd>${esc(agent.projectId)}</dd></div>
+        <div><dt>${tr("ロケーション", "Location")}</dt><dd>${esc(agent.location)}</dd></div>
+        <div><dt>Google Sheets</dt><dd>${sheet ? esc(sheet.sheetName || sheet.title) : tr("未連携", "Not connected")}</dd></div>
+        <div><dt>${tr("最終確認", "Last checked")}</dt><dd>${esc(checked)}</dd></div>
+      </dl>
+      <footer><span>${tr("設定情報を開く", "Open configuration")}</span>${icon("arrow-right", 16)}</footer>
+    </a>`;
+  }).join("");
   app.innerHTML = shell(`
     ${pageHead("データエージェント", "Google Cloud上の既存Data Agentを、テスト対象として安全に登録します。", `<button id="register-agent" class="button primary">${icon("plus", 16)}Agentを登録</button>`)}
-    <div class="auth-banner">${icon("shield-check", 22)}<div><strong>アプリケーション既定認証情報（ADC）</strong><p>ADCと必要scopeは共通の事前診断で確認します。トークンは保存しません。</p></div><a class="button secondary small" href="#/settings/auth">${icon("key-round", 13)}Google認証を確認</a></div>
-    <section class="table-panel">
-      <table><thead><tr><th>Data Agent</th><th>プロジェクト / ロケーション</th><th>専用Google Sheet</th><th>接続状態</th><th>最終確認</th><th></th></tr></thead>
-      <tbody>${state.agents.map((agent) => {
-        const sheet = sheetConnectionForAgent(agent.id);
-        const sheetCell = sheet
-          ? `<a class="text-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 13)}${esc(sheet.sheetName || sheet.title)}</a>`
-          : `<a class="text-link" href="#/settings/sheets">${icon("link", 13)}${tr("未連携", "Not connected")}</a>`;
-        return `<tr><td><a class="agent-name-link" href="#/agents/${agent.id}"><strong>${esc(agent.displayName)}</strong><small>${esc(agent.resourceName)}</small></a></td><td>${esc(agent.projectId)}<small>${esc(agent.location)}</small></td><td>${sheetCell}</td><td>${statusPill(agent.status)}</td><td>${fmtDate(agent.lastCheckedAt)}</td><td><div class="table-row-actions"><a class="button primary small" href="#/agents/${agent.id}">${icon("panel-right-open", 14)}詳細</a><button class="button secondary small" data-check-agent="${agent.id}">${icon("plug-zap", 14)}接続確認</button></div></td></tr>`;
-      }).join("")}</tbody>
-      </table>
-    </section>
+    <section class="agent-card-grid">${cards || empty(tr("Data Agentがありません", "No Data Agents"), tr("Google Cloud上のData Agentリソースを登録してください。", "Register an existing Google Cloud Data Agent resource."))}</section>
     <dialog id="agent-dialog"><form method="dialog" id="agent-form"><header><h2>Data Agentを登録</h2><button value="cancel" class="icon-button">${icon("x")}</button></header><label>表示名<input name="displayName" required placeholder="例: 売上分析エージェント"></label><label>リソース名<input name="resourceName" required placeholder="projects/.../locations/global/dataAgents/..."></label><label>説明<textarea name="description" rows="3"></textarea></label><footer><button value="cancel" class="button secondary">キャンセル</button><button id="save-agent" value="default" class="button primary">登録する</button></footer></form></dialog>
   `, "agents");
   const dialog = document.querySelector("#agent-dialog");
@@ -3176,15 +3168,6 @@ function renderAgents() {
       renderAgents();
     } catch (error) { notify(error.message); }
   });
-  document.querySelectorAll("[data-check-agent]").forEach((button) => button.addEventListener("click", async () => {
-    button.disabled = true;
-    try {
-      const updated = await json(`/api/agents/${button.dataset.checkAgent}/check`, { method: "POST" });
-      state.agents = state.agents.map((item) => (item.id === updated.id ? updated : item));
-      notify(tr("接続を確認しました。BigQueryクエリは実行していません。", "Connection verified. No BigQuery query was run."), "success");
-      renderAgents();
-    } catch (error) { notify(error.message); button.disabled = false; }
-  }));
 }
 
 function agentRunMatches(run, agent) {
@@ -3193,20 +3176,122 @@ function agentRunMatches(run, agent) {
 
 function agentDetailTabs(agent, activeTab) {
   return `<nav class="agent-detail-tabs" aria-label="${tr("データエージェント詳細", "Data agent details")}">
-    <a class="${activeTab === "overview" ? "active" : ""}" href="#/agents/${agent.id}">${icon("info", 16)}<span>${tr("基本情報", "Overview")}</span></a>
+    <a class="${activeTab === "overview" ? "active" : ""}" href="#/agents/${agent.id}">${icon("sliders-horizontal", 16)}<span>${tr("設定情報", "Configuration")}</span></a>
     <a class="${activeTab === "connectivity" ? "active" : ""}" href="#/agents/${agent.id}/connectivity">${icon("radio-tower", 16)}<span>${tr("疎通テスト", "Connectivity test")}</span></a>
   </nav>`;
 }
 
+function dataAgentConsoleUrl(agent) {
+  return `https://console.cloud.google.com/bigquery/data-agents?project=${encodeURIComponent(agent.projectId || "")}`;
+}
+
+function configText(value, fallback = "—") {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "string") return value;
+  if (["number", "boolean"].includes(typeof value)) return String(value);
+  return JSON.stringify(value, null, 2);
+}
+
+function dataAgentContexts(agent) {
+  const remote = agent.remoteConfiguration || {};
+  const analytics = remote.dataAnalyticsAgent || remote.data_analytics_agent || {};
+  return {
+    remote,
+    analytics,
+    published: analytics.publishedContext || analytics.published_context || {},
+    staging: analytics.stagingContext || analytics.staging_context || {},
+    previous: analytics.lastPublishedContext || analytics.last_published_context || {}
+  };
+}
+
+function contextArray(context, ...keys) {
+  for (const key of keys) {
+    if (Array.isArray(context?.[key])) return context[key];
+  }
+  return [];
+}
+
+function contextDatasourceEntries(context = {}) {
+  const references = context.datasourceReferences || context.dataSourceReferences || context.datasource_references || {};
+  const entries = [];
+  for (const [kind, raw] of Object.entries(references || {})) {
+    const values = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? Object.values(raw).flatMap((value) => Array.isArray(value) ? value : [value]) : [];
+    for (const value of values) entries.push({ kind, value });
+  }
+  return entries;
+}
+
+function datasourceLabel(entry, index) {
+  const value = entry?.value || {};
+  const table = value.bigQueryTableReference || value.bigqueryTableReference || value.tableReference || value;
+  const parts = [table.projectId, table.datasetId, table.tableId].filter(Boolean);
+  return parts.join(".") || value.lookerExplore || value.explore || value.studioDatasourceId || value.id || `${entry.kind} ${index + 1}`;
+}
+
+function dataSourceCards(context) {
+  const entries = contextDatasourceEntries(context);
+  if (!entries.length) return `<div class="config-empty">${icon("database-zap", 18)}<span>${tr("公開設定にデータソース参照はありません。", "No data source references are present in the published configuration.")}</span></div>`;
+  return `<div class="agent-source-grid">${entries.map((entry, index) => {
+    const value = entry.value || {};
+    const schema = value.schema || value.bigQueryTableReference?.schema || value.tableReference?.schema;
+    const fields = Array.isArray(schema?.fields) ? schema.fields.length : Array.isArray(value.fields) ? value.fields.length : null;
+    return `<article class="agent-source-card"><span>${icon("database", 17)}</span><div><small>${esc(entry.kind)}</small><strong>${esc(datasourceLabel(entry, index))}</strong><p>${fields === null ? tr("スキーマ情報なし", "No schema metadata") : tr("{count}フィールド", "{count} fields", { count: formatLocaleNumber(fields) })}</p></div><details><summary>${tr("参照定義", "Reference definition")}</summary><pre><code>${esc(JSON.stringify(value, null, 2))}</code></pre></details></article>`;
+  }).join("")}</div>`;
+}
+
+function contextOptionsCards(context = {}) {
+  const options = context.options || {};
+  const analysis = options.analysis || {};
+  const datasource = options.datasource || options.dataSource || {};
+  const maxBytes = datasource.bigQueryMaxBilledBytes ?? datasource.bigqueryMaxBilledBytes ?? datasource.big_query_max_billed_bytes;
+  const pythonEnabled = analysis.python?.enabled ?? analysis.pythonEnabled ?? analysis.python_enabled;
+  const model = options.model || context.model || "—";
+  return `<div class="agent-config-stats">
+    <article><span>${icon("sparkles", 16)}</span><small>${tr("モデル", "Model")}</small><strong>${esc(configText(model))}</strong></article>
+    <article><span>${icon("terminal-square", 16)}</span><small>Python</small><strong>${pythonEnabled === undefined ? "—" : pythonEnabled ? tr("有効", "Enabled") : tr("無効", "Disabled")}</strong></article>
+    <article><span>${icon("gauge", 16)}</span><small>BigQuery max billed bytes</small><strong>${maxBytes === undefined ? "—" : esc(fmtBytes(Number(maxBytes)))}</strong></article>
+  </div>`;
+}
+
+function exampleQueryList(context = {}) {
+  const examples = contextArray(context, "exampleQueries", "example_queries", "lookerGoldenQueries", "looker_golden_queries");
+  if (!examples.length) return `<p class="config-muted">${tr("サンプルクエリは設定されていません。", "No example queries are configured.")}</p>`;
+  return `<ol class="agent-example-list">${examples.map((example) => {
+    const question = example.naturalLanguageQuestion || example.question || example.prompt || example.userQuery || tr("サンプルクエリ", "Example query");
+    const sql = example.sqlQuery || example.sql || example.query;
+    return `<li><strong>${esc(configText(question))}</strong>${sql ? `<pre><code>${esc(configText(sql))}</code></pre>` : `<details><summary>${tr("定義を表示", "Show definition")}</summary><pre><code>${esc(JSON.stringify(example, null, 2))}</code></pre></details>`}</li>`;
+  }).join("")}</ol>`;
+}
+
 function agentOverviewHtml(agent) {
   const sheet = sheetConnectionForAgent(agent.id);
-  return `<section class="agent-overview-grid">
-    <article class="agent-overview-card agent-overview-primary">
-      <div class="agent-overview-heading"><span>${icon("bot", 22)}</span><div><small>DATA AGENT</small><h2>${esc(agent.displayName)}</h2><p>${esc(agent.description || tr("説明は登録されていません。", "No description has been registered."))}</p></div></div>
-      <dl><div><dt>${tr("リソース名", "Resource name")}</dt><dd><code>${esc(agent.resourceName)}</code></dd></div><div><dt>${tr("プロジェクト", "Project")}</dt><dd>${esc(agent.projectId)}</dd></div><div><dt>${tr("ロケーション", "Location")}</dt><dd>${esc(agent.location)}</dd></div></dl>
+  const { remote, published, staging, previous } = dataAgentContexts(agent);
+  const systemInstruction = published.systemInstruction || published.system_instruction;
+  const labels = remote.labels || {};
+  const glossaryCount = contextArray(published, "glossaryTerms", "glossary_terms").length;
+  const relationshipCount = contextArray(published, "schemaRelationships", "schema_relationships").length;
+  const functionCount = contextArray(published, "userFunctions", "user_functions").length;
+  const exampleCount = contextArray(published, "exampleQueries", "example_queries", "lookerGoldenQueries", "looker_golden_queries").length;
+  const sourceCount = contextDatasourceEntries(published).length;
+  const fetched = agent.configurationFetchedAt ? fmtDate(agent.configurationFetchedAt) : tr("未取得", "Not fetched");
+  const configurationError = agent.configurationError
+    ? `<div class="agent-config-warning">${icon("triangle-alert", 18)}<div><strong>${tr("Google Cloudの設定を取得できませんでした", "Could not load Google Cloud configuration")}</strong><p>${esc(agent.configurationError)}</p></div><button class="button secondary small" type="button" data-check-agent="${agent.id}">${icon("refresh-cw", 14)}${tr("再取得", "Retry")}</button></div>`
+    : "";
+  return `<section class="agent-configuration">
+    <article class="agent-config-hero">
+      <div class="agent-overview-heading"><span>${icon("bot", 22)}</span><div><small>${tr("公開中のDATA AGENT", "PUBLISHED DATA AGENT")}</small><h2>${esc(agent.displayName)}</h2><p>${esc(agent.description || tr("説明は登録されていません。", "No description has been registered."))}</p></div></div>
+      <div class="agent-config-hero-meta"><span>${statusPill(agent.status)}</span><span><small>${tr("設定取得", "Configuration fetched")}</small><strong>${esc(fetched)}</strong></span><span><small>${tr("更新日時", "Updated")}</small><strong>${esc(fmtDate(remote.updateTime || agent.updatedAt))}</strong></span></div>
     </article>
-    <article class="agent-status-card"><span>${tr("接続状態", "Connection status")}</span>${statusPill(agent.status)}<small>${tr("最終確認", "Last checked")} ${fmtDate(agent.lastCheckedAt)}</small><button class="button secondary" type="button" data-check-agent="${agent.id}">${icon("plug-zap", 15)}${tr("接続を再確認", "Recheck connection")}</button></article>
-    <article class="agent-status-card"><span>Google Sheets</span>${sheet ? `<strong>${esc(sheet.sheetName || sheet.title)}</strong><small>${esc(sheet.spreadsheetId)}</small><a class="button sheet-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>` : `<strong>${tr("未連携", "Not connected")}</strong><small>${tr("設定から専用シートを紐付けられます。", "Connect a dedicated sheet from settings.")}</small><a class="button secondary" href="#/settings/sheets">${icon("link", 15)}${tr("Sheets連携を設定", "Configure Sheets")}</a>`}</article>
+    ${configurationError}
+    <section class="agent-config-section"><header><span>${icon("settings-2", 18)}</span><div><h2>${tr("リソースと実行設定", "Resource and runtime configuration")}</h2><p>${tr("Google Cloud上の公開済みData Agent設定です。", "Published Data Agent configuration loaded from Google Cloud.")}</p></div></header>
+      <dl class="agent-resource-grid"><div><dt>${tr("リソース名", "Resource name")}</dt><dd><code>${esc(agent.resourceName)}</code></dd></div><div><dt>${tr("プロジェクト", "Project")}</dt><dd>${esc(agent.projectId)}</dd></div><div><dt>${tr("ロケーション", "Location")}</dt><dd>${esc(agent.location)}</dd></div><div><dt>${tr("暗号鍵", "KMS key")}</dt><dd>${esc(configText(remote.kmsKey || remote.kms_key))}</dd></div></dl>
+      ${contextOptionsCards(published)}
+    </section>
+    <section class="agent-config-section"><header><span>${icon("message-square-text", 18)}</span><div><h2>${tr("システム指示", "System instruction")}</h2><p>${tr("Data Agentの役割、振る舞い、回答方針を定義します。", "Defines the agent persona, behavior, and response policy.")}</p></div></header><pre class="agent-instruction"><code>${esc(configText(systemInstruction, tr("システム指示は設定されていません。", "No system instruction is configured.")))}</code></pre></section>
+    <section class="agent-config-section"><header><span>${icon("database", 18)}</span><div><h2>${tr("データソース", "Data sources")}</h2><p>${tr("公開設定から参照されるBigQuery、Looker、Studioリソースです。", "BigQuery, Looker, and Studio resources referenced by the published context.")}</p></div><strong>${formatLocaleNumber(sourceCount)}</strong></header>${dataSourceCards(published)}</section>
+    <section class="agent-config-section agent-config-two-column"><div><header><span>${icon("list-checks", 18)}</span><div><h2>${tr("サンプルクエリ", "Example queries")}</h2><p>${tr("質問とSQLの代表例です。", "Representative questions and SQL examples.")}</p></div><strong>${formatLocaleNumber(exampleCount)}</strong></header>${exampleQueryList(published)}</div><aside><header><span>${icon("library", 18)}</span><div><h2>${tr("コンテキスト資産", "Context assets")}</h2><p>${tr("公開設定に含まれる補助定義です。", "Supporting definitions included in the published context.")}</p></div></header><dl class="agent-asset-counts"><div><dt>${tr("用語集", "Glossary terms")}</dt><dd>${formatLocaleNumber(glossaryCount)}</dd></div><div><dt>${tr("スキーマ関係", "Schema relationships")}</dt><dd>${formatLocaleNumber(relationshipCount)}</dd></div><div><dt>${tr("ユーザー関数", "User functions")}</dt><dd>${formatLocaleNumber(functionCount)}</dd></div></dl></aside></section>
+    <section class="agent-config-section agent-integration-section"><header><span>${icon("link-2", 18)}</span><div><h2>${tr("連携とメタデータ", "Integrations and metadata")}</h2><p>${tr("PrismTrail側の接続先とGoogle Cloudリソース属性です。", "PrismTrail connections and Google Cloud resource metadata.")}</p></div></header><div class="agent-integration-grid"><article><small>Google Sheets</small>${sheet ? `<strong>${esc(sheet.sheetName || sheet.title)}</strong><span>${esc(sheet.spreadsheetId)}</span><a class="text-link" href="${esc(sheet.spreadsheetUrl)}" target="_blank" rel="noreferrer">${icon("external-link", 13)}${tr("シートを開く", "Open sheet")}</a>` : `<strong>${tr("未連携", "Not connected")}</strong><a class="text-link" href="#/settings/sheets">${icon("link", 13)}${tr("Sheets連携を設定", "Configure Sheets")}</a>`}</article><article><small>${tr("ラベル", "Labels")}</small><div class="agent-label-list">${Object.entries(labels).map(([key, value]) => `<span><b>${esc(key)}</b>${esc(value)}</span>`).join("") || `<span>${tr("ラベルなし", "No labels")}</span>`}</div></article><article><small>${tr("ライフサイクル", "Lifecycle")}</small><span>${tr("作成", "Created")}: ${esc(fmtDate(remote.createTime || agent.createdAt))}</span><span>${tr("更新", "Updated")}: ${esc(fmtDate(remote.updateTime || agent.updatedAt))}</span></article></div></section>
+    <section class="agent-config-section agent-context-archive"><header><span>${icon("history", 18)}</span><div><h2>${tr("コンテキスト履歴と生データ", "Context history and raw data")}</h2><p>${tr("ステージング、前回公開、APIレスポンスを読み取り専用で確認できます。", "Inspect staging, previously published, and API response data read-only.")}</p></div></header><div><details><summary>${tr("ステージング設定", "Staging context")}</summary><pre><code>${esc(JSON.stringify(staging, null, 2))}</code></pre></details><details><summary>${tr("前回公開設定", "Last published context")}</summary><pre><code>${esc(JSON.stringify(previous, null, 2))}</code></pre></details><details><summary>${tr("Data Agent JSON", "Data Agent JSON")}</summary><pre><code>${esc(JSON.stringify(remote, null, 2))}</code></pre></details></div></section>
   </section>`;
 }
 
@@ -3257,7 +3342,7 @@ function bindAgentConnectivity(agent) {
 function renderAgentDetail(agent, activeTab = "overview") {
   const tab = activeTab === "connectivity" ? "connectivity" : "overview";
   app.innerHTML = shell(`
-    ${navHeader({ title: agent.displayName, subtitle: agent.resourceName, backHref: "#/agents", backLabel: tr("データエージェント一覧に戻る", "Back to data agents") })}
+    ${navHeader({ title: agent.displayName, subtitle: agent.resourceName, backHref: "#/agents", backLabel: tr("データエージェント一覧に戻る", "Back to data agents"), actions: `<a class="button secondary" href="${esc(dataAgentConsoleUrl(agent))}" target="_blank" rel="noopener noreferrer">${icon("external-link", 15)}${tr("Google Cloudで開く", "Open in Google Cloud")}</a>` })}
     ${detailBody(`${agentDetailTabs(agent, tab)}${tab === "connectivity" ? agentConnectivityHtml(agent) : agentOverviewHtml(agent)}`)}
   `, "agents", "detail");
   bindAgentCheckButtons();
@@ -3274,14 +3359,6 @@ function renderSheetsSettings() {
   const connections = state.sheetConnections
     .map((connection) => {
       const linkedAgent = state.agents.find((agent) => agent.id === connection.agentId);
-      const scopedSuites = state.suites.filter((suite) => suiteAgentId(suite) === connection.agentId);
-      const scopedReports = state.suiteRuns.filter((run) => suiteRunAgentId(run) === connection.agentId);
-      const suiteOptions = scopedSuites
-        .map((suite) => `<option value="${suite.id}">${esc(suite.name)} · ${tr("{count}ケース", "{count} cases", { count: formatLocaleNumber(suite.cases?.length || 0) })}</option>`)
-        .join("");
-      const reportOptions = scopedReports
-        .map((run) => `<option value="${run.id}">${esc(suiteRunLabel(run))} · ${run.summary?.passRate || 0}%</option>`)
-        .join("");
       const assigned = Boolean(linkedAgent);
       return `
       <article class="sheet-card" data-sheet-card="${connection.id}">
@@ -3295,24 +3372,6 @@ function renderSheetsSettings() {
           <span><b>最終確認</b>${fmtDate(connection.lastCheckedAt)}</span>
           <span><b>最終入出力</b>${fmtDate(connection.lastImportedAt || connection.lastExportedAt)}</span>
         </div>
-        <div class="sheet-actions">
-          <form data-export-suite="${connection.id}">
-            <label>アプリ → Sheets：テストスイート
-              <select name="suiteId" ${scopedSuites.length ? "" : "disabled"}>${suiteOptions}</select>
-            </label>
-            <button class="button secondary" ${scopedSuites.length ? "" : "disabled"}>${icon("upload", 14)}固定フォーマットで出力</button>
-          </form>
-          <div class="sheet-import">
-            <div><strong>Sheets → アプリ：テストスイート</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code>を検証して取り込みます。同じsuite_idがあれば更新します。</p></div>
-            <button class="button accent" data-import-suite="${connection.id}" ${assigned ? "" : "disabled"}>${icon("download", 14)}取り込む</button>
-          </div>
-          <form data-export-report="${connection.id}">
-            <label>アプリ → Sheets：テスト実行結果
-              <select name="suiteRunId" ${scopedReports.length ? "" : "disabled"}>${reportOptions}</select>
-            </label>
-            <button class="button secondary" ${scopedReports.length ? "" : "disabled"}>${icon("file-output", 14)}結果を書き出す</button>
-          </form>
-        </div>
         <footer>
           <button class="text-button" data-check-sheet="${connection.id}" ${assigned ? "" : "disabled"}>${icon("refresh-cw", 13)}${assigned ? tr("接続を再確認", "Recheck connection") : tr("Agentを選んで再接続してください", "Reconnect with an agent")}</button>
           <a class="text-link" href="${esc(connection.spreadsheetUrl)}" target="_blank" rel="noreferrer">スプレッドシートを開く ${icon("external-link", 13)}</a>
@@ -3320,17 +3379,18 @@ function renderSheetsSettings() {
       </article>`;
     })
     .join("");
+  const authNotice = googleAuthStatus().ready || googleAuthStatus().status === "checking" ? "" : `
+    <section class="sheets-auth">
+      <div class="sheets-auth-copy">${icon("triangle-alert", 24)}<div><strong>${tr("Google認証を確認してください", "Review Google authentication")}</strong><p>${esc(googleAuthStatus().detail)}</p></div></div>
+      <a class="button bright small" href="#/settings/auth">${icon("key-round", 13)}${tr("認証方式とscopeを確認", "Review authentication method and scopes")}</a>
+    </section>`;
   return `
     <section class="settings-panel sheets-settings-head">
       <div class="settings-section-head">
         <div><h2>Google Sheets連携</h2><p>Googleスプレッドシートを登録し、その接続先としてData Agentを1つ選びます。Agent間のデータは混在しません。</p></div>
-        <a href="#/suites" class="button secondary">${icon("layers-3", 15)}スイートを作成・編集</a>
       </div>
     </section>
-    <section class="sheets-auth">
-      <div class="sheets-auth-copy">${icon("shield-check", 24)}<div><strong>アプリケーション既定認証情報（ADC）で接続</strong><p>ADCのGoogleアカウントへ対象シートを共有してください。アクセストークンやセル内容は保存しません。</p></div></div>
-      <a class="button bright small" href="#/settings/auth">${icon("key-round", 13)}${tr("認証方式とscopeを確認", "Review authentication method and scopes")}</a>
-    </section>
+    ${authNotice}
     <section class="sheet-connect-panel">
       <form id="sheet-connect-form">
         <label>シート名
@@ -3346,7 +3406,7 @@ function renderSheetsSettings() {
       </form>
       <div class="format-note">
         <span>${icon("lock-keyhole", 17)}</span>
-        <div><strong>${tr("Agent専用の固定タブ", "Agent-scoped managed tabs")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> / <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("はUI操作で都度書き換えます。", "are rewritten by UI actions.")} <code>${esc(state.sheetFormat?.agentsTab || "AgentEval_DataAgents")}</code> / <code>${esc(state.sheetFormat?.suitesTab || "AgentEval_Suites")}</code> ${tr("には接続したAgentと、そのAgentだけを使うスイートのみを書き出します。", "contain only the linked agent and suites owned by that agent.")}</p></div>
+        <div><strong>${tr("Agent専用の固定タブ", "Agent-scoped managed tabs")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> / <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("はテストスイート画面とテスト実行結果画面から更新します。", "are updated from the test suite and test result screens.")} <code>${esc(state.sheetFormat?.agentsTab || "AgentEval_DataAgents")}</code> / <code>${esc(state.sheetFormat?.suitesTab || "AgentEval_Suites")}</code> ${tr("には接続したAgentと、そのAgentだけを使うスイートのみを書き出します。", "contain only the linked agent and suites owned by that agent.")}</p></div>
         <b>${tr("スキーマ", "Schema")} v${state.sheetFormat?.schemaVersion || 1}</b>
       </div>
     </section>
@@ -3416,57 +3476,6 @@ function bindSheets() {
       } else {
         notify(tr("Google Sheets APIへの接続を確認しました。", "Google Sheets API connection verified."), "success");
       }
-      renderSettings(); refreshIcons();
-    } catch (error) { notify(error.message); button.disabled = false; }
-  }));
-  document.querySelectorAll("[data-export-suite]").forEach((form) => form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const button = form.querySelector("button");
-    button.disabled = true;
-    try {
-      const result = await json(`/api/sheets/connections/${form.dataset.exportSuite}/export-suite`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suiteId: form.elements.suiteId.value })
-      });
-      updateSheetConnection(result.connection);
-      notify(tr("{tab} に{count}行を書き出しました。", "Exported {count} rows to {tab}.", { tab: result.tabName, count: formatLocaleNumber(result.rowCount) }), "success");
-      renderSettings(); refreshIcons();
-    } catch (error) { notify(error.message); button.disabled = false; }
-  }));
-  document.querySelectorAll("[data-import-suite]").forEach((button) => button.addEventListener("click", async () => {
-    if (
-      !(await askConfirm(
-        tr(
-          "固定フォーマットを検証してテストスイートを取り込みます。続けますか？",
-          "Validate the fixed format and import the test suite. Continue?"
-        ),
-        { confirmLabel: tr("取り込む", "Import") }
-      ))
-    ) {
-      return;
-    }
-    button.disabled = true;
-    try {
-      const result = await json(`/api/sheets/connections/${button.dataset.importSuite}/import-suite`, { method: "POST" });
-      updateSheetConnection(result.connection);
-      state.suites = [result.suite, ...state.suites.filter((item) => item.id !== result.suite.id)];
-      notify(result.mode === "updated" ? tr("テストスイートを更新しました。", "Updated the test suite.") : tr("テストスイートを新規作成しました。", "Created a new test suite."), "success");
-      renderSettings(); refreshIcons();
-    } catch (error) { notify(error.message); button.disabled = false; }
-  }));
-  document.querySelectorAll("[data-export-report]").forEach((form) => form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const button = form.querySelector("button");
-    button.disabled = true;
-    try {
-      const result = await json(`/api/sheets/connections/${form.dataset.exportReport}/export-report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suiteRunId: form.elements.suiteRunId.value })
-      });
-      updateSheetConnection(result.connection);
-      notify(tr("{tab} に評価結果を書き出しました。", "Exported evaluation results to {tab}.", { tab: result.tabName }), "success");
       renderSettings(); refreshIcons();
     } catch (error) { notify(error.message); button.disabled = false; }
   }));
@@ -4533,8 +4542,12 @@ async function route() {
         return;
       }
       else if (parts[0] === "agents" && parts[1]) {
-        const agent = state.agents.find((item) => item.id === parts[1]);
+        let agent = state.agents.find((item) => item.id === parts[1]);
         if (!agent) throw new Error(tr("Data Agentが見つかりません。", "Data Agent not found."));
+        if (parts[2] !== "connectivity" && !agent.remoteConfiguration) {
+          agent = await json(`/api/agents/${parts[1]}`);
+          state.agents = state.agents.map((item) => item.id === agent.id ? agent : item);
+        }
         renderAgentDetail(agent, parts[2] === "connectivity" ? "connectivity" : "overview");
       }
       else if (parts[0] === "agents") renderAgents();
