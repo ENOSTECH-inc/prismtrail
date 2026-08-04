@@ -678,16 +678,17 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .case-detail-link { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 10px 15px; color: #fff; border: 1px solid #2457d6; border-radius: 10px; background: #315efb; box-shadow: 0 6px 16px rgba(49,94,251,.2); font-size: 13px; font-weight: 800; line-height: 1; transition: transform .16s ease, box-shadow .16s ease, background-color .16s ease; }
 .case-detail-link:hover { color: #fff; background: #244fd6; box-shadow: 0 8px 20px rgba(49,94,251,.28); transform: translateY(-1px); }
 .case-detail-link:focus-visible { outline: 3px solid rgba(49,94,251,.28); outline-offset: 3px; }
-.case-drilldown-header { display: grid; grid-template-columns: 42px minmax(0,1fr) 42px; align-items: center; gap: 12px; margin-bottom: 14px; padding: 13px 15px; border: 1px solid #cfdcf0; border-radius: 12px; background: #f7faff; box-shadow: 0 5px 18px rgba(31,57,91,.07); }
+.case-drilldown-header { position: sticky; top: 61px; z-index: 25; border-bottom: 1px solid #c5d4ea; background: #f3f7ff; box-shadow: 0 8px 20px rgba(24,50,84,.1); }
+.case-drilldown-inner { width: 100%; max-width: 1480px; display: grid; grid-template-columns: auto 42px minmax(0,1fr); align-items: center; gap: 12px; margin: 0 auto; padding: 10px 44px; }
 .case-drilldown-icon { width: 42px; height: 42px; display: grid; place-items: center; color: #315efb; border-radius: 10px; background: #e8efff; }
-.case-drilldown-header > div:nth-child(2) { min-width: 0; }
-.case-drilldown-header span,.case-drilldown-header strong,.case-drilldown-header small { display: block; }
-.case-drilldown-header span { color: #62748a; font-size: 10px; font-weight: 800; letter-spacing: .03em; }
-.case-drilldown-header strong { margin-top: 2px; color: #142d4d; font-size: 17px; line-height: 1.3; }
-.case-drilldown-header small { margin-top: 3px; color: #7b8ca1; font: 600 10px "DM Mono",monospace; }
-.case-drilldown-close { width: 38px; height: 38px; display: grid; place-items: center; color: #61758d; border: 1px solid #d5dfeb; border-radius: 10px; background: #fff; transition: color .16s ease, border-color .16s ease, background-color .16s ease; }
-.case-drilldown-close:hover { color: #173b5e; border-color: #aebed1; background: #eef3f9; }
-.case-drilldown-close:focus-visible { outline: 3px solid rgba(49,94,251,.24); outline-offset: 2px; }
+.case-drilldown-copy { min-width: 0; }
+.case-drilldown-copy span,.case-drilldown-copy strong,.case-drilldown-copy small { display: block; }
+.case-drilldown-eyebrow { color: #62748a; font-size: 10px; font-weight: 800; letter-spacing: .03em; }
+.case-drilldown-copy strong { margin-top: 2px; color: #142d4d; font-size: 17px; line-height: 1.3; }
+.case-drilldown-copy small { margin-top: 3px; color: #7b8ca1; font: 600 10px "DM Mono",monospace; }
+.case-drilldown-close { min-width: 82px; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; color: #b73547; border: 1px solid #efb7bf; border-radius: 10px; background: #fff0f2; box-shadow: 0 3px 10px rgba(183,53,71,.08); font-size: 11px; font-weight: 800; transition: color .16s ease, border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.case-drilldown-close:hover { color: #972638; border-color: #dc8794; background: #ffe1e6; box-shadow: 0 5px 14px rgba(183,53,71,.14); }
+.case-drilldown-close:focus-visible { outline: 3px solid rgba(197,59,77,.24); outline-offset: 2px; }
 .report-action-json { color: #d9e4f2; border-color: #53677f; background: rgba(255,255,255,.04); }
 .report-action-json:hover { color: #fff; border-color: #8093a8; background: rgba(255,255,255,.1); }
 .json-viewer-dialog { width: min(900px,94vw); max-height: 88vh; padding: 0; overflow: hidden; border: 0; border-radius: 14px; background: #fff; box-shadow: 0 30px 90px rgba(10,24,45,.35); }
@@ -1245,6 +1246,12 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 }
 @media(max-width:560px) {
   .nav-toolbar,.editor-toolbar { height: auto; min-height: 61px; padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+  .case-drilldown-header { position: static; }
+  .case-drilldown-inner { grid-template-columns: auto 36px minmax(0,1fr); gap: 8px; padding: 9px 12px; }
+  .case-drilldown-close { min-width: 42px; padding: 0 10px; }
+  .case-drilldown-close span { display: none; }
+  .case-drilldown-icon { width: 36px; height: 36px; }
+  .case-drilldown-copy strong { font-size: 14px; }
   .toolbar-leading { gap: 8px; }
   .toolbar-name strong { max-width: min(48vw, 220px); font-size: 12px; }
   .toolbar-search { flex: 1 1 100%; max-width: none; order: 3; }

@@ -4430,7 +4430,7 @@ function renderRunDetail(run) {
       })
     : navHeader({ title, subtitle, backHref, backLabel });
   const contextHeader = context
-    ? `<section class="case-drilldown-header"><div class="case-drilldown-icon">${icon("list-tree", 19)}</div><div><span>${tr("テストケースの実行詳細を表示中", "Viewing test case run details")}</span><strong>${esc(context.caseTitle || title)}</strong><small>${esc(context.caseId || "")} · ${esc(subtitle)}</small></div><a class="case-drilldown-close" href="${esc(backHref)}" aria-label="${tr("実行詳細を閉じる", "Close run details")}" title="${tr("実行詳細を閉じる", "Close run details")}">${icon("x", 19)}</a></section>`
+    ? `<section class="case-drilldown-header" aria-label="${tr("表示中のテストケース", "Current test case")}"><div class="case-drilldown-inner"><a class="case-drilldown-close" href="${esc(backHref)}" aria-label="${tr("実行詳細を閉じる", "Close run details")}" title="${tr("実行詳細を閉じる", "Close run details")}">${icon("x", 18)}<span>${tr("閉じる", "Close")}</span></a><div class="case-drilldown-icon">${icon("list-tree", 19)}</div><div class="case-drilldown-copy"><span class="case-drilldown-eyebrow">${tr("テストケースの実行詳細を表示中", "Viewing test case run details")}</span><strong>${esc(context.caseTitle || title)}</strong><small>${esc(context.caseId || "")} · ${esc(subtitle)}</small></div></div></section>`
     : `<section class="run-context"><div><span>${tr("選択中のケース", "Selected case")}</span><strong>${esc(title)}</strong></div><div><span>${tr("検証プロンプト", "Verification prompt")}</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>`;
   const summaryContent = caseRun
     ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, showRunLink: false })
@@ -4438,8 +4438,9 @@ function renderRunDetail(run) {
   const traceContent = `<section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンス詳細", "Response details")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>`;
   app.innerHTML = shell(`
     ${reportHeader}
+    ${context ? contextHeader : ""}
     ${detailBody(`
-      ${contextHeader}
+      ${context ? "" : contextHeader}
       <section class="report-metrics"><div><span>${tr("結果", "Result")}</span><strong>${statusPill(run.summary?.status || "running")}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${isLive ? tr("実行中…", "Running…") : fmtDuration(run.summary?.durationMs)}</strong></div><div><span>${tr("課金対象", "Bytes billed")}</span><strong>${fmtBytes(run.summary?.totalBytesBilled)}</strong></div><div><span>${tr("SQL / ジョブ", "SQL / jobs")}</span><strong>${run.summary?.sqlCount || 0} / ${run.summary?.jobCount || 0}</strong></div></section>
       <div class="run-detail-tabs" role="tablist" aria-label="${tr("実行詳細の表示", "Run detail view")}">
         <button type="button" role="tab" data-run-tab="summary" aria-selected="${state.runDetailTab === "summary"}" tabindex="${state.runDetailTab === "summary" ? "0" : "-1"}" class="${state.runDetailTab === "summary" ? "active" : ""}">${icon("layout-dashboard", 16)}${tr("サマリー", "Summary")}</button>
