@@ -741,11 +741,12 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .form-row label { width: 180px; }
 .recent-panel h2 { font-size: 14px; }
 .recent-panel { overflow: hidden; }
-.recent-panel > a { min-width: 0; display: grid; grid-template-columns: 8px minmax(0,1fr); gap: 9px; padding: 11px 0; border-top: 1px solid var(--line-soft); }
-.recent-panel > a > span:last-child { min-width: 0; overflow: hidden; }
-.recent-panel > a strong,.recent-panel > a small { display: block; }
-.recent-panel > a strong { width: 100%; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.recent-panel > a small { margin-top: 4px; color: #8b99aa; font-size: 8px; }
+.recent-panel #recent-runs-list { min-width: 0; }
+.recent-panel #recent-runs-list > a { min-width: 0; display: grid; grid-template-columns: 8px minmax(0,1fr); gap: 9px; padding: 11px 0; border-top: 1px solid var(--line-soft); }
+.recent-panel #recent-runs-list > a > span:last-child { min-width: 0; overflow: hidden; }
+.recent-panel #recent-runs-list > a strong,.recent-panel #recent-runs-list > a small { display: block; }
+.recent-panel #recent-runs-list > a strong { width: 100%; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.recent-panel #recent-runs-list > a small { margin-top: 4px; color: #8b99aa; font-size: 8px; }
 .run-dot { width: 7px; height: 7px; margin-top: 3px; border-radius: 50%; background: #9aa7b7; }
 .run-dot.passed { background: var(--green); }
 .run-dot.failed { background: var(--red); }
