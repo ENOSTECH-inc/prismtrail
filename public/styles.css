@@ -802,7 +802,18 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .sheet-import .button { flex: 0 0 auto; }
 .sheet-card > footer { display: flex; align-items: center; justify-content: space-between; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .text-button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: #64768d; border: 0; background: none; font-size: 9px; font-weight: 700; cursor: pointer; }
-.settings-status,.storage-settings-form { width: 100%; max-width: 1180px; margin-inline: auto; }
+.settings-status,.storage-settings-form,.settings-tabs,.settings-tab-panel { width: 100%; max-width: 1180px; margin-inline: auto; }
+.settings-tabs { display: flex; gap: 6px; margin-top: 18px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: #e9eef5; }
+.settings-tab { display: flex; flex: 0 0 190px; align-items: center; gap: 9px; padding: 10px 13px; color: #647791; border: 0; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; }
+.settings-tab:hover { color: #2d4f7b; background: rgba(255,255,255,.6); }
+.settings-tab.active { color: #1f477c; background: white; box-shadow: 0 2px 7px rgba(45,70,105,.10); }
+.settings-tab > svg { flex: 0 0 auto; }
+.settings-tab span { display: block; }
+.settings-tab strong,.settings-tab small { display: block; }
+.settings-tab strong { font-size: 10px; }
+.settings-tab small { margin-top: 3px; color: #8a99ac; font-size: 7px; font-weight: 400; }
+.settings-tab-panel[hidden] { display: none; }
+.settings-tab-panel.active { display: block; }
 .mcp-settings-panel { width: 100%; max-width: 1180px; margin: 15px auto 0; }
 .mcp-security-note { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 10px; margin-bottom: 15px; padding: 12px; color: #36536f; border: 1px solid #c8daeb; border-radius: 9px; background: #f2f8fc; }
 .mcp-security-note strong,.mcp-security-note p { display: block; margin: 0; }
@@ -816,6 +827,23 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .mcp-issued-token strong { font-size: 10px; }
 .mcp-issued-token p { margin: 4px 0 7px; font-size: 8px; }
 .mcp-issued-token code { font-size: 8px; }
+.mcp-connect-card { margin-top: 16px; padding: 16px; border: 1px solid #b9d8f0; border-radius: 10px; background: linear-gradient(135deg, #f5faff, #eef8f5); }
+.mcp-connect-card h3 { margin: 0; font-size: 12px; }
+.mcp-connect-card p { margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.mcp-connect-step { padding: 5px 8px; color: #245b87; border-radius: 99px; background: #dceefa; font-size: 8px; font-weight: 700; }
+.mcp-client-select { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 6px 10px; margin-top: 14px; font-size: 9px; font-weight: 700; }
+.mcp-client-select select { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; font: inherit; }
+.mcp-client-select small { grid-column: 2; color: var(--muted); font-size: 8px; font-weight: 400; }
+.mcp-setup-steps { display: grid; gap: 8px; margin-top: 14px; }
+.mcp-setup-steps article { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px; border: 1px solid rgba(133,174,204,.45); border-radius: 8px; background: rgba(255,255,255,.72); }
+.mcp-step-number { display: grid; width: 22px; height: 22px; place-items: center; color: white; border-radius: 50%; background: #3478b5; font-size: 9px; font-weight: 700; }
+.mcp-setup-steps strong { display: block; font-size: 9px; }
+.mcp-setup-steps code { display: block; overflow-x: auto; margin-top: 5px; color: #365573; font-size: 8px; white-space: pre-wrap; word-break: break-word; }
+.mcp-copy-setup { white-space: nowrap; }
+.mcp-config-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(133,174,204,.45); }
+.mcp-config-details summary { cursor: pointer; color: #245b87; font-size: 9px; font-weight: 700; }
+.mcp-config-details pre { overflow-x: auto; margin: 10px 0 8px; padding: 10px; border-radius: 7px; background: #172439; color: #dceafa; font: 8px/1.6 "DM Mono", monospace; white-space: pre-wrap; }
+.mcp-config-details .mcp-copy-setup { margin-bottom: 5px; }
 .mcp-token-form { display: grid; grid-template-columns: 1fr 180px; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 .mcp-token-form fieldset { grid-column: 1/-1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 0; padding: 0; border: 0; }
 .mcp-token-form legend { margin-bottom: 8px; font-size: 9px; font-weight: 700; }
@@ -852,7 +880,7 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .settings-status-meta dl div { min-width: 0; padding: 9px 10px; background: rgba(9,21,39,.5); }
 .settings-status-meta dt { color: #7890af; font-size: 7px; }
 .settings-status-meta dd { overflow: hidden; margin: 4px 0 0; color: #d6e0ed; font: 500 8px "DM Mono",monospace; text-overflow: ellipsis; white-space: nowrap; }
-.storage-settings-form { display: grid; grid-template-columns: .88fr 1.12fr; align-items: start; gap: 15px; }
+.storage-settings-form { display: grid; grid-template-columns: .88fr 1.12fr; align-items: start; gap: 15px; margin-top: 15px; }
 .settings-panel { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
 .settings-section-head { display: flex; align-items: start; justify-content: space-between; gap: 15px; margin-bottom: 16px; }
 .settings-section-head h2 { margin: 0 0 5px; font-size: 15px; }
@@ -992,6 +1020,8 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .bucket-detail-grid,.bucket-usage-panel { grid-template-columns: 1fr; }
   .bucket-detail-hero { grid-template-columns: auto 1fr; }
   .settings-status { grid-template-columns: auto 1fr; }
+  .settings-tabs { overflow-x: auto; }
+  .settings-tab { flex-basis: 160px; }
   .settings-status-meta { grid-column: 1/-1; justify-content: start; }
   .storage-settings-form { grid-template-columns: 1fr; }
   .mcp-token-form fieldset { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -1026,6 +1056,10 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .settings-actions { align-items: stretch; flex-direction: column; }
   .mcp-token-form,.mcp-token-form fieldset,.mcp-token-row { grid-template-columns: 1fr; }
   .mcp-issued-token { align-items: stretch; flex-direction: column; }
+  .mcp-client-select { grid-template-columns: 1fr; }
+  .mcp-client-select small { grid-column: auto; }
+  .mcp-setup-steps article { grid-template-columns: 24px minmax(0, 1fr); }
+  .mcp-setup-steps article .mcp-copy-setup { grid-column: 2; justify-self: start; }
 }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto!important; animation: none!important; } }
 @media print {
