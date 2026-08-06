@@ -308,9 +308,7 @@ function googleAuthStatus() {
   return {
     status,
     ready: status === "ready",
-    label: status === "limited" && state.authReadiness?.setupMode === "sheets-only"
-      ? tr("Sheetsのみ利用可能", "Sheets available only")
-      : ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
+    label: ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
     detail: status === "ready"
       ? tr("必要scopeを確認済み", "Required scopes verified")
       : state.authReadiness?.message || tr("Google認証を確認しています", "Checking Google authentication")
@@ -3568,7 +3566,7 @@ function authSetupOptionCopy(option) {
   }
   return {
     title: tr("鍵なしでサービスアカウントをimpersonate", "Keyless service account impersonation"),
-    badge: tr("おすすめ", "Recommended"),
+    badge: tr("代替手段", "Alternative"),
     description: tr("ユーザーADCを元に短期トークンを発行します。サービスアカウント鍵JSONをダウンロードしたり、ローカルへ保存したりしません。", "Uses user ADC to mint short-lived tokens. No service account key JSON is downloaded or stored locally."),
     caution: tr("利用者は現在のgcloudアクティブアカウントから自動取得します。最初のIAMコマンドは管理者が実行してください。", "The user is resolved from the active gcloud account. An administrator must run the first IAM command."),
     steps: [
