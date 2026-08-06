@@ -34,9 +34,9 @@ test("Google-backed mutations are guarded by capability before fetch", () => {
   assert.match(app, /path\.startsWith\("\/api\/gcs\/"\)/);
 });
 
-test("Sheets setup exposes a user ADC option while keeping Cloud operations separate", () => {
+test("Auth setup exposes one user ADC path for all Google operations", () => {
   assert.match(app, /option\?\.id === "user-adc"/);
-  assert.match(app, /ユーザーADCでSheetsのみ利用/);
-  assert.match(app, /GCS・Data Agent操作にはCloud scopeが別途必要/);
+  assert.match(app, /ユーザーADC（SA不要）/);
+  assert.match(app, /Cloud・Sheets・GCS・Data Agentを/);
   assert.match(app, /path\.startsWith\("\/api\/sheets\/"\)/);
 });

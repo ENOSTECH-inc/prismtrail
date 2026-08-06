@@ -3555,14 +3555,14 @@ function resolvedAuthCommand(option, command) {
 function authSetupOptionCopy(option) {
   if (option?.id === "user-adc") {
     return {
-      title: tr("ユーザーADCでSheetsのみ利用", "Use Sheets with user ADC only"),
+      title: tr("ユーザーADC（SA不要）", "User ADC (no service account)"),
       badge: tr("SA不要", "No service account"),
-      description: tr("自分のGoogleアカウントへ共有されたスプレッドシートを、ユーザーADCで読み書きします。ローカル利用専用です。", "Read and write spreadsheets shared with your Google account using user ADC. Intended for local use only."),
-      caution: tr("対象シートを現在のGoogleアカウントへ共有してください。GCS・Data Agent操作にはCloud scopeが別途必要です。", "Share the target sheet with the current Google account. GCS and Data Agent operations require the Cloud scope separately."),
+      description: tr("Cloud・Sheets・GCS・Data Agentを、現在のGoogleアカウントのADC一本で利用します。", "Use Cloud, Sheets, GCS, and Data Agent APIs through one ADC credential for the current Google account."),
+      caution: tr("対象シートを現在のGoogleアカウントへ共有してください。各サービスの操作には、そのアカウントのIAM権限とAPI設定が必要です。", "Share the target sheet with the current Google account. Each service still requires IAM permissions and API configuration for that account."),
       steps: [
         tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
-        tr("下のコマンドでSheets scope付きのユーザーADCを設定する。", "Run the command below to configure user ADC with the Sheets scope."),
-        tr("認証状態を再確認し、Sheetsが利用可能になったことを確認する。", "Recheck authentication and confirm that Sheets is available.")
+        tr("下のコマンドでCloudとSheets scopeを含むユーザーADCを設定する。", "Run the command below to configure user ADC with Cloud and Sheets scopes."),
+        tr("認証状態を再確認し、必要なAPIが利用可能になったことを確認する。", "Recheck authentication and confirm the required APIs are available.")
       ]
     };
   }

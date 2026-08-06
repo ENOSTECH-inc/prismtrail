@@ -100,7 +100,7 @@ gcloud auth application-default login \
   --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
 ```
 
-起動後は「設定 → Google認証」でADCと`cloud-platform` / `spreadsheets` scopeを事前診断できます。ローカル利用でサービスアカウントを用意できない場合は、ユーザーADCへSheets scopeだけを付け、対象シートを自分のGoogleアカウントへ共有する方式も利用できます。GCSやData Agent操作にはCloud scopeが別途必要です。
+起動後は「設定 → Google認証」でADCと`cloud-platform` / `spreadsheets` scopeを事前診断できます。ローカル利用では、両方のscopeを含むユーザーADC一本でCloud・GCS・Data Agent・Sheetsを利用できます。対象シートを自分のGoogleアカウントへ共有し、各サービスのIAM権限とAPI設定を用意してください。
 不足が判明している場合、全画面に警告を表示し、Data Agent実行、GCS、Google Sheetsなどの
 外部API操作をリクエスト送信前に停止します。アクセストークンはブラウザへ返しません。
 Google SheetsはGoogle Cloud外scopeのため、対象シートを共有したサービスアカウントを

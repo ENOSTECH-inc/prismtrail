@@ -46,9 +46,10 @@ gcloud auth application-default login \
 
 Google Sheets is outside the Google Cloud scope set. For shared or Cloud-backed environments, use
 `--impersonate-service-account=SERVICE_ACCOUNT_EMAIL` and share every target spreadsheet with that
-service account. For local-only use without a service account, user ADC with the Sheets scope is
-supported when the target spreadsheet is shared with that user; this does not grant Cloud or Data
-Agent access. Do not use a custom Desktop OAuth client flow in PrismTrail recovery guidance.
+service account. For local-only use without a service account, use one user ADC credential with
+both the Cloud and Sheets scopes, and share the target spreadsheet with that user. This is the
+single credential for Cloud, GCS, Data Agent, and Sheets operations; IAM permissions and API
+enablement are still required. Do not use a custom Desktop OAuth client flow in PrismTrail recovery guidance.
 Prefer keyless service-account impersonation from user ADC for managed local environments. This
 stores the user's ADC and impersonation configuration locally, not a service-account private key.
 Do not recommend storing service-account key JSON in Secret Manager: an identity that can read the
