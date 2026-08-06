@@ -82,6 +82,13 @@ const state = {
   busy: false
 };
 
+const secondaryDataReady = {
+  suiteRuns: false,
+  runs: false,
+  sheetConnections: false
+};
+const secondaryDataPromises = new Map();
+
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
@@ -4511,6 +4518,55 @@ function renderRunDetail(run) {
   }
 }
 
+async function loadSecondaryData(name) {
+  if (secondaryDataReady[name]) return;
+  if (secondaryDataPromises.has(name)) return secondaryDataPromises.get(name);
+  const loaders = {
+    suiteRuns: async () => {
+      const payload = await json("/api/suite-runs");
+      state.suiteRuns = payload.suiteRuns || [];
+    },
+    runs: async () => {
+      const payload = await json("/api/runs").catch(() => ({ runs: [] }));
+      state.runs = payload.runs || [];
+    },
+    sheetConnections: async () => {
+      const payload = await json("/api/sheets/connections");
+      state.sheetConnections = payload.connections || [];
+      state.sheetFormat = payload.format || null;
+    }
+  };
+  const pending = loaders[name]()
+    .then(() => {
+      secondaryDataReady[name] = true;
+    })
+    .finally(() => secondaryDataPromises.delete(name));
+  secondaryDataPromises.set(name, pending);
+  return pending;
+}
+
+async function ensureRouteData(parts) {
+  const requirements = [];
+  if (parts[0] === "reports" && !parts[1]) requirements.push("suiteRuns");
+  if (parts[0] === "agents" && parts[1]) requirements.push("runs");
+  if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
+    requirements.push("suiteRuns", "sheetConnections");
+  }
+  if (parts[0] === "settings" && (parts[1] || state.settingsTab) === "sheets") {
+    requirements.push("sheetConnections");
+  }
+  await Promise.all([...new Set(requirements)].map(loadSecondaryData));
+}
+
+async function preloadSecondaryData() {
+  await Promise.allSettled(["suiteRuns", "runs", "sheetConnections"].map(loadSecondaryData));
+  const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
+  if (parts[0] === "suites" && !parts[1]) {
+    renderSuites();
+    refreshIcons();
+  }
+}
+
 async function route() {
   clearTimeout(state.reportPollTimer);
   state.reportPollTimer = null;
@@ -4522,6 +4578,7 @@ async function route() {
   if (parts[0] !== "settings") state.mcpNewToken = null;
   await withRouteProgress(async () => {
     try {
+      await ensureRouteData(parts);
       if (parts[0] === "knowledge") {
         location.replace("#/agents");
         return;
@@ -4614,14 +4671,11 @@ async function initialize() {
   setBusyOverlay(true, tr("データを読み込み中…", "Loading data…"));
   setRouteProgress(true);
   try {
-    const [config, authReadiness, agents, suites, suiteRuns, runs, sheetConnections, storageConfig] = await Promise.all([
+    const [config, authReadiness, agents, suites, storageConfig] = await Promise.all([
       json("/api/config"),
       json("/api/auth/readiness").catch(() => null),
       json("/api/agents"),
       json("/api/suites"),
-      json("/api/suite-runs"),
-      json("/api/runs").catch(() => ({ runs: [] })),
-      json("/api/sheets/connections"),
       json("/api/storage/config?lite=1").catch(() => null)
     ]);
     Object.assign(state, {
@@ -4629,14 +4683,11 @@ async function initialize() {
       authReadiness,
       agents: agents.agents,
       suites: suites.suites,
-      suiteRuns: suiteRuns.suiteRuns,
-      runs: runs.runs || [],
-      sheetConnections: sheetConnections.connections,
-      sheetFormat: sheetConnections.format,
       storageConfig
     });
     if (!location.hash) location.hash = "#/suites";
     await route();
+    preloadSecondaryData().catch((error) => console.warn(`[bootstrap] ${error.message}`));
   } catch (error) {
     app.innerHTML = empty(tr("起動できませんでした", "Could not start the application"), translateApiMessage(error.message));
   } finally {
