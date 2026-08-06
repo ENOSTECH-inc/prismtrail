@@ -17,7 +17,7 @@ const PAGE_COPY = {
   },
   en: {
     title: "PrismTrail — Data Agent Evaluation",
-    description: "Run and manage data-agent regression tests, accuracy evaluations, execution traces, and reports locally."
+    description: "Run and manage data-agent regression tests, business requirement evaluations, execution traces, and reports locally."
   }
 };
 let activeLocale = null;

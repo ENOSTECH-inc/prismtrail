@@ -132,7 +132,7 @@ test("summarizes system and business scores separately and weights the overall s
   assert.equal(summary.businessScore, 75);
   assert.equal(summary.score, 81);
   assert.deepEqual(summary.systemGrades, { A: 1, B: 0, C: 1, D: 0 });
-  assert.deepEqual(summary.accuracyGrades, { A: 1, B: 0, C: 1, D: 0 });
+  assert.deepEqual(summary.businessGrades, { A: 1, B: 0, C: 1, D: 0 });
 });
 
 test("adds Vertex knowledge-grounding result to deterministic checks", () => {
@@ -178,6 +178,24 @@ test("combines system checks with checklist weather marks into A/B/C/D", () => {
   assert.equal(result.business.score, 75);
   assert.equal(result.business.itemResults.length, 2);
   assert.equal(result.overall.businessPassed, false);
+});
+
+test("judges acceptance criteria even when legacy accuracy validation is disabled", () => {
+  const system = evaluateRun({
+    events: [{ kind: "text.final_response", payload: { parts: ["売上は100円です"] } }],
+    summary: { errorCount: 0, sqlCount: 1 }
+  }, { requireSql: true });
+  const result = composeEvaluation(system, {
+    items: [{ criterion: "売上が100円", mark: "sun", reason: "回答で確認" }]
+  }, {
+    enabled: true,
+    criteriaItems: ["売上が100円"],
+    passingGrade: "B",
+    accuracyValidation: { enabled: false, sources: [] }
+  });
+
+  assert.equal(result.business.status, "passed");
+  assert.equal(result.business.grade, "A");
 });
 
 test("composeBusinessGrade maps sun/cloud/rain ratios to A/B/C/D", () => {

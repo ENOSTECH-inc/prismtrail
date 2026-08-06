@@ -60,3 +60,10 @@ test("suite case workspace leads with the selected case and keeps actions in one
   assert.match(app, /selectedCase\?\.title/);
   assert.match(styles, /\.case-action-groups\s*\{[^}]*flex-wrap:\s*nowrap/);
 });
+
+test("suite cases keep acceptance criteria without a separate accuracy-validation editor", () => {
+  assert.match(app, /data-criteria-editor/);
+  assert.match(app, /Data Agentの回答・SQL・結果表・チャート/);
+  assert.doesNotMatch(app, /data-accuracy-enabled|data-add-accuracy-source|accuracy-validation|精度検証/);
+  assert.doesNotMatch(styles, /accuracy-source/);
+});

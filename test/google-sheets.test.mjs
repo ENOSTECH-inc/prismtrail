@@ -14,6 +14,7 @@ import {
   reportToRows,
   rowsToSuiteInput,
   sampleReportTemplate,
+  SHEET_SCHEMA_VERSION,
   SUITE_DISPLAY_HEADERS,
   suitesCatalogToRows,
   suiteToRows,
@@ -21,6 +22,12 @@ import {
   selectSuiteCasesForRun,
   updateBordersRequest
 } from "../lib/google-sheets.mjs";
+
+test("current Sheets schema exports business criteria without accuracy-source columns", () => {
+  assert.equal(SHEET_SCHEMA_VERSION, "5");
+  assert.equal(SUITE_DISPLAY_HEADERS.includes("精度検証ソースJSON"), false);
+  assert.equal(REPORT_DISPLAY_HEADERS.includes("精度検証ソース状態"), false);
+});
 
 test("selectSuiteCasesForRun narrows cases and rejects missing ids", () => {
   const suite = {
@@ -87,16 +94,7 @@ test("suite format round-trips through fixed rows", () => {
           businessRequirements: {
             enabled: true,
             criteriaItems: ["2026年6月の売上は65,200円", "単位が円"],
-            accuracyCriteria: "2026年6月の売上は65,200円; 単位が円",
             passingGrade: "B"
-          },
-          accuracyValidation: {
-            enabled: true,
-            sources: [
-              { id: "truth_1", type: "text", description: "月次確定値", content: "売上は65,200円" },
-              { id: "truth_2", type: "url", description: "仕様書", content: "https://example.com/spec" },
-              { id: "truth_3", type: "bigquery_sql", description: "集計照合", content: "SELECT 65200 AS sales" }
-            ]
           }
         }
       }
@@ -104,9 +102,8 @@ test("suite format round-trips through fixed rows", () => {
   };
   const rows = suiteToRows(source);
   assert.equal(SUITE_DISPLAY_HEADERS[12], "ビジネス受入条件（;区切り）");
-  assert.equal(SUITE_DISPLAY_HEADERS[13], "精度検証ソースJSON");
-  assert.equal(SUITE_DISPLAY_HEADERS[15], "関連URL（1行1件）");
-  assert.equal(SUITE_DISPLAY_HEADERS[16], "メモ");
+  assert.equal(SUITE_DISPLAY_HEADERS[14], "関連URL（1行1件）");
+  assert.equal(SUITE_DISPLAY_HEADERS[15], "メモ");
   assert.match(rows[10][1], /コピー範囲/);
   assert.deepEqual(rows[11], SUITE_DISPLAY_HEADERS);
   assert.equal(rows[6][0], "接続先Data Agent ID");
@@ -123,11 +120,7 @@ test("suite format round-trips through fixed rows", () => {
     "2026年6月の売上は65,200円",
     "単位が円"
   ]);
-  assert.equal(
-    parsed.cases[0].expectations.businessRequirements.accuracyCriteria,
-    "2026年6月の売上は65,200円; 単位が円"
-  );
-  assert.deepEqual(parsed.cases[0].expectations.accuracyValidation.sources, source.cases[0].expectations.accuracyValidation.sources);
+  assert.equal(parsed.cases[0].expectations.accuracyValidation, undefined);
   assert.deepEqual(parsed.cases[0].knowledgeSourceIds, ["knowledge_2"]);
   assert.deepEqual(parsed.cases[0].relatedUrls, [
     "https://example.com/slack/thread-1",
@@ -136,7 +129,7 @@ test("suite format round-trips through fixed rows", () => {
   assert.equal(parsed.cases[0].memo, "参照: sales_fact の売上定義");
 });
 
-test("legacy accuracy header remains import-compatible", () => {
+test("schema v4 accuracy columns remain import-compatible but are ignored", () => {
   const rows = suiteToRows({
     id: "suite_1",
     name: "営業分析",
@@ -148,16 +141,18 @@ test("legacy accuracy header remains import-compatible", () => {
       expectations: {
         businessRequirements: {
           enabled: true,
-          accuracyCriteria: "売上は65,200円"
+          criteriaItems: ["売上は65,200円"]
         }
       }
     }]
   });
+  rows[1][1] = "4";
   rows[11][12] = "精度条件（自然言語）";
-  assert.equal(
-    rowsToSuiteInput(rows).cases[0].expectations.businessRequirements.accuracyCriteria,
-    "売上は65,200円"
-  );
+  rows[11].splice(13, 0, "精度検証ソースJSON");
+  rows[12].splice(13, 0, JSON.stringify([{ id: "legacy", type: "text", content: "旧根拠" }]));
+  const parsed = rowsToSuiteInput(rows).cases[0].expectations;
+  assert.deepEqual(parsed.businessRequirements.criteriaItems, ["売上は65,200円"]);
+  assert.equal(parsed.accuracyValidation, undefined);
 });
 
 test("schema v2 rows without related URLs remain import-compatible", () => {
@@ -360,7 +355,6 @@ test("report format contains stable metadata and case rows", () => {
               { id: 2, criterion: "単位が円", mark: "sun", symbol: "☀️", reason: "円表記で一致" }
             ],
             evidence: [{ quote: "65,200円", explanation: "一致" }],
-            accuracySources: [{ id: "truth", type: "text", description: "承認値", status: "resolved" }],
             judgeAudit: { model: "gemini-2.5-flash-lite" }
           }
         }
@@ -371,7 +365,7 @@ test("report format contains stable metadata and case rows", () => {
   assert.equal(rows[12][1], 100);
   assert.equal(REPORT_DISPLAY_HEADERS[7], "ビジネス評価 (A/B/C/D)");
   assert.equal(REPORT_DISPLAY_HEADERS[12], "ビジネス要件の検証内容");
-  assert.equal(REPORT_DISPLAY_HEADERS[13], "精度検証ソース状態");
+  assert.equal(REPORT_DISPLAY_HEADERS[13], "回答内の根拠");
   assert.deepEqual(rows[3], ["Suite Run ID", "suite_run_1"]);
   assert.deepEqual(rows[15], REPORT_DISPLAY_HEADERS);
   assert.equal(rows[16][0], "case_1");
@@ -382,10 +376,9 @@ test("report format contains stable metadata and case rows", () => {
   assert.match(rows[16][11], /└ 回答に65,200円がある/);
   assert.match(rows[16][11], /☀️ 単位が円/);
   assert.equal(rows[16][12], "1. 売上は65,200円\n2. 単位が円");
-  assert.match(rows[16][13], /✓ text: 承認値/);
-  assert.equal(rows[16][15], "gemini-2.5-flash-lite");
+  assert.equal(rows[16][14], "gemini-2.5-flash-lite");
   assert.deepEqual(rows[9], ["システム要件 正解率", 90]);
-  assert.deepEqual(rows[10], ["ビジネス要件 正解率", 100]);
+  assert.deepEqual(rows[10], ["ビジネス要件 適合率", 100]);
 });
 
 test("report marks business summaries as unset when no business evaluation ran", () => {
@@ -397,13 +390,13 @@ test("report marks business summaries as unset when no business evaluation ran",
     summary: { score: 100, systemScore: 100, businessPassRate: 0, passRate: 100 },
     caseRuns: [{ caseId: "case_1", title: "月次売上", evaluation: { score: 100 } }]
   });
-  assert.deepEqual(rows[10], ["ビジネス要件 正解率", "未設定"]);
-  assert.deepEqual(rows[12], ["精度合格率", "未設定"]);
-  assert.deepEqual(rows[13], ["精度分布", "未設定"]);
+  assert.deepEqual(rows[10], ["ビジネス要件 適合率", "未設定"]);
+  assert.deepEqual(rows[12], ["ビジネス要件 合格率", "未設定"]);
+  assert.deepEqual(rows[13], ["ビジネス等級分布", "未設定"]);
   assert.equal(rows[16][10], "未設定");
 });
 
-test("schema v1 suite rows migrate with business accuracy disabled", () => {
+test("schema v1 suite rows migrate with business requirements disabled", () => {
   const rows = [
     ["PrismTrail | テストスイート管理"],
     ["スキーマ", "1"],
@@ -419,7 +412,7 @@ test("schema v1 suite rows migrate with business accuracy disabled", () => {
   ];
   const parsed = rowsToSuiteInput(rows);
   assert.equal(parsed.cases[0].expectations.businessRequirements.enabled, false);
-  assert.equal(parsed.cases[0].expectations.businessRequirements.accuracyCriteria, "");
+  assert.deepEqual(parsed.cases[0].expectations.businessRequirements.criteriaItems, []);
 });
 
 test("managed suite template detection accepts blank-sheet bootstrap rows", () => {
@@ -455,7 +448,7 @@ test("empty report template keeps importable display headers", () => {
 test("sample report template includes three example case rows", () => {
   const report = sampleReportTemplate({ id: "suite_1", name: "Suite", cases: [] });
   assert.equal(report.caseRuns.length, 3);
-  assert.equal(report.summary.accuracyGrades.A, 1);
+  assert.equal(report.summary.businessGrades.A, 1);
   assert.equal(report.caseRuns[2].evaluation.business.grade, "C");
 });
 
@@ -587,9 +580,9 @@ test("paste accepts Sheets-formatted duration and bytes cells", () => {
   assert.equal(imported.suite.cases[1].id, "CASE_1");
   assert.equal(imported.suite.cases[1].status, "draft");
   assert.equal(imported.suite.cases[1].expectations.maxDurationMs, 180000);
-  assert.equal(
-    imported.suite.cases[1].expectations.businessRequirements.accuracyCriteria,
-    "10万 から 20万の範囲内に収まっていること"
+  assert.deepEqual(
+    imported.suite.cases[1].expectations.businessRequirements.criteriaItems,
+    ["10万 から 20万の範囲内に収まっていること"]
   );
 });
 

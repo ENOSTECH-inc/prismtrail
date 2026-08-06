@@ -927,10 +927,10 @@ function statusPill(status) {
 
 function gradeBadge(business) {
   if (!business || business.status === "not_configured") {
-    return `<span class="grade-badge grade-none" aria-label="${tr("精度判定なし", "No accuracy evaluation")}">— <small>${tr("精度判定なし", "Not evaluated")}</small></span>`;
+    return `<span class="grade-badge grade-none" aria-label="${tr("ビジネス要件判定なし", "No business evaluation")}">— <small>${tr("要件未設定", "Not evaluated")}</small></span>`;
   }
   if (business.status === "judge_error") {
-    return `<span class="grade-badge grade-error" aria-label="${tr("精度判定保留", "Accuracy evaluation pending")}">! <small>${tr("判定保留", "Pending")}</small></span>`;
+    return `<span class="grade-badge grade-error" aria-label="${tr("ビジネス要件判定保留", "Business evaluation pending")}">! <small>${tr("判定保留", "Pending")}</small></span>`;
   }
   const grade = business.grade || "D";
   const labels = {
@@ -939,7 +939,7 @@ function gradeBadge(business) {
     C: tr("△ 一部不一致", "△ Partially incorrect"),
     D: tr("× 不一致", "× Incorrect")
   };
-  return `<span class="grade-badge grade-${grade.toLowerCase()}" aria-label="${tr("精度評価 {grade}、{label}", "Accuracy grade {grade}: {label}", { grade, label: labels[grade] })}"><b>${grade}</b><small>${labels[grade]}</small></span>`;
+  return `<span class="grade-badge grade-${grade.toLowerCase()}" aria-label="${tr("ビジネス評価 {grade}、{label}", "Business grade {grade}: {label}", { grade, label: labels[grade] })}"><b>${grade}</b><small>${labels[grade]}</small></span>`;
 }
 
 function scoreGrade(score) {
@@ -1303,7 +1303,6 @@ function caseNav(suite) {
           const title = String(item.title || "").trim() || tr("無題のケース", "Untitled case");
           const system = item.expectations?.systemRequirements || item.expectations || {};
           const business = item.expectations?.businessRequirements || {};
-          const accuracy = item.expectations?.accuracyValidation || {};
           const agent =
             state.agents.find((entry) => entry.id === item.agentId)?.displayName ||
             item.agentId ||
@@ -1316,8 +1315,8 @@ function caseNav(suite) {
               ? `<span class="case-nav-flag">${icon("database", 11)}SQL</span>`
               : "",
             system.requireChart ? `<span class="case-nav-flag">${icon("chart-column", 11)}${tr("チャート", "Chart")}</span>` : "",
-            accuracy.enabled && accuracy.sources?.length
-              ? `<span class="case-nav-flag accent">${icon("sparkles", 11)}${tr("精度", "Accuracy")}</span>`
+            businessCriteriaItems(business).length
+              ? `<span class="case-nav-flag accent">${icon("sparkles", 11)}${tr("受入条件", "Acceptance")}</span>`
               : ""
           ]
             .filter(Boolean)
@@ -1342,7 +1341,6 @@ function caseNav(suite) {
 function caseForm(item, index) {
   const system = item.expectations?.systemRequirements || item.expectations || {};
   const business = item.expectations?.businessRequirements || {};
-  const accuracy = item.expectations?.accuracyValidation || {};
   return `<article class="case-editor" data-case-index="${index}">
     <div class="case-titlebar">
       <span class="case-number">${String(index + 1).padStart(2, "0")}</span>
@@ -1373,18 +1371,12 @@ function caseForm(item, index) {
       </fieldset>
       <fieldset class="requirement-section business-requirements">
         <legend>${tr("ビジネス要件", "Business requirements")} <small>${tr("受入条件", "Acceptance criteria")}</small></legend>
-        <p>${tr("回答が満たすべき定性・定量条件を1項目ずつ定義します。正解の根拠は次の「精度検証」で別に設定します。", "Define qualitative and quantitative acceptance conditions. Configure the source of truth separately under Accuracy validation.")}</p>
+        <p>${tr("回答・使用テーブル・数値・期間・表現など、満たすべき条件を1項目ずつ定義します。GeminiはData Agentの回答・SQL・結果表・チャートをこの一覧だけで判定します。", "Define each required condition, including response content, tables, values, periods, and presentation. Gemini judges the Data Agent response, SQL, result tables, and charts against this list alone.")}</p>
         <div class="business-toggle-row">
           <label>${tr("合格ライン", "Passing grade")}<select data-business-passing-grade><option value="B" ${business.passingGrade !== "C" ? "selected" : ""}>${tr("B以上（推奨）", "B or higher (recommended)")}</option><option value="C" ${business.passingGrade === "C" ? "selected" : ""}>${tr("C以上", "C or higher")}</option></select></label>
         </div>
         ${businessCriteriaEditorHtml(business)}
         <div class="grade-legend">${gradeBadge({ grade: "A", status: "passed" })}${gradeBadge({ grade: "B", status: "passed" })}${gradeBadge({ grade: "C", status: "review" })}${gradeBadge({ grade: "D", status: "failed" })} <span class="muted-copy">☀️=OK · ☁️=部分 · ☔️=NG</span></div>
-      </fieldset>
-      <fieldset class="requirement-section accuracy-validation">
-        <legend>${tr("精度検証", "Accuracy validation")} <small>${tr("正解根拠", "Ground truth")}</small></legend>
-        <p>${tr("Geminiが参照する正解根拠を登録します。URLは安全な公開ページだけを取得し、BigQuery SQLは読み取り専用・課金上限付きで実行します。", "Register ground-truth evidence for Gemini. URLs are fetched only from safe public pages; BigQuery SQL is read-only and cost-capped.")}</p>
-        <label class="check"><input type="checkbox" data-accuracy-enabled ${accuracy.enabled && accuracy.sources?.length ? "checked" : ""}> ${tr("このケースで精度検証を実行", "Run accuracy validation for this case")}</label>
-        ${accuracySourcesEditorHtml(accuracy.sources || [])}
       </fieldset>
     </details>
   </article>`;
@@ -1615,40 +1607,6 @@ function businessCriteriaEditorHtml(business = {}) {
     </ol>
     <small class="field-help">${tr("1行が1つの受入条件です（最大20件）。Sheets連携時は ; 区切りで入出力します。", "Each row is one acceptance condition (max 20). Sheets import/export uses semicolon separators.")} Vertex AI · ${esc(state.config.vertexJudgeModel || "gemini-2.5-flash-lite")}</small>
   </div>`;
-}
-
-function accuracySourceRowHtml(source = {}, index = 0) {
-  const type = ["text", "url", "bigquery_sql"].includes(source.type) ? source.type : "text";
-  return `<li class="accuracy-source-row" data-accuracy-source data-source-id="${esc(source.id || `source_${index + 1}`)}">
-    <div class="accuracy-source-head">
-      <select data-source-type aria-label="${tr("ソースタイプ", "Source type")}">
-        <option value="text" ${type === "text" ? "selected" : ""}>${tr("テキスト", "Text")}</option>
-        <option value="url" ${type === "url" ? "selected" : ""}>URL</option>
-        <option value="bigquery_sql" ${type === "bigquery_sql" ? "selected" : ""}>BigQuery SQL</option>
-      </select>
-      <input data-source-description maxlength="500" value="${esc(source.description || "")}" placeholder="${tr("説明（任意）", "Description (optional)")}">
-      <button type="button" class="icon-button danger" data-remove-accuracy-source aria-label="${tr("ソースを削除", "Remove source")}">${icon("trash-2", 14)}</button>
-    </div>
-    <textarea data-source-content rows="${type === "bigquery_sql" ? 6 : 3}" maxlength="20000" placeholder="${type === "url" ? "https://..." : type === "bigquery_sql" ? "SELECT ..." : tr("正解となる事実・数値・定義", "Ground-truth facts, values, or definitions")}">${esc(source.content || source.value || "")}</textarea>
-  </li>`;
-}
-
-function accuracySourcesEditorHtml(sources = []) {
-  const rows = sources.length ? sources : [{}];
-  return `<div class="accuracy-sources-editor">
-    <div class="criteria-editor-head"><strong>${tr("検証ソース", "Validation sources")}</strong><button type="button" class="button secondary compact" data-add-accuracy-source>${icon("plus", 14)}${tr("ソースを追加", "Add source")}</button></div>
-    <ol class="accuracy-source-rows">${rows.map(accuracySourceRowHtml).join("")}</ol>
-    <small class="field-help">${tr("最大20件。BigQuery SQLはSELECT / WITHのみ、既定100MB・100行・30秒までです。", "Up to 20 sources. BigQuery SQL is limited to SELECT/WITH, 100 MB, 100 rows, and 30 seconds by default.")}</small>
-  </div>`;
-}
-
-function collectAccuracySourcesFromCard(card) {
-  return [...card.querySelectorAll("[data-accuracy-source]")].map((row, index) => ({
-    id: row.dataset.sourceId || `source_${index + 1}`,
-    type: row.querySelector("[data-source-type]")?.value || "text",
-    description: row.querySelector("[data-source-description]")?.value.trim().slice(0, 500) || "",
-    content: row.querySelector("[data-source-content]")?.value.trim().slice(0, 20000) || ""
-  })).filter((source) => source.content).slice(0, 20);
 }
 
 function collectBusinessCriteriaFromCard(card) {
@@ -1956,7 +1914,7 @@ function reportCaseCardHtml(item, { evidence = null, showRunLink = true } = {}) 
       <span class="case-stat"><small>${tr("実行証跡", "Evidence")}</small><b>${formatLocaleNumber(item.runSummary?.sqlCount || 0)} / ${formatLocaleNumber(item.runSummary?.chartCount || 0)}</b><em>SQL / ${tr("チャート", "charts")}</em></span>
     </div>
     <section class="case-requirement-section">${reportSectionHeading("shield-check", tr("システム要件の評価項目別結果", "System requirement results"), tr("{passed}/{total}項目を満たしています", "{passed}/{total} checks passed", { passed: formatLocaleNumber(system.passedCount || 0), total: formatLocaleNumber(system.checkCount || 0) }))}<div class="checks">${(system.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></section>
-    ${businessConfigured ? `<section class="case-requirement-section business-result">${reportSectionHeading("briefcase-business", tr("ビジネス要件の評価項目別結果", "Business requirement results"))}${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${accuracySourceStatusHtml(business.accuracySources)}${weatherItemList(business, { showEmpty: true })}</section>` : ""}
+    ${businessConfigured ? `<section class="case-requirement-section business-result">${reportSectionHeading("briefcase-business", tr("ビジネス要件の評価項目別結果", "Business requirement results"))}${business.summary ? `<p class="business-summary"><strong>${esc(business.summary)}</strong></p>` : ""}${weatherItemList(business, { showEmpty: true })}</section>` : ""}
     <section class="case-input-section">${reportSectionHeading("message-square", tr("ユーザープロンプト", "User prompt"))}<div class="evidence-surface prompt-surface"><p>${esc(item.prompt || tr("プロンプトを取得できませんでした。", "Prompt unavailable."))}</p></div></section>
     ${evidence?.sql ? `<section class="case-sql-section">${reportSectionHeading("database", tr("実行SQL本文", "Executed SQL"))}<pre>${esc(evidence.sql)}</pre></section>` : ""}
     ${evidenceHtml}
@@ -1967,7 +1925,7 @@ function reportCasePendingHtml(testCase, index, { active = null, isCancelling = 
   const phaseLabel = {
     running: tr("Data Agentを実行中", "Running Data Agent"),
     evaluating_system: tr("システム要件を確認中", "Checking system requirements"),
-    evaluating_business: tr("Geminiで回答精度を判定中", "Evaluating answer accuracy with Gemini")
+    evaluating_business: tr("Geminiでビジネス要件を判定中", "Evaluating business requirements with Gemini")
   }[active?.phase] || (isCancelling ? tr("中止待ち", "Waiting to stop") : tr("実行待ち", "Waiting"));
   return `<article class="report-case ${active ? "case-running" : "case-pending"}">
     <header>
@@ -2069,11 +2027,6 @@ function weatherItemList(business, { showEmpty = false } = {}) {
     .join("")}</ol>`;
 }
 
-function accuracySourceStatusHtml(sources = []) {
-  if (!Array.isArray(sources) || !sources.length) return "";
-  return `<div class="accuracy-source-status"><strong>${tr("精度検証ソース", "Accuracy sources")}</strong><ul>${sources.map((source) => `<li><span class="status-dot ${source.status === "resolved" ? "ok" : "error"}"></span><code>${esc(source.type || "source")}</code> ${esc(source.description || source.id || "")}${source.error ? `<small>${esc(source.error)}</small>` : ""}</li>`).join("")}</ul></div>`;
-}
-
 function wireCriteriaRowControls(row) {
   if (!row || row.dataset.wired === "1") return;
   row.dataset.wired = "1";
@@ -2118,8 +2071,7 @@ function addCaseToSuite() {
     memo: "",
     expectations: {
       systemRequirements: { requireSql: true, requireChart: false, maxDurationMs: 120000, maxBytesBilled: 0, requiredPhrases: [], requiredSqlTables: [] },
-      businessRequirements: { enabled: false, criteriaItems: [], accuracyCriteria: "", passingGrade: "B" },
-      accuracyValidation: { enabled: false, sources: [] }
+      businessRequirements: { enabled: false, criteriaItems: [], passingGrade: "B" }
     }
   });
   state.selectedCaseIndex = state.selectedSuite.cases.length - 1;
@@ -2379,22 +2331,6 @@ function bindEditor() {
     wireCriteriaRowControls(list.lastElementChild);
   });
   document.querySelectorAll(".criteria-row").forEach((row) => wireCriteriaRowControls(row));
-  document.querySelector("[data-add-accuracy-source]")?.addEventListener("click", () => {
-    const list = document.querySelector(".accuracy-source-rows");
-    if (!list || list.children.length >= 20) return notify(tr("精度検証ソースは最大20件です。", "Accuracy sources are limited to 20."));
-    list.insertAdjacentHTML("beforeend", accuracySourceRowHtml({}, list.children.length));
-    refreshIcons();
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
-  });
-  document.querySelector(".accuracy-source-rows")?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-remove-accuracy-source]");
-    if (!button) return;
-    const list = button.closest(".accuracy-source-rows");
-    button.closest("[data-accuracy-source]")?.remove();
-    if (list && !list.children.length) list.insertAdjacentHTML("beforeend", accuracySourceRowHtml({}, 0));
-    refreshIcons();
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
-  });
   document.querySelectorAll("input,textarea,select").forEach((input) => {
     if (input.closest("#suite-paste-dialog")) return;
     input.addEventListener("input", () => {
@@ -2452,10 +2388,9 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   const next = {
     ...source,
     expectations: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       systemRequirements: { ...previousSystem },
-      businessRequirements: { ...previousBusiness },
-      accuracyValidation: { ...(source.expectations?.accuracyValidation || {}) }
+      businessRequirements: { ...previousBusiness }
     }
   };
   card.querySelectorAll("[data-field]").forEach((input) => (next[input.dataset.field] = input.value));
@@ -2480,13 +2415,7 @@ function collectCaseFromCard(card, source, defaultAgentId) {
   next.expectations.businessRequirements = {
     enabled: criteriaItems.length > 0,
     criteriaItems,
-    accuracyCriteria: criteriaItems.join("; "),
     passingGrade: card.querySelector("[data-business-passing-grade]").value
-  };
-  const accuracySources = collectAccuracySourcesFromCard(card);
-  next.expectations.accuracyValidation = {
-    enabled: Boolean(card.querySelector("[data-accuracy-enabled]")?.checked) && accuracySources.length > 0,
-    sources: accuracySources
   };
   return next;
 }
@@ -4188,7 +4117,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       <div class="hero-copy">${statusPill(report.status)}${isPartial ? `<span class="partial-run-badge">${tr("個別実行", "Single-case")}</span>` : ""}<h2>${isLive ? runningHeadline : finishedHeadline}</h2><p>${isLive ? (isCancelling ? tr("進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled.") : isPartial ? tr("完了するまでこの画面で待機します。システム要件とビジネス要件の判定が順に表示されます。", "Stay on this screen until the run finishes. System and business checks appear as they complete.") : tr("ケースが完了するたびに、このテスト実行結果へ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear here as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) })) : finishedCopy}</p></div>
       ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
-    <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
+    <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 適合率", "Business requirement fulfillment")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("受入条件未設定", "No acceptance criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
     ${suiteAiSummaryHtml(report, { isLive })}
     ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
@@ -4381,7 +4310,7 @@ function renderRunDetailLegacy(run) {
     <section class="report-metrics"><div><span>${tr("結果", "Result")}</span><strong>${statusPill(run.summary?.status || "running")}</strong></div><div><span>${tr("所要時間", "Duration")}</span><strong>${isLive ? tr("実行中…", "Running…") : fmtDuration(run.summary?.durationMs)}</strong></div><div><span>${tr("課金対象", "Bytes billed")}</span><strong>${fmtBytes(run.summary?.totalBytesBilled)}</strong></div><div><span>${tr("SQL / ジョブ", "SQL / jobs")}</span><strong>${run.summary?.sqlCount || 0} / ${run.summary?.jobCount || 0}</strong></div></section>
     ${caseRun ? `<section class="run-evaluation-summary">
       <article><div class="layer-title"><strong>${tr("システム要件", "System requirements")}</strong><b>${tr("{score}点", "{score} pts", { score: formatLocaleNumber(systemEvaluation?.score ?? 0) })}</b></div><div class="checks">${(systemEvaluation?.checks || []).map((check) => `<span class="${check.passed ? "ok" : "ng"}">${icon(check.passed ? "check" : "x", 13)}${esc(translateApiMessage(check.label))}</span>`).join("")}</div></article>
-      <article><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(businessEvaluation)}</div>${!businessEvaluation || businessEvaluation.status === "not_configured" ? `<p class="muted-copy">${tr("精度条件は設定されていません。", "Accuracy criteria are not configured.")}</p>` : `${businessEvaluation.summary ? `<p class="business-summary"><strong>${esc(businessEvaluation.summary)}</strong></p>` : ""}${weatherItemList(businessEvaluation, { showEmpty: true })}${(businessEvaluation.discrepancies || []).length ? `<dl><dt>${tr("回答との差分", "Discrepancies")}</dt><dd>${esc(businessEvaluation.discrepancies.join(" / "))}</dd></dl>` : ""}`}</article>
+      <article><div class="layer-title"><strong>ビジネス要件</strong>${gradeBadge(businessEvaluation)}</div>${!businessEvaluation || businessEvaluation.status === "not_configured" ? `<p class="muted-copy">${tr("受入条件は設定されていません。", "Acceptance criteria are not configured.")}</p>` : `${businessEvaluation.summary ? `<p class="business-summary"><strong>${esc(businessEvaluation.summary)}</strong></p>` : ""}${weatherItemList(businessEvaluation, { showEmpty: true })}${(businessEvaluation.discrepancies || []).length ? `<dl><dt>${tr("回答との差分", "Discrepancies")}</dt><dd>${esc(businessEvaluation.discrepancies.join(" / "))}</dd></dl>` : ""}`}</article>
     </section>` : ""}
     <section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンストレース", "Response trace")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>
     `)}
