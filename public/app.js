@@ -37,7 +37,6 @@ const MCP_CLIENTS = Object.freeze({
 const state = {
   config: null,
   authReadiness: null,
-  authServiceAccountEmail: "",
   agents: [],
   knowledgeSources: [],
   suites: [],
@@ -308,9 +307,7 @@ function googleAuthStatus() {
   return {
     status,
     ready: status === "ready",
-    label: status === "limited" && state.authReadiness?.setupMode === "sheets-only"
-      ? tr("Sheetsのみ利用可能", "Sheets available only")
-      : ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
+    label: ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
     detail: status === "ready"
       ? tr("必要scopeを確認済み", "Required scopes verified")
       : state.authReadiness?.message || tr("Google認証を確認しています", "Checking Google authentication")
@@ -324,7 +321,7 @@ function googleAuthBanner() {
   return `<section class="global-auth-alert ${esc(auth.status)}" role="status">
     ${icon(iconName, 18)}
     <div><strong>${esc(auth.label)}</strong><p>${esc(auth.detail)}</p></div>
-    <a class="button secondary small" href="#/settings/auth">${tr("Google認証を確認", "Review Google authentication")}</a>
+    <button id="recheck-google-auth-banner" class="button secondary small" type="button">${icon("refresh-cw", 13)}${tr("認証状態を再確認", "Recheck authentication")}</button>
   </section>`;
 }
 
@@ -3538,45 +3535,21 @@ function authFeatureStatusLabel(status) {
   })[status] || tr("確認中", "Checking");
 }
 
-function validServiceAccountEmail(value) {
-  return /^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/i.test(String(value || "").trim());
-}
-
 function resolvedAuthCommand(option, command) {
-  if (option?.id !== "service-account") return command;
-  return String(command || "").replaceAll(
-    "SERVICE_ACCOUNT_EMAIL",
-    validServiceAccountEmail(state.authServiceAccountEmail)
-      ? state.authServiceAccountEmail.trim()
-      : "SERVICE_ACCOUNT_EMAIL"
-  );
+  return command;
 }
 
-function authSetupOptionCopy(option) {
-  if (option?.id === "user-adc") {
-    return {
-      title: tr("ユーザーADCでSheetsのみ利用", "Use Sheets with user ADC only"),
-      badge: tr("SA不要", "No service account"),
-      description: tr("自分のGoogleアカウントへ共有されたスプレッドシートを、ユーザーADCで読み書きします。ローカル利用専用です。", "Read and write spreadsheets shared with your Google account using user ADC. Intended for local use only."),
-      caution: tr("対象シートを現在のGoogleアカウントへ共有してください。GCS・Data Agent操作にはCloud scopeが別途必要です。", "Share the target sheet with the current Google account. GCS and Data Agent operations require the Cloud scope separately."),
-      steps: [
-        tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
-        tr("下のコマンドでSheets scope付きのユーザーADCを設定する。", "Run the command below to configure user ADC with the Sheets scope."),
-        tr("認証状態を再確認し、Sheetsが利用可能になったことを確認する。", "Recheck authentication and confirm that Sheets is available.")
-      ]
-    };
-  }
+function authSetupOptionCopy() {
   return {
-    title: tr("鍵なしでサービスアカウントをimpersonate", "Keyless service account impersonation"),
-    badge: tr("おすすめ", "Recommended"),
-    description: tr("ユーザーADCを元に短期トークンを発行します。サービスアカウント鍵JSONをダウンロードしたり、ローカルへ保存したりしません。", "Uses user ADC to mint short-lived tokens. No service account key JSON is downloaded or stored locally."),
-    caution: tr("利用者は現在のgcloudアクティブアカウントから自動取得します。最初のIAMコマンドは管理者が実行してください。", "The user is resolved from the active gcloud account. An administrator must run the first IAM command."),
+    title: tr("ユーザーADC（SA不要）", "User ADC (no service account)"),
+    badge: tr("SA不要", "No service account"),
+    description: tr("gcloudのDriveアクセス用ログインをADCへ反映し、Cloud・Sheets・GCS・Data Agentを現在のGoogleアカウント一本で利用します。", "Write gcloud's Drive-enabled user login to ADC and use one Google account for Cloud, Sheets, GCS, and Data Agent APIs."),
+    caution: tr("Google Drive全体へのOAuth権限を含みます。対象シートの共有、Cloud IAM権限、API設定は別途必要です。", "This grants the OAuth scope for Google Drive access. Sheet sharing, Cloud IAM permissions, and API configuration are still required."),
     steps: [
-      tr("管理者: PrismTrail専用サービスアカウントを用意し、必要最小限の権限だけを付与する。", "Admin: Create a dedicated PrismTrail service account with least-privilege roles."),
-      tr("管理者: 利用者へ Service Account Token Creator を付与する（下の1つ目のコマンド）。", "Admin: Grant the user Service Account Token Creator using the first command below."),
-      tr("シート管理者: 対象Googleスプレッドシートをサービスアカウントのメールアドレスへ共有する。", "Sheet owner: Share each target spreadsheet with the service account email."),
-      tr("利用者: 2つ目のコマンドでImpersonation付きADCログインを行う。quota projectの追加設定は不要です。", "User: Use the second command to sign in to ADC with impersonation. No separate quota-project command is needed."),
-      tr("PrismTrail: 「認証状態を再確認」を押してCloudとSheetsの両方が利用可能になったことを確認する。", "PrismTrail: Recheck authentication and confirm both Cloud and Sheets are available.")
+      tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
+      tr("1つ目のコマンドでDriveアクセスを許可し、同じユーザー認証をADCへ書き込む。", "Use the first command to grant Drive access and write the same user credential to ADC."),
+      tr("2つ目のコマンドでCloud APIのquota projectをADCへ設定する。", "Use the second command to configure the Cloud API quota project in ADC."),
+      tr("認証状態を再確認し、必要なAPIが利用可能になったことを確認する。", "Recheck authentication and confirm the required APIs are available.")
     ]
   };
 }
@@ -3605,20 +3578,19 @@ function renderGoogleAuthSettings() {
     </div>
     <div class="auth-setup-guide">
       <strong>${tr("認証方式を選択", "Choose an authentication method")}</strong>
-      <p>${tr("SheetsはGoogle Cloud外scopeのため、鍵なしサービスアカウントImpersonationを使用します。", "Sheets is outside Google Cloud scopes, so use keyless service account impersonation.")}</p>
+      <p>${tr("SAは使わず、CloudとSheetsを同じユーザーADCで利用します。SheetsはDriveまたはspreadsheets scopeで認証できます。", "Use one user ADC credential for Cloud and Sheets without a service account. Sheets accepts either the Drive or spreadsheets scope.")}</p>
       <aside class="auth-key-warning">
         ${icon("shield-alert", 18)}
-        <div><strong>${tr("サービスアカウント鍵をSecret Managerへ保存しない", "Do not store service account keys in Secret Manager")}</strong><p>${tr("Secret Managerへアクセスする既存IDがあるなら、そのIDから鍵なしImpersonationを利用できます。長期鍵を作成・配布・ローテーションする運用は増やしません。", "If an existing identity can access Secret Manager, use that identity for keyless impersonation instead. Avoid creating, distributing, and rotating another long-lived key.")}</p></div>
+        <div><strong>${tr("spreadsheets scopeをgcloud既定ADCへ直接追加しない", "Do not add the spreadsheets scope directly to gcloud's default ADC client")}</strong><p>${tr("Googleがこの経路をブロックするため、推奨コマンドはgcloudのDriveアクセス用ログインをADCへ反映します。", "Google blocks that path, so the recommended command writes gcloud's Drive-enabled login to ADC instead.")}</p></div>
       </aside>
       <div class="auth-setup-options">${(auth.setupOptions || []).map((option) => {
-        const copy = authSetupOptionCopy(option);
+        const copy = authSetupOptionCopy();
         return `<article class="auth-setup-option ${option.recommended ? "recommended" : ""}">
           <header><div><strong>${esc(copy.title)}</strong><span>${esc(copy.badge)}</span></div><div class="auth-doc-links"><a href="${esc(option.docsUrl)}" target="_blank" rel="noreferrer">${tr("公式手順", "Official guide")} ${icon("external-link", 12)}</a>${option.securityDocsUrl ? `<a href="${esc(option.securityDocsUrl)}" target="_blank" rel="noreferrer">${tr("鍵の安全指針", "Key security")} ${icon("external-link", 12)}</a>` : ""}</div></header>
           <p>${esc(copy.description)}</p>
-          ${option.id === "service-account" ? `<label class="auth-service-account-field"><span>${tr("サービスアカウントのEメール", "Service account email")}</span><input id="auth-service-account-email" type="email" autocomplete="off" spellcheck="false" placeholder="prismtrail@project-id.iam.gserviceaccount.com" value="${esc(state.authServiceAccountEmail)}"><small id="auth-service-account-hint">${tr("入力すると下のコマンドへ即時反映されます。", "Commands update as soon as you enter an email.")}</small></label>` : ""}
           ${copy.steps?.length ? `<ol class="auth-manual-steps">${copy.steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>` : ""}
           <small>${icon("info", 12)}${esc(copy.caution)}</small>
-          ${(option.commands || []).map((command, index) => `<div class="auth-command" data-auth-command-option="${esc(option.id)}" data-auth-command-index="${index}"><code>${esc(resolvedAuthCommand(option, command))}</code><button class="button secondary small" type="button" data-copy-auth-command="${esc(option.id)}:${index}" ${option.id === "service-account" && !validServiceAccountEmail(state.authServiceAccountEmail) ? "disabled" : ""}>${icon("copy", 13)}${tr("コピー", "Copy")}</button></div>`).join("")}
+          ${(option.commands || []).map((command, index) => `<div class="auth-command" data-auth-command-option="${esc(option.id)}" data-auth-command-index="${index}"><code>${esc(resolvedAuthCommand(option, command))}</code><button class="button secondary small" type="button" data-copy-auth-command="${esc(option.id)}:${index}">${icon("copy", 13)}${tr("コピー", "Copy")}</button></div>`).join("")}
         </article>`;
       }).join("")}</div>
     </div>
@@ -3630,47 +3602,27 @@ function renderGoogleAuthSettings() {
 
 function bindGoogleAuthSettings() {
   document.querySelector("#check-google-auth")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withButtonBusy(button, tr("確認中…", "Checking…"), async () => {
-        state.authReadiness = await json("/api/auth/readiness?refresh=1");
-        renderSettings();
-        refreshIcons();
-      });
-    } catch (error) {
-      notify(error.message);
-    }
-  });
-  document.querySelector("#auth-service-account-email")?.addEventListener("input", (event) => {
-    state.authServiceAccountEmail = event.currentTarget.value.trim();
-    const valid = validServiceAccountEmail(state.authServiceAccountEmail);
-    const option = state.authReadiness?.setupOptions?.find((item) => item.id === "service-account");
-    document.querySelectorAll('[data-auth-command-option="service-account"]').forEach((row) => {
-      const command = option?.commands?.[Number(row.dataset.authCommandIndex)];
-      const code = row.querySelector("code");
-      const button = row.querySelector("button");
-      if (code && command) code.textContent = resolvedAuthCommand(option, command);
-      if (button) button.disabled = !valid;
-    });
-    const hint = document.querySelector("#auth-service-account-hint");
-    if (hint) {
-      hint.textContent = valid
-        ? tr("入力済みです。表示中のコマンドをそのままコピーできます。", "Ready. The displayed commands can be copied as-is.")
-        : tr("有効な .iam.gserviceaccount.com のEメールを入力してください。", "Enter a valid .iam.gserviceaccount.com email.");
-      hint.classList.toggle("valid", valid);
-    }
+    await recheckGoogleAuth(event.currentTarget);
   });
   document.querySelectorAll("[data-copy-auth-command]").forEach((button) => button.addEventListener("click", async () => {
     const [optionId, rawIndex] = button.dataset.copyAuthCommand.split(":");
     const option = state.authReadiness?.setupOptions?.find((item) => item.id === optionId);
     const command = resolvedAuthCommand(option, option?.commands?.[Number(rawIndex)]);
-    if (optionId === "service-account" && !validServiceAccountEmail(state.authServiceAccountEmail)) {
-      return notify(tr("サービスアカウントのEメールを入力してください。", "Enter the service account email."));
-    }
     if (!command) return;
     await navigator.clipboard.writeText(command);
     notify(tr("コマンドをコピーしました。", "Command copied."), "success");
   }));
+}
+
+async function recheckGoogleAuth(button) {
+  try {
+    await withButtonBusy(button, tr("確認中…", "Checking…"), async () => {
+      state.authReadiness = await json("/api/auth/readiness?refresh=1");
+      await route();
+    });
+  } catch (error) {
+    notify(error.message);
+  }
 }
 
 function renderSettings() {
@@ -4698,7 +4650,13 @@ window.addEventListener("prismtrail:localechange", () => {
   document.documentElement.lang = getLocale();
   route();
 });
-app.addEventListener("click", (event) => {
+app.addEventListener("click", async (event) => {
+  const authButton = event.target.closest("#recheck-google-auth-banner");
+  if (authButton) {
+    event.preventDefault();
+    await recheckGoogleAuth(authButton);
+    return;
+  }
   const localeButton = event.target.closest("[data-set-locale]");
   if (localeButton) {
     if (location.hash.match(/^#\/suites\/[^/]+\/edit/) && state.selectedSuite && document.querySelector("#suite-name")) {

@@ -114,28 +114,20 @@ npm run setup -- init \
 ### 3. Authenticate with ADC
 
 ```bash
-gcloud auth application-default login \
-  --impersonate-service-account=SERVICE_ACCOUNT_EMAIL \
-  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
+gcloud auth login --enable-gdrive-access --update-adc --force
+gcloud auth application-default set-quota-project YOUR_GOOGLE_CLOUD_PROJECT
 ```
 
 After startup, open **Settings → Google authentication** to preflight ADC and the required
-`cloud-platform` / `spreadsheets` scopes. For local use without a service account, user ADC with
-the Sheets scope can be used when the target spreadsheet is shared with that Google account.
-GCS and Data Agent operations still require the Cloud scope. Known missing capabilities are shown across every page
+Cloud / Sheets scopes. For local use, one Drive-enabled user ADC credential can power Cloud, GCS,
+Data Agent, and Sheets without a service account. Share the target sheet with
+that Google account and configure the required IAM permissions and APIs. Known missing capabilities are shown across every page
 and Google-backed operations are stopped before a request is sent. Access tokens are never
 returned to the browser.
-Google Sheets is outside the Google Cloud scope set. Impersonate a service account and share each
-target spreadsheet with that account.
-For managed local use, keyless impersonation is recommended: user ADC is the source credential and
-only short-lived service-account tokens are minted. Do not store service-account key JSON in Secret
-Manager; an identity capable of reading that secret can impersonate directly instead. Entering the
-service-account email in Settings updates the IAM grant and ADC commands for direct copy and paste.
-Impersonated service-account credentials use the service account's project for quota, so do not run
-`gcloud auth application-default set-quota-project` afterward.
+Google blocks adding the `spreadsheets` scope directly through gcloud's default ADC client. Use the
+Drive-enabled login above.
 
-Do not use service-account key files unless your organization explicitly requires them. Prefer
-user ADC for local use and Workload Identity for hosted deployments.
+Prefer user ADC for local use and Workload Identity for hosted deployments.
 
 ### 4. Diagnose and start
 

@@ -31,35 +31,37 @@ test("Google auth readiness identifies a missing Sheets scope", async () => {
   assert.equal(result.features.find((feature) => feature.id === "cloud").status, "ready");
   assert.equal(result.features.find((feature) => feature.id === "sheets").status, "missing");
   const setupOptions = googleAuthSetupOptions("my-project");
-  assert.equal(setupOptions.length, 2);
-  const serviceAccountOption = setupOptions[0];
-  assert.equal(serviceAccountOption.recommended, true);
-  assert.equal(serviceAccountOption.keyless, true);
-  assert.match(serviceAccountOption.commands[0], /roles\/iam\.serviceAccountTokenCreator/);
-  assert.match(serviceAccountOption.commands[0], /gcloud config get-value account/);
-  assert.match(serviceAccountOption.commands[1], /--impersonate-service-account=/);
-  assert.equal(serviceAccountOption.commands.some((command) => command.includes("set-quota-project")), false);
-  assert.equal(serviceAccountOption.commands.some((command) => command.includes("client-id-file")), false);
-  assert.match(serviceAccountOption.securityDocsUrl, /best-practices-for-managing-service-account-keys/);
-  const userAdcOption = setupOptions.find((option) => option.id === "user-adc");
-  assert.equal(userAdcOption.recommended, false);
+  assert.equal(setupOptions.length, 1);
+  const userAdcOption = setupOptions[0];
+  assert.equal(userAdcOption.id, "user-adc");
+  assert.equal(userAdcOption.recommended, true);
   assert.equal(userAdcOption.keyless, true);
-  assert.match(userAdcOption.commands[0], /--scopes=.*spreadsheets/);
+  assert.match(userAdcOption.commands[0], /gcloud auth login --enable-gdrive-access --update-adc --force/);
+  assert.match(userAdcOption.commands[1], /set-quota-project my-project/);
 });
 
-test("Google auth readiness falls back to user ADC for Sheets when Cloud scope is unavailable", async () => {
+test("Google auth readiness accepts the Drive scope for Sheets", async () => {
   const result = await diagnoseGoogleAuth({
-    tokenProvider: async () => { throw new Error("cloud scope unavailable"); },
-    sheetsTokenProvider: async () => ({ token: "sheets-secret", source: "user-adc-sheets" }),
-    tokenInfoProvider: async () => ({ scope: "https://www.googleapis.com/auth/spreadsheets" }),
+    tokenProvider: async () => ({ token: "adc-secret", source: "user-adc" }),
+    tokenInfoProvider: async () => ({ scope: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/drive" }),
     now: fixedNow
   });
-  assert.equal(result.status, "limited");
-  assert.equal(result.setupMode, "sheets-only");
+  assert.equal(result.status, "ready");
   assert.equal(result.features.find((feature) => feature.id === "sheets").status, "ready");
-  assert.equal(result.features.find((feature) => feature.id === "cloud").status, "missing");
-  assert.match(result.message, /Sheets/);
-  assert.equal(JSON.stringify(result).includes("sheets-secret"), false);
+  assert.equal(JSON.stringify(result).includes("adc-secret"), false);
+});
+
+test("Google auth readiness reports one ADC credential with both application scopes", async () => {
+  const result = await diagnoseGoogleAuth({
+    tokenProvider: async () => ({ token: "adc-secret", source: "user-adc" }),
+    tokenInfoProvider: async () => ({ scope: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/spreadsheets" }),
+    now: fixedNow
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.setupMode, "single-adc");
+  assert.equal(result.features.find((feature) => feature.id === "sheets").status, "ready");
+  assert.equal(result.features.find((feature) => feature.id === "cloud").status, "ready");
+  assert.equal(JSON.stringify(result).includes("adc-secret"), false);
 });
 
 test("Google auth readiness handles missing ADC without exposing credentials", async () => {
