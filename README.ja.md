@@ -95,21 +95,17 @@ CLIは識別子を検証し、Git管理対象外の`.env`だけを書き込み�
 ### 3. ADCでログイン
 
 ```bash
-gcloud auth application-default login \
-  --impersonate-service-account=SERVICE_ACCOUNT_EMAIL \
-  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
+gcloud auth login --enable-gdrive-access --update-adc --force
+gcloud auth application-default set-quota-project YOUR_GOOGLE_CLOUD_PROJECT
 ```
 
-起動後は「設定 → Google認証」でADCと`cloud-platform` / `spreadsheets` scopeを事前診断できます。ローカル利用では、両方のscopeを含むユーザーADC一本でCloud・GCS・Data Agent・Sheetsを利用できます。対象シートを自分のGoogleアカウントへ共有し、各サービスのIAM権限とAPI設定を用意してください。
+起動後は「設定 → Google認証」でADCとCloud / Sheetsのscopeを事前診断できます。ローカル利用では、Driveアクセスを許可したユーザーADC一本でCloud・GCS・Data Agent・Sheetsを利用できます。対象シートを自分のGoogleアカウントへ共有し、各サービスのIAM権限とAPI設定を用意してください。
 不足が判明している場合、全画面に警告を表示し、Data Agent実行、GCS、Google Sheetsなどの
 外部API操作をリクエスト送信前に停止します。アクセストークンはブラウザへ返しません。
-Google SheetsはGoogle Cloud外scopeのため、対象シートを共有したサービスアカウントを
-`--impersonate-service-account`で利用してください。
-組織管理のローカル利用では、ユーザーADCを元に短期トークンだけを発行する鍵なしImpersonationを
-推奨します。サービスアカウント鍵JSONをSecret Managerへ保存しません。設定画面でサービス
-アカウントのEメールを入力すると、IAM付与とADCログインのコマンドへ即時反映されます。
-Impersonation ADCではサービスアカウント所属プロジェクトがquota projectになるため、
-`gcloud auth application-default set-quota-project`は実行しません。
+`gcloud auth application-default login --scopes=...spreadsheets`をgcloud既定クライアントで
+実行する経路はGoogleにブロックされます。上記のDriveアクセス用ログインを使用してください。
+Workspace管理ポリシーでgcloudアプリも遮断される場合は、管理者が許可したDesktop OAuth
+クライアントを`--client-id-file`へ指定する代替手順を設定画面に表示します。
 
 ### 4. 診断して起動
 

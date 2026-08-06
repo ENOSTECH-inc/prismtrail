@@ -32,19 +32,30 @@ test("Google auth readiness identifies a missing Sheets scope", async () => {
   assert.equal(result.features.find((feature) => feature.id === "sheets").status, "missing");
   const setupOptions = googleAuthSetupOptions("my-project");
   assert.equal(setupOptions.length, 2);
-  const serviceAccountOption = setupOptions[0];
-  assert.equal(serviceAccountOption.id, "user-adc");
-  assert.equal(serviceAccountOption.recommended, true);
-  assert.equal(serviceAccountOption.keyless, true);
-  assert.match(serviceAccountOption.commands[0], /--scopes=.*cloud-platform.*spreadsheets/);
-  const serviceAccountFallback = setupOptions[1];
-  assert.equal(serviceAccountFallback.id, "service-account");
-  assert.equal(serviceAccountFallback.recommended, false);
-  assert.match(serviceAccountFallback.commands[0], /roles\/iam\.serviceAccountTokenCreator/);
-  assert.match(serviceAccountFallback.commands[1], /--impersonate-service-account=/);
-  assert.equal(serviceAccountFallback.commands.some((command) => command.includes("set-quota-project")), false);
-  assert.equal(serviceAccountFallback.commands.some((command) => command.includes("client-id-file")), false);
-  assert.match(serviceAccountFallback.securityDocsUrl, /best-practices-for-managing-service-account-keys/);
+  const userAdcOption = setupOptions[0];
+  assert.equal(userAdcOption.id, "user-adc");
+  assert.equal(userAdcOption.recommended, true);
+  assert.equal(userAdcOption.keyless, true);
+  assert.match(userAdcOption.commands[0], /gcloud auth login --enable-gdrive-access --update-adc --force/);
+  assert.match(userAdcOption.commands[1], /set-quota-project my-project/);
+  const customOauthFallback = setupOptions[1];
+  assert.equal(customOauthFallback.id, "custom-oauth-adc");
+  assert.equal(customOauthFallback.recommended, false);
+  assert.match(customOauthFallback.commands[0], /--client-id-file=OAUTH_CLIENT_FILE/);
+  assert.match(customOauthFallback.commands[0], /--scopes=.*cloud-platform.*spreadsheets/);
+  assert.match(customOauthFallback.commands[1], /set-quota-project my-project/);
+  assert.equal(customOauthFallback.commands.some((command) => command.includes("impersonate-service-account")), false);
+});
+
+test("Google auth readiness accepts the Drive scope for Sheets", async () => {
+  const result = await diagnoseGoogleAuth({
+    tokenProvider: async () => ({ token: "adc-secret", source: "user-adc" }),
+    tokenInfoProvider: async () => ({ scope: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/drive" }),
+    now: fixedNow
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.features.find((feature) => feature.id === "sheets").status, "ready");
+  assert.equal(JSON.stringify(result).includes("adc-secret"), false);
 });
 
 test("Google auth readiness reports one ADC credential with both application scopes", async () => {

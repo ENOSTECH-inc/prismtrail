@@ -39,23 +39,29 @@ switching to the browser.
 Use Application Default Credentials only:
 
 ```bash
-gcloud auth application-default login \
-  --impersonate-service-account=SERVICE_ACCOUNT_EMAIL \
-  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
+gcloud auth login --enable-gdrive-access --update-adc --force
+gcloud auth application-default set-quota-project GOOGLE_CLOUD_PROJECT
 ```
 
-Google Sheets is outside the Google Cloud scope set. For shared or Cloud-backed environments, use
-`--impersonate-service-account=SERVICE_ACCOUNT_EMAIL` and share every target spreadsheet with that
-service account. For local-only use without a service account, use one user ADC credential with
-both the Cloud and Sheets scopes, and share the target spreadsheet with that user. This is the
-single credential for Cloud, GCS, Data Agent, and Sheets operations; IAM permissions and API
-enablement are still required. Do not use a custom Desktop OAuth client flow in PrismTrail recovery guidance.
-Prefer keyless service-account impersonation from user ADC for managed local environments. This
-stores the user's ADC and impersonation configuration locally, not a service-account private key.
-Do not recommend storing service-account key JSON in Secret Manager: an identity that can read the
-secret can normally impersonate the service account directly without creating a long-lived key.
-Do not run `gcloud auth application-default set-quota-project` for impersonated ADC; it updates
-user ADC only and fails for impersonated service-account credentials.
+Google Sheets is outside the Google Cloud scope set. For local use without a service account, use
+the gcloud Drive-enabled login above and share the target spreadsheet with that user. The command
+writes one user credential to ADC for Cloud, GCS, Data Agent, and Sheets operations. The Sheets API
+accepts the Drive scope granted by `--enable-gdrive-access`; IAM permissions, spreadsheet ACLs, API
+enablement, and quota-project setup are still required.
+
+Do not instruct users to run `gcloud auth application-default login --scopes=...spreadsheets`
+without `--client-id-file`: Google blocks non-Cloud scopes through the default ADC OAuth client. If
+Workspace policy also blocks the recommended gcloud app, use an administrator-approved Desktop OAuth
+client as the fallback:
+
+```bash
+gcloud auth application-default login \
+  --client-id-file=OAUTH_CLIENT_FILE \
+  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
+gcloud auth application-default set-quota-project GOOGLE_CLOUD_PROJECT
+```
+
+Never commit the OAuth client JSON or place it in the repository.
 
 Do not substitute `gcloud auth print-access-token` or place credentials in source files.
 Before a Google-backed operation, inspect **Settings → Google authentication** or

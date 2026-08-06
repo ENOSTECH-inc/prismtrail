@@ -37,7 +37,6 @@ const MCP_CLIENTS = Object.freeze({
 const state = {
   config: null,
   authReadiness: null,
-  authServiceAccountEmail: "",
   agents: [],
   knowledgeSources: [],
   suites: [],
@@ -3536,18 +3535,8 @@ function authFeatureStatusLabel(status) {
   })[status] || tr("確認中", "Checking");
 }
 
-function validServiceAccountEmail(value) {
-  return /^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/i.test(String(value || "").trim());
-}
-
 function resolvedAuthCommand(option, command) {
-  if (option?.id !== "service-account") return command;
-  return String(command || "").replaceAll(
-    "SERVICE_ACCOUNT_EMAIL",
-    validServiceAccountEmail(state.authServiceAccountEmail)
-      ? state.authServiceAccountEmail.trim()
-      : "SERVICE_ACCOUNT_EMAIL"
-  );
+  return command;
 }
 
 function authSetupOptionCopy(option) {
@@ -3555,26 +3544,25 @@ function authSetupOptionCopy(option) {
     return {
       title: tr("ユーザーADC（SA不要）", "User ADC (no service account)"),
       badge: tr("SA不要", "No service account"),
-      description: tr("Cloud・Sheets・GCS・Data Agentを、現在のGoogleアカウントのADC一本で利用します。", "Use Cloud, Sheets, GCS, and Data Agent APIs through one ADC credential for the current Google account."),
-      caution: tr("対象シートを現在のGoogleアカウントへ共有してください。各サービスの操作には、そのアカウントのIAM権限とAPI設定が必要です。", "Share the target sheet with the current Google account. Each service still requires IAM permissions and API configuration for that account."),
+      description: tr("gcloudのDriveアクセス用ログインをADCへ反映し、Cloud・Sheets・GCS・Data Agentを現在のGoogleアカウント一本で利用します。", "Write gcloud's Drive-enabled user login to ADC and use one Google account for Cloud, Sheets, GCS, and Data Agent APIs."),
+      caution: tr("Google Drive全体へのOAuth権限を含みます。対象シートの共有、Cloud IAM権限、API設定は別途必要です。", "This grants the OAuth scope for Google Drive access. Sheet sharing, Cloud IAM permissions, and API configuration are still required."),
       steps: [
         tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
-        tr("下のコマンドでCloudとSheets scopeを含むユーザーADCを設定する。", "Run the command below to configure user ADC with Cloud and Sheets scopes."),
+        tr("1つ目のコマンドでDriveアクセスを許可し、同じユーザー認証をADCへ書き込む。", "Use the first command to grant Drive access and write the same user credential to ADC."),
+        tr("2つ目のコマンドでCloud APIのquota projectをADCへ設定する。", "Use the second command to configure the Cloud API quota project in ADC."),
         tr("認証状態を再確認し、必要なAPIが利用可能になったことを確認する。", "Recheck authentication and confirm the required APIs are available.")
       ]
     };
   }
   return {
-    title: tr("鍵なしでサービスアカウントをimpersonate", "Keyless service account impersonation"),
+    title: tr("自組織のOAuthクライアントを使用", "Use your organization's OAuth client"),
     badge: tr("代替手段", "Alternative"),
-    description: tr("ユーザーADCを元に短期トークンを発行します。サービスアカウント鍵JSONをダウンロードしたり、ローカルへ保存したりしません。", "Uses user ADC to mint short-lived tokens. No service account key JSON is downloaded or stored locally."),
-    caution: tr("利用者は現在のgcloudアクティブアカウントから自動取得します。最初のIAMコマンドは管理者が実行してください。", "The user is resolved from the active gcloud account. An administrator must run the first IAM command."),
+    description: tr("Workspace管理ポリシーでgcloudアプリが遮断される場合も、管理者が許可したDesktop OAuthクライアントからユーザーADC一本を作成できます。", "If Workspace policy blocks the gcloud app, create one user ADC credential with a Desktop OAuth client approved by your administrator."),
+    caution: tr("OAuthクライアントJSONは認証設定にだけ使用し、リポジトリへcommitしないでください。管理者によるクライアントIDの許可が必要な場合があります。", "Use the OAuth client JSON only for authentication and never commit it. An administrator might need to allow its client ID."),
     steps: [
-      tr("管理者: PrismTrail専用サービスアカウントを用意し、必要最小限の権限だけを付与する。", "Admin: Create a dedicated PrismTrail service account with least-privilege roles."),
-      tr("管理者: 利用者へ Service Account Token Creator を付与する（下の1つ目のコマンド）。", "Admin: Grant the user Service Account Token Creator using the first command below."),
-      tr("シート管理者: 対象Googleスプレッドシートをサービスアカウントのメールアドレスへ共有する。", "Sheet owner: Share each target spreadsheet with the service account email."),
-      tr("利用者: 2つ目のコマンドでImpersonation付きADCログインを行う。quota projectの追加設定は不要です。", "User: Use the second command to sign in to ADC with impersonation. No separate quota-project command is needed."),
-      tr("PrismTrail: 「認証状態を再確認」を押してCloudとSheetsの両方が利用可能になったことを確認する。", "PrismTrail: Recheck authentication and confirm both Cloud and Sheets are available.")
+      tr("Google CloudでDesktop appのOAuthクライアントを作成し、Workspace管理者に必要なら許可してもらう。", "Create a Desktop app OAuth client in Google Cloud and have a Workspace administrator allow it when required."),
+      tr("OAUTH_CLIENT_FILEをダウンロードしたJSONの安全なローカルパスへ置き換え、1つ目のコマンドを実行する。", "Replace OAUTH_CLIENT_FILE with the secure local path to the downloaded JSON, then run the first command."),
+      tr("2つ目のコマンドでquota projectを設定し、認証状態を再確認する。", "Set the quota project with the second command, then recheck authentication.")
     ]
   };
 }
@@ -3603,20 +3591,19 @@ function renderGoogleAuthSettings() {
     </div>
     <div class="auth-setup-guide">
       <strong>${tr("認証方式を選択", "Choose an authentication method")}</strong>
-      <p>${tr("SheetsはGoogle Cloud外scopeのため、鍵なしサービスアカウントImpersonationを使用します。", "Sheets is outside Google Cloud scopes, so use keyless service account impersonation.")}</p>
+      <p>${tr("SAは使わず、CloudとSheetsを同じユーザーADCで利用します。SheetsはDriveまたはspreadsheets scopeで認証できます。", "Use one user ADC credential for Cloud and Sheets without a service account. Sheets accepts either the Drive or spreadsheets scope.")}</p>
       <aside class="auth-key-warning">
         ${icon("shield-alert", 18)}
-        <div><strong>${tr("サービスアカウント鍵をSecret Managerへ保存しない", "Do not store service account keys in Secret Manager")}</strong><p>${tr("Secret Managerへアクセスする既存IDがあるなら、そのIDから鍵なしImpersonationを利用できます。長期鍵を作成・配布・ローテーションする運用は増やしません。", "If an existing identity can access Secret Manager, use that identity for keyless impersonation instead. Avoid creating, distributing, and rotating another long-lived key.")}</p></div>
+        <div><strong>${tr("spreadsheets scopeをgcloud既定ADCへ直接追加しない", "Do not add the spreadsheets scope directly to gcloud's default ADC client")}</strong><p>${tr("Googleがこの経路をブロックするため、推奨コマンドはgcloudのDriveアクセス用ログインをADCへ反映します。", "Google blocks that path, so the recommended command writes gcloud's Drive-enabled login to ADC instead.")}</p></div>
       </aside>
       <div class="auth-setup-options">${(auth.setupOptions || []).map((option) => {
         const copy = authSetupOptionCopy(option);
         return `<article class="auth-setup-option ${option.recommended ? "recommended" : ""}">
           <header><div><strong>${esc(copy.title)}</strong><span>${esc(copy.badge)}</span></div><div class="auth-doc-links"><a href="${esc(option.docsUrl)}" target="_blank" rel="noreferrer">${tr("公式手順", "Official guide")} ${icon("external-link", 12)}</a>${option.securityDocsUrl ? `<a href="${esc(option.securityDocsUrl)}" target="_blank" rel="noreferrer">${tr("鍵の安全指針", "Key security")} ${icon("external-link", 12)}</a>` : ""}</div></header>
           <p>${esc(copy.description)}</p>
-          ${option.id === "service-account" ? `<label class="auth-service-account-field"><span>${tr("サービスアカウントのEメール", "Service account email")}</span><input id="auth-service-account-email" type="email" autocomplete="off" spellcheck="false" placeholder="prismtrail@project-id.iam.gserviceaccount.com" value="${esc(state.authServiceAccountEmail)}"><small id="auth-service-account-hint">${tr("入力すると下のコマンドへ即時反映されます。", "Commands update as soon as you enter an email.")}</small></label>` : ""}
           ${copy.steps?.length ? `<ol class="auth-manual-steps">${copy.steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>` : ""}
           <small>${icon("info", 12)}${esc(copy.caution)}</small>
-          ${(option.commands || []).map((command, index) => `<div class="auth-command" data-auth-command-option="${esc(option.id)}" data-auth-command-index="${index}"><code>${esc(resolvedAuthCommand(option, command))}</code><button class="button secondary small" type="button" data-copy-auth-command="${esc(option.id)}:${index}" ${option.id === "service-account" && !validServiceAccountEmail(state.authServiceAccountEmail) ? "disabled" : ""}>${icon("copy", 13)}${tr("コピー", "Copy")}</button></div>`).join("")}
+          ${(option.commands || []).map((command, index) => `<div class="auth-command" data-auth-command-option="${esc(option.id)}" data-auth-command-index="${index}"><code>${esc(resolvedAuthCommand(option, command))}</code><button class="button secondary small" type="button" data-copy-auth-command="${esc(option.id)}:${index}">${icon("copy", 13)}${tr("コピー", "Copy")}</button></div>`).join("")}
         </article>`;
       }).join("")}</div>
     </div>
@@ -3639,32 +3626,10 @@ function bindGoogleAuthSettings() {
       notify(error.message);
     }
   });
-  document.querySelector("#auth-service-account-email")?.addEventListener("input", (event) => {
-    state.authServiceAccountEmail = event.currentTarget.value.trim();
-    const valid = validServiceAccountEmail(state.authServiceAccountEmail);
-    const option = state.authReadiness?.setupOptions?.find((item) => item.id === "service-account");
-    document.querySelectorAll('[data-auth-command-option="service-account"]').forEach((row) => {
-      const command = option?.commands?.[Number(row.dataset.authCommandIndex)];
-      const code = row.querySelector("code");
-      const button = row.querySelector("button");
-      if (code && command) code.textContent = resolvedAuthCommand(option, command);
-      if (button) button.disabled = !valid;
-    });
-    const hint = document.querySelector("#auth-service-account-hint");
-    if (hint) {
-      hint.textContent = valid
-        ? tr("入力済みです。表示中のコマンドをそのままコピーできます。", "Ready. The displayed commands can be copied as-is.")
-        : tr("有効な .iam.gserviceaccount.com のEメールを入力してください。", "Enter a valid .iam.gserviceaccount.com email.");
-      hint.classList.toggle("valid", valid);
-    }
-  });
   document.querySelectorAll("[data-copy-auth-command]").forEach((button) => button.addEventListener("click", async () => {
     const [optionId, rawIndex] = button.dataset.copyAuthCommand.split(":");
     const option = state.authReadiness?.setupOptions?.find((item) => item.id === optionId);
     const command = resolvedAuthCommand(option, option?.commands?.[Number(rawIndex)]);
-    if (optionId === "service-account" && !validServiceAccountEmail(state.authServiceAccountEmail)) {
-      return notify(tr("サービスアカウントのEメールを入力してください。", "Enter the service account email."));
-    }
     if (!command) return;
     await navigator.clipboard.writeText(command);
     notify(tr("コマンドをコピーしました。", "Command copied."), "success");

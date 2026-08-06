@@ -57,27 +57,24 @@ Node.js process may call `gcloud auth application-default print-access-token`; i
 to the active non-ADC gcloud user token. Access tokens remain in memory and are never written to
 JSON or sent to the browser.
 
-The server uses one ADC credential with the complete application scope set (`cloud-platform` and
-`spreadsheets`) for Cloud and Sheets operations. This lets a local user ADC credential operate the
-whole local app without a service account when the spreadsheet is shared with that user. The gcloud
-CLI requires both scopes in the same login command; GCS and Data Agent operations still require
-their own Cloud-side permissions and API configuration. The server
+The server uses one ADC credential for Cloud and Sheets operations. Sheets accepts either the
+`spreadsheets` scope or a compatible Drive scope. For local use, the recommended setup runs
+`gcloud auth login --enable-gdrive-access --update-adc --force`, which writes gcloud's Drive-enabled
+user credential to ADC alongside the Cloud scopes. This avoids the blocked gcloud default-client
+flow for adding `spreadsheets` directly and lets the whole local app run without a service account
+when the spreadsheet is shared with that user. GCS and Data Agent operations still require their
+own Cloud-side permissions, quota project, and API configuration. The server
 exposes a token-free `GET /api/auth/readiness` preflight. It introspects the short-lived token,
 caches only public capability status for one minute, and reports Cloud and Sheets readiness
 separately. The shared UI renders failures on every page, links to the Settings authentication
 panel, and blocks known-incompatible external API mutations before sending them. An unavailable
 token-introspection service is reported as `unknown` and remains non-blocking so a temporary
 diagnostic outage does not disable otherwise valid credentials.
-Because Sheets is outside the Google Cloud scope set, the UI offers one recommended local path:
-one user ADC credential requesting both scopes. User ADC is not a privilege bypass: Google Sheets
-ACLs, Cloud IAM permissions, and API enablement are still required. Keyless service-account
-impersonation remains an optional path for shared or Cloud-backed environments.
-Managed local environments prefer keyless impersonation from user ADC. The design does not create
-downloaded service-account key JSON or store it in Secret Manager. The browser may interpolate a
-validated service-account email into setup commands, but credentials and tokens never enter browser
-state or API responses. Impersonated ADC uses the service account's project for quota and is not
-compatible with the user-credential-only `gcloud auth application-default set-quota-project`
-command.
+Because Sheets is outside the Google Cloud scope set, the UI offers two service-account-free local
+paths: the recommended gcloud Drive-enabled user login and an administrator-approved Desktop OAuth
+client fallback. Both produce one user ADC credential. User ADC is not a privilege bypass: Google
+Sheets ACLs, Cloud IAM permissions, Workspace OAuth policy, API enablement, and quota-project setup
+still apply. OAuth client JSON is local authentication input only and must never be committed.
 
 ## Execution
 
