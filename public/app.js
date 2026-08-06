@@ -321,7 +321,7 @@ function googleAuthBanner() {
   return `<section class="global-auth-alert ${esc(auth.status)}" role="status">
     ${icon(iconName, 18)}
     <div><strong>${esc(auth.label)}</strong><p>${esc(auth.detail)}</p></div>
-    <a class="button secondary small" href="#/settings/auth">${tr("Google認証を確認", "Review Google authentication")}</a>
+    <button id="recheck-google-auth-banner" class="button secondary small" type="button">${icon("refresh-cw", 13)}${tr("認証状態を再確認", "Recheck authentication")}</button>
   </section>`;
 }
 
@@ -3615,16 +3615,7 @@ function renderGoogleAuthSettings() {
 
 function bindGoogleAuthSettings() {
   document.querySelector("#check-google-auth")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withButtonBusy(button, tr("確認中…", "Checking…"), async () => {
-        state.authReadiness = await json("/api/auth/readiness?refresh=1");
-        renderSettings();
-        refreshIcons();
-      });
-    } catch (error) {
-      notify(error.message);
-    }
+    await recheckGoogleAuth(event.currentTarget);
   });
   document.querySelectorAll("[data-copy-auth-command]").forEach((button) => button.addEventListener("click", async () => {
     const [optionId, rawIndex] = button.dataset.copyAuthCommand.split(":");
@@ -3634,6 +3625,17 @@ function bindGoogleAuthSettings() {
     await navigator.clipboard.writeText(command);
     notify(tr("コマンドをコピーしました。", "Command copied."), "success");
   }));
+}
+
+async function recheckGoogleAuth(button) {
+  try {
+    await withButtonBusy(button, tr("確認中…", "Checking…"), async () => {
+      state.authReadiness = await json("/api/auth/readiness?refresh=1");
+      await route();
+    });
+  } catch (error) {
+    notify(error.message);
+  }
 }
 
 function renderSettings() {
@@ -4661,7 +4663,13 @@ window.addEventListener("prismtrail:localechange", () => {
   document.documentElement.lang = getLocale();
   route();
 });
-app.addEventListener("click", (event) => {
+app.addEventListener("click", async (event) => {
+  const authButton = event.target.closest("#recheck-google-auth-banner");
+  if (authButton) {
+    event.preventDefault();
+    await recheckGoogleAuth(authButton);
+    return;
+  }
   const localeButton = event.target.closest("[data-set-locale]");
   if (localeButton) {
     if (location.hash.match(/^#\/suites\/[^/]+\/edit/) && state.selectedSuite && document.querySelector("#suite-name")) {

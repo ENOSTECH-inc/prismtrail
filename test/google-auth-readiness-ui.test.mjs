@@ -14,7 +14,8 @@ test("shared shell exposes authentication status and recovery settings", () => {
   assert.match(app, /if \(auth\.ready \|\| auth\.status === "checking"\) return ""/);
   assert.match(app, /!auth\.ready && auth\.status !== "checking"/);
   assert.doesNotMatch(app, /<div class="auth-banner">/);
-  assert.match(app, /href="#\/settings\/auth"/);
+  assert.match(app, /id="recheck-google-auth-banner"/);
+  assert.match(app, /json\("\/api\/auth\/readiness\?refresh=1"\)/);
   assert.match(app, /data-settings-tab="auth"/);
   assert.match(app, /data-copy-auth-command/);
   assert.match(app, /spreadsheets scopeをgcloud既定ADCへ直接追加しない/);
