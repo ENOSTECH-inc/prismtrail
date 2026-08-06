@@ -649,7 +649,7 @@
               <strong>料金と権限に注意</strong>
               <p>
                 実行すると BigQuery 利用料金が発生することがあります。
-                Data Agent・BigQuery・Vertex AI（精度判定）への権限が ADC に付与されている必要があります。
+                Data Agent・BigQuery・Vertex AI（ビジネス要件判定）への権限が ADC に付与されている必要があります。
                 本番データで試す場合は、課金と影響範囲を事前に確認してください。
               </p>
             </div>
@@ -676,13 +676,13 @@
               </ul>
             </div>
             <div class="panel">
-              <h3>ビジネス要件と精度検証</h3>
+              <h3>ビジネス要件</h3>
               <p style="color:var(--muted);font-size:13.5px;margin-bottom:8px;">Gemini が A〜D で採点</p>
               <ul>
-                <li>ビジネス要件には定性・定量の受入条件を記述</li>
-                <li>精度検証にはテキスト・URL・BigQuery SQLの正解根拠を登録</li>
+                <li>定性・定量の受入条件を1項目ずつ記述</li>
+                <li>必要な値・期間・単位・許容差・使用テーブルも受入条件に含める</li>
                 <li>既定の合格ラインは <strong>B以上</strong></li>
-                <li>検証可能な期待値がない場合は OFF のままにする</li>
+                <li>検証可能な条件がない場合はビジネス要件を空にする</li>
               </ul>
             </div>
           </div>
@@ -829,17 +829,16 @@
             <div class="kv-row"><dt>関連URL</dt><dd>ケース追加・更新の根拠となったSlack投稿、チケット、資料などのHTTP(S) URL。1行に1件、最大20件</dd></div>
             <div class="kv-row"><dt>システム要件</dt><dd>SQL必須・チャート・時間上限・課金上限・必須語句など</dd></div>
             <div class="kv-row"><dt>ビジネス要件</dt><dd>回答が満たすべき定性・定量の受入条件を1項目ずつ記述</dd></div>
-            <div class="kv-row"><dt>精度検証</dt><dd>正解根拠をテキスト、公開URL、読み取り専用BigQuery SQLから選択。説明は任意で、最大20件</dd></div>
           </dl>
 
           <div class="panel">
-            <h3>受入条件と精度根拠の例</h3>
-            <pre><code>受入条件: 期間・数値・単位が一致すること。許容差は±1%まで。
-精度根拠 (text): 2026年6月の求人応募数は65,200件。
-精度根拠 (BigQuery SQL): SELECT month, applications FROM ...</code></pre>
+            <h3>受入条件の例</h3>
+            <pre><code>受入条件1: 2026年6月の求人応募数が65,200件と示されている。
+受入条件2: 単位は件で、許容差は±1%以内である。
+受入条件3: SQLで mart.applications_daily を使用している。</code></pre>
             <p style="margin:12px 0 0;color:var(--muted);font-size:13px;">
-              正解根拠がまだない場合は精度検証をOFFのままにし、システム要件だけでスモークしてください。
-              存在しない正解値を書いて採点させないでください。
+              検証可能な受入条件がまだない場合は、システム要件だけでスモークしてください。
+              存在しない期待値を受入条件に書いて採点させないでください。
             </p>
           </div>
 
@@ -889,7 +888,7 @@
               <ul>
                 <li>Data Agentを実行中</li>
                 <li>システム要件を確認中</li>
-                <li>Geminiで回答精度を判定中（ビジネス要件ON時）</li>
+                <li>Geminiでビジネス要件を判定中（受入条件がある場合）</li>
               </ul>
             </li>
           </ol>
@@ -928,7 +927,7 @@
             <li>
               <strong>ケース別評価</strong>
               システム要件の各チェック合否と、ビジネス要件の A/B/C/D を確認します。
-              「精度判定の詳細」を開くと期待条件・差分・判定モデルが見られます。
+              ビジネス要件の評価欄では、受入条件ごとの判定・理由・判定モデルを確認できます。
             </li>
             <li>
               <strong>証跡を辿る</strong>
@@ -963,8 +962,8 @@
             </li>
             <li>
               <strong>スイートをシートへ出す</strong>
-              「アプリ → Sheets：テストスイート」の <span class="ui-label">固定フォーマットで出力</span>、
-              <code>accuracy_sources_json</code> 列にはテキスト・URL・BigQuery SQLと任意説明をJSON配列で保持します。
+              「アプリ → Sheets：テストスイート」の <span class="ui-label">固定フォーマットで出力</span>。
+              ビジネス受入条件は <code>business_criteria</code> 列でセミコロン区切りにします。
               または編集画面の <span class="ui-label">Gシートで編集</span>。
             </li>
             <li>

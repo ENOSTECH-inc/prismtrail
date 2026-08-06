@@ -89,7 +89,7 @@ npm start
   (`criteriaItems`). Do not enable business scoring without at least one verifiable item.
 - The judge receives the full Data Agent `Message` JSON plus schema notes and returns
   sun/cloud/rain per item; the server computes A/B/C/D from those marks.
-- Treat A/B as passing by default. Preserve C/D as accuracy failures and judge infrastructure
+- Treat A/B as passing by default. Preserve C/D as business-requirement failures and judge infrastructure
   errors as review-required rather than fabricating a grade.
 - Prefer the managed Google Sheet for bulk test-case editing. Import it before running a changed
   suite, and confirm the Suite ID and case count.
@@ -151,8 +151,8 @@ When covering agent knowledge sources (for example 1 mart = 1 case):
 
 1. Read the live Data Agent (`GET .../dataAgents/<id>`) and use published table references /
    system instructions. Do not invent table names.
-2. Create one smoke case per table. Prefer system requirements only until real expected values
-   are known; leave business accuracy empty rather than fabricating numbers.
+2. Create one smoke case per table. Prefer system requirements only until verifiable acceptance
+   criteria are known; leave the business checklist empty rather than fabricating values.
 3. Fact tables: period-bounded count/trend prompts with `requireSql: true` (and chart when the
    agent instructions require visuals). Dim/master tables: count or attribute lookup prompts.
 4. Keep prompts explicit about `dataset.table` so the agent targets the intended mart.
