@@ -3539,30 +3539,17 @@ function resolvedAuthCommand(option, command) {
   return command;
 }
 
-function authSetupOptionCopy(option) {
-  if (option?.id === "user-adc") {
-    return {
-      title: tr("ユーザーADC（SA不要）", "User ADC (no service account)"),
-      badge: tr("SA不要", "No service account"),
-      description: tr("gcloudのDriveアクセス用ログインをADCへ反映し、Cloud・Sheets・GCS・Data Agentを現在のGoogleアカウント一本で利用します。", "Write gcloud's Drive-enabled user login to ADC and use one Google account for Cloud, Sheets, GCS, and Data Agent APIs."),
-      caution: tr("Google Drive全体へのOAuth権限を含みます。対象シートの共有、Cloud IAM権限、API設定は別途必要です。", "This grants the OAuth scope for Google Drive access. Sheet sharing, Cloud IAM permissions, and API configuration are still required."),
-      steps: [
-        tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
-        tr("1つ目のコマンドでDriveアクセスを許可し、同じユーザー認証をADCへ書き込む。", "Use the first command to grant Drive access and write the same user credential to ADC."),
-        tr("2つ目のコマンドでCloud APIのquota projectをADCへ設定する。", "Use the second command to configure the Cloud API quota project in ADC."),
-        tr("認証状態を再確認し、必要なAPIが利用可能になったことを確認する。", "Recheck authentication and confirm the required APIs are available.")
-      ]
-    };
-  }
+function authSetupOptionCopy() {
   return {
-    title: tr("自組織のOAuthクライアントを使用", "Use your organization's OAuth client"),
-    badge: tr("代替手段", "Alternative"),
-    description: tr("Workspace管理ポリシーでgcloudアプリが遮断される場合も、管理者が許可したDesktop OAuthクライアントからユーザーADC一本を作成できます。", "If Workspace policy blocks the gcloud app, create one user ADC credential with a Desktop OAuth client approved by your administrator."),
-    caution: tr("OAuthクライアントJSONは認証設定にだけ使用し、リポジトリへcommitしないでください。管理者によるクライアントIDの許可が必要な場合があります。", "Use the OAuth client JSON only for authentication and never commit it. An administrator might need to allow its client ID."),
+    title: tr("ユーザーADC（SA不要）", "User ADC (no service account)"),
+    badge: tr("SA不要", "No service account"),
+    description: tr("gcloudのDriveアクセス用ログインをADCへ反映し、Cloud・Sheets・GCS・Data Agentを現在のGoogleアカウント一本で利用します。", "Write gcloud's Drive-enabled user login to ADC and use one Google account for Cloud, Sheets, GCS, and Data Agent APIs."),
+    caution: tr("Google Drive全体へのOAuth権限を含みます。対象シートの共有、Cloud IAM権限、API設定は別途必要です。", "This grants the OAuth scope for Google Drive access. Sheet sharing, Cloud IAM permissions, and API configuration are still required."),
     steps: [
-      tr("Google CloudでDesktop appのOAuthクライアントを作成し、Workspace管理者に必要なら許可してもらう。", "Create a Desktop app OAuth client in Google Cloud and have a Workspace administrator allow it when required."),
-      tr("OAUTH_CLIENT_FILEをダウンロードしたJSONの安全なローカルパスへ置き換え、1つ目のコマンドを実行する。", "Replace OAUTH_CLIENT_FILE with the secure local path to the downloaded JSON, then run the first command."),
-      tr("2つ目のコマンドでquota projectを設定し、認証状態を再確認する。", "Set the quota project with the second command, then recheck authentication.")
+      tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
+      tr("1つ目のコマンドでDriveアクセスを許可し、同じユーザー認証をADCへ書き込む。", "Use the first command to grant Drive access and write the same user credential to ADC."),
+      tr("2つ目のコマンドでCloud APIのquota projectをADCへ設定する。", "Use the second command to configure the Cloud API quota project in ADC."),
+      tr("認証状態を再確認し、必要なAPIが利用可能になったことを確認する。", "Recheck authentication and confirm the required APIs are available.")
     ]
   };
 }
@@ -3597,7 +3584,7 @@ function renderGoogleAuthSettings() {
         <div><strong>${tr("spreadsheets scopeをgcloud既定ADCへ直接追加しない", "Do not add the spreadsheets scope directly to gcloud's default ADC client")}</strong><p>${tr("Googleがこの経路をブロックするため、推奨コマンドはgcloudのDriveアクセス用ログインをADCへ反映します。", "Google blocks that path, so the recommended command writes gcloud's Drive-enabled login to ADC instead.")}</p></div>
       </aside>
       <div class="auth-setup-options">${(auth.setupOptions || []).map((option) => {
-        const copy = authSetupOptionCopy(option);
+        const copy = authSetupOptionCopy();
         return `<article class="auth-setup-option ${option.recommended ? "recommended" : ""}">
           <header><div><strong>${esc(copy.title)}</strong><span>${esc(copy.badge)}</span></div><div class="auth-doc-links"><a href="${esc(option.docsUrl)}" target="_blank" rel="noreferrer">${tr("公式手順", "Official guide")} ${icon("external-link", 12)}</a>${option.securityDocsUrl ? `<a href="${esc(option.securityDocsUrl)}" target="_blank" rel="noreferrer">${tr("鍵の安全指針", "Key security")} ${icon("external-link", 12)}</a>` : ""}</div></header>
           <p>${esc(copy.description)}</p>

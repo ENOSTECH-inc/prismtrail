@@ -104,8 +104,6 @@ gcloud auth application-default set-quota-project YOUR_GOOGLE_CLOUD_PROJECT
 外部API操作をリクエスト送信前に停止します。アクセストークンはブラウザへ返しません。
 `gcloud auth application-default login --scopes=...spreadsheets`をgcloud既定クライアントで
 実行する経路はGoogleにブロックされます。上記のDriveアクセス用ログインを使用してください。
-Workspace管理ポリシーでgcloudアプリも遮断される場合は、管理者が許可したDesktop OAuth
-クライアントを`--client-id-file`へ指定する代替手順を設定画面に表示します。
 
 ### 4. 診断して起動
 

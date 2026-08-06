@@ -31,20 +31,13 @@ test("Google auth readiness identifies a missing Sheets scope", async () => {
   assert.equal(result.features.find((feature) => feature.id === "cloud").status, "ready");
   assert.equal(result.features.find((feature) => feature.id === "sheets").status, "missing");
   const setupOptions = googleAuthSetupOptions("my-project");
-  assert.equal(setupOptions.length, 2);
+  assert.equal(setupOptions.length, 1);
   const userAdcOption = setupOptions[0];
   assert.equal(userAdcOption.id, "user-adc");
   assert.equal(userAdcOption.recommended, true);
   assert.equal(userAdcOption.keyless, true);
   assert.match(userAdcOption.commands[0], /gcloud auth login --enable-gdrive-access --update-adc --force/);
   assert.match(userAdcOption.commands[1], /set-quota-project my-project/);
-  const customOauthFallback = setupOptions[1];
-  assert.equal(customOauthFallback.id, "custom-oauth-adc");
-  assert.equal(customOauthFallback.recommended, false);
-  assert.match(customOauthFallback.commands[0], /--client-id-file=OAUTH_CLIENT_FILE/);
-  assert.match(customOauthFallback.commands[0], /--scopes=.*cloud-platform.*spreadsheets/);
-  assert.match(customOauthFallback.commands[1], /set-quota-project my-project/);
-  assert.equal(customOauthFallback.commands.some((command) => command.includes("impersonate-service-account")), false);
 });
 
 test("Google auth readiness accepts the Drive scope for Sheets", async () => {

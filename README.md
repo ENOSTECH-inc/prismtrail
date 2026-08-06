@@ -125,9 +125,7 @@ that Google account and configure the required IAM permissions and APIs. Known m
 and Google-backed operations are stopped before a request is sent. Access tokens are never
 returned to the browser.
 Google blocks adding the `spreadsheets` scope directly through gcloud's default ADC client. Use the
-Drive-enabled login above. If Workspace policy also blocks the gcloud app, Settings shows a
-fallback using an administrator-approved Desktop OAuth client via `--client-id-file`. Never commit the
-OAuth client JSON.
+Drive-enabled login above.
 
 Prefer user ADC for local use and Workload Identity for hosted deployments.
 

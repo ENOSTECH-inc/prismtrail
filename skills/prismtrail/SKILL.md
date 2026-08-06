@@ -49,19 +49,9 @@ writes one user credential to ADC for Cloud, GCS, Data Agent, and Sheets operati
 accepts the Drive scope granted by `--enable-gdrive-access`; IAM permissions, spreadsheet ACLs, API
 enablement, and quota-project setup are still required.
 
-Do not instruct users to run `gcloud auth application-default login --scopes=...spreadsheets`
-without `--client-id-file`: Google blocks non-Cloud scopes through the default ADC OAuth client. If
-Workspace policy also blocks the recommended gcloud app, use an administrator-approved Desktop OAuth
-client as the fallback:
-
-```bash
-gcloud auth application-default login \
-  --client-id-file=OAUTH_CLIENT_FILE \
-  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/spreadsheets
-gcloud auth application-default set-quota-project GOOGLE_CLOUD_PROJECT
-```
-
-Never commit the OAuth client JSON or place it in the repository.
+Do not instruct users to run `gcloud auth application-default login --scopes=...spreadsheets`:
+Google blocks non-Cloud scopes through the default ADC OAuth client. Keep the PrismTrail recovery
+UI focused on the single Drive-enabled user ADC path above.
 
 Do not substitute `gcloud auth print-access-token` or place credentials in source files.
 Before a Google-backed operation, inspect **Settings → Google authentication** or

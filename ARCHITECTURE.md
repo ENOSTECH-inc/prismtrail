@@ -70,11 +70,10 @@ separately. The shared UI renders failures on every page, links to the Settings 
 panel, and blocks known-incompatible external API mutations before sending them. An unavailable
 token-introspection service is reported as `unknown` and remains non-blocking so a temporary
 diagnostic outage does not disable otherwise valid credentials.
-Because Sheets is outside the Google Cloud scope set, the UI offers two service-account-free local
-paths: the recommended gcloud Drive-enabled user login and an administrator-approved Desktop OAuth
-client fallback. Both produce one user ADC credential. User ADC is not a privilege bypass: Google
-Sheets ACLs, Cloud IAM permissions, Workspace OAuth policy, API enablement, and quota-project setup
-still apply. OAuth client JSON is local authentication input only and must never be committed.
+Because Sheets is outside the Google Cloud scope set, the UI offers one local authentication path:
+the gcloud Drive-enabled user login. It produces one user ADC credential without a service account.
+User ADC is not a privilege bypass: Google Sheets ACLs, Cloud IAM permissions, Workspace OAuth
+policy, API enablement, and quota-project setup still apply.
 
 ## Execution
 

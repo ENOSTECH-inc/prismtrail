@@ -20,7 +20,7 @@ test("shared shell exposes authentication status and recovery settings", () => {
   assert.match(app, /data-copy-auth-command/);
   assert.match(app, /spreadsheets scopeをgcloud既定ADCへ直接追加しない/);
   assert.match(app, /auth-manual-steps/);
-  assert.match(app, /自組織のOAuthクライアントを使用/);
+  assert.doesNotMatch(app, /自組織のOAuthクライアントを使用/);
   assert.doesNotMatch(app, /auth-service-account-email/);
   assert.doesNotMatch(app, /impersonate-service-account/);
   assert.doesNotMatch(app, /<code>gcloud auth application-default login --scopes=/);
@@ -35,7 +35,7 @@ test("Google-backed mutations are guarded by capability before fetch", () => {
 });
 
 test("Auth setup exposes one user ADC path for all Google operations", () => {
-  assert.match(app, /option\?\.id === "user-adc"/);
+  assert.match(app, /function authSetupOptionCopy\(\)/);
   assert.match(app, /ユーザーADC（SA不要）/);
   assert.match(app, /Cloud・Sheets・GCS・Data Agentを/);
   assert.match(app, /Driveアクセス用ログインをADCへ反映/);
