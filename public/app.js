@@ -64,6 +64,7 @@ const state = {
   editorTab: "cases",
   selectedRun: null,
   activeReport: null,
+  pendingSuiteRuns: new Map(),
   selectedReportCaseId: null,
   reportCaseFilter: "all",
   runDetailTab: "summary",
@@ -78,8 +79,7 @@ const state = {
   quickSearchQuery: "",
   quickSearchIndex: 0,
   quickSearchResults: [],
-  sidebarCollapsed: localStorage.getItem("prismtrail-sidebar-collapsed") === "true",
-  busy: false
+  sidebarCollapsed: localStorage.getItem("prismtrail-sidebar-collapsed") === "true"
 };
 
 const app = document.querySelector("#app");
@@ -1980,6 +1980,63 @@ function reportCasePendingHtml(testCase, index, { active = null, isCancelling = 
   </article>`;
 }
 
+function beginSuiteRunNavigation(suite, { caseIds = null } = {}) {
+  const requestedIds = Array.isArray(caseIds) && caseIds.length ? new Set(caseIds) : null;
+  const cases = (suite.cases || []).filter((item) => !requestedIds || requestedIds.has(item.id));
+  const launchId = `launch_${Date.now().toString(36)}_${globalThis.crypto?.randomUUID?.().slice(0, 8) || Math.random().toString(36).slice(2, 10)}`;
+  const report = {
+    id: launchId,
+    suiteId: suite.id,
+    suiteName: suite.name,
+    createdAt: new Date().toISOString(),
+    status: "running",
+    launchPending: true,
+    partialRun: Boolean(requestedIds),
+    selectedCaseIds: requestedIds ? [...requestedIds] : [],
+    suiteSnapshot: { ...suite, cases },
+    caseRuns: [],
+    activeCases: [],
+    summary: {
+      status: "running",
+      total: cases.length,
+      completed: 0,
+      running: 0,
+      concurrency: 30
+    }
+  };
+  state.pendingSuiteRuns.set(launchId, report);
+  location.hash = `#/reports/${launchId}`;
+  return report;
+}
+
+async function completeSuiteRunNavigation(pendingReport, startRun) {
+  try {
+    const run = await startRun();
+    state.pendingSuiteRuns.delete(pendingReport.id);
+    state.suiteRuns = [run, ...state.suiteRuns.filter((item) => item.id !== run.id)];
+    if (location.hash.startsWith(`#/reports/${pendingReport.id}`)) {
+      history.replaceState(null, "", `#/reports/${run.id}`);
+      renderReport(run);
+      refreshIcons();
+    }
+    notify(
+      pendingReport.partialRun
+        ? tr("個別実行を開始しました。", "Started single-case run.")
+        : tr("スイート実行を開始しました。", "Started suite run."),
+      "success"
+    );
+  } catch (error) {
+    pendingReport.status = "failed";
+    pendingReport.summary.status = "failed";
+    pendingReport.launchError = translateApiMessage(error.message);
+    if (location.hash.startsWith(`#/reports/${pendingReport.id}`)) {
+      renderReport(pendingReport);
+      refreshIcons();
+    }
+    notify(error.message);
+  }
+}
+
 async function runSelectedCase() {
   const suite = state.selectedSuite;
   if (!suite?.id) return notify(tr("スイートが見つかりません。", "Suite not found."));
@@ -2005,36 +2062,15 @@ async function runSelectedCase() {
   ) {
     return;
   }
-  const button = document.querySelector("#run-selected-case");
-  try {
-    state.busy = true;
-    if (button) {
-      button.disabled = true;
-      button.innerHTML = `${icon("loader-circle", 15)}${tr("実行画面へ…", "Opening run…")}`;
-      refreshIcons();
-    }
+  const pendingReport = beginSuiteRunNavigation(state.selectedSuite, { caseIds: [testCase.id] });
+  void completeSuiteRunNavigation(pendingReport, async () => {
     await saveSuite({ silent: true });
-    const run = await json(`/api/suites/${suite.id}/run`, {
+    return json(`/api/suites/${suite.id}/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ caseIds: [testCase.id] })
     });
-    state.suiteRuns = [run, ...state.suiteRuns.filter((item) => item.id !== run.id)];
-    notify(
-      tr("個別実行を開始しました。結果画面で完了を待ちます。", "Started single-case run. Waiting for completion on the result screen."),
-      "success"
-    );
-    location.hash = `#/reports/${run.id}`;
-  } catch (error) {
-    notify(error.message);
-    if (button) {
-      button.disabled = false;
-      button.innerHTML = `${icon("play", 15)}${tr("このケースを実行", "Run this case")}`;
-      refreshIcons();
-    }
-  } finally {
-    state.busy = false;
-  }
+  });
 }
 
 function weatherItemList(business, { showEmpty = false } = {}) {
@@ -2629,19 +2665,13 @@ async function runSuite(id) {
         { name: suite.name, count: formatLocaleNumber(suite.cases.length) }
       );
   if (!(await askConfirm(message, { confirmLabel: tr("スイートを実行", "Run suite") }))) return;
-  try {
-    state.busy = true;
+  const pendingReport = beginSuiteRunNavigation(suite);
+  void completeSuiteRunNavigation(pendingReport, async () => {
     if (state.selectedSuite?.id === id) {
       await saveSuite({ silent: true });
     }
-    const run = await json(`/api/suites/${id}/run`, { method: "POST" });
-    state.suiteRuns = [run, ...state.suiteRuns.filter((item) => item.id !== run.id)];
-    location.hash = `#/reports/${run.id}`;
-  } catch (error) {
-    notify(error.message);
-  } finally {
-    state.busy = false;
-  }
+    return json(`/api/suites/${id}/run`, { method: "POST" });
+  });
 }
 
 function bytesToBase64(bytes) {
@@ -4066,6 +4096,8 @@ function systemGradeDistributionHtml(grades) {
 
 function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null } = {}) {
   state.activeReport = report;
+  const launchPending = Boolean(report.launchPending);
+  const launchError = report.launchError || "";
   const isRunning = report.status === "running";
   const isCancelling = report.status === "cancelling";
   const isLive = isRunning || isCancelling;
@@ -4126,7 +4158,9 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       : tr("{title}を処理しています", "Processing {title}", {
         title: report.currentCase?.title || report.activeCases?.[0]?.title || tr("実行準備中", "Preparing run")
       });
-  const finishedHeadline = isCancelled
+  const finishedHeadline = launchError
+    ? tr("実行を開始できませんでした", "Could not start the run")
+    : isCancelled
     ? tr("実行を中止しました", "Run cancelled")
     : isPartial
       ? (report.status === "passed"
@@ -4135,7 +4169,9 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
     : report.status === "passed"
       ? tr("すべてのケースが基準を満たしました", "All cases met the criteria")
       : tr("改善が必要なケースがあります", "Some cases need improvement");
-  const finishedCopy = isCancelled
+  const finishedCopy = launchError
+    ? tr("実行条件を確認して、編集画面からもう一度お試しください。", "Check the run settings and try again from the editor.")
+    : isCancelled
     ? tr("完了済み {completed} 件の結果を保持し、未実行ケースは中止しました。", "Kept {completed} finished results and cancelled remaining cases.", {
       completed: formatLocaleNumber(report.summary?.evaluated || 0)
     })
@@ -4155,12 +4191,12 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
         : sheetExport.status === "skipped"
           ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a></section>`
           : "";
-  const cancelAction = isRunning
+  const cancelAction = isRunning && !launchPending
     ? `<button id="cancel-suite-run" class="button danger" type="button">${icon("square", 15)}${tr("実行を中止", "Stop run")}</button>`
     : isCancelling
       ? `<button class="button danger" type="button" disabled>${icon("square", 15)}${tr("中止中…", "Stopping…")}</button>`
       : "";
-  const actions = `${cancelAction}${reportToolbarActions(report)}`;
+  const actions = launchPending ? "" : `${cancelAction}${reportToolbarActions(report)}`;
   const backHref =
     isPartial && report.suiteId && focusCaseId
       ? `#/suites/${report.suiteId}/edit/${encodeURIComponent(focusCaseId)}`
@@ -4168,8 +4204,13 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   const backLabel = isPartial
     ? tr("ケース編集に戻る", "Back to case editor")
     : tr("テスト実行結果一覧に戻る", "Back to test run results");
+  const launchBackHref = report.suiteId
+    ? `#/suites/${report.suiteId}/edit${isPartial && focusCaseId ? `/${encodeURIComponent(focusCaseId)}` : ""}`
+    : backHref;
   const headerTitle = isPartial && focusCase ? focusCase.title || focusCaseId : suiteRunLabel(report);
-  const headerSubtitle = isPartial
+  const headerSubtitle = launchPending && !launchError
+    ? tr("実行開始を受け付けています", "Starting run")
+    : isPartial
     ? tr("個別実行 · {id}", "Single-case run · {id}", { id: report.id })
     : report.id;
   app.innerHTML = shell(`
@@ -4189,10 +4230,10 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
     <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 正解率", "Business requirement accuracy")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("精度条件未設定", "No accuracy criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
-    ${suiteAiSummaryHtml(report, { isLive })}
+    ${launchError ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("実行開始処理に失敗しました", "Failed to start the run")}</strong><p>${esc(launchError)}</p></div><a class="button secondary" href="${esc(launchBackHref)}">${tr("編集画面に戻る", "Back to editor")}</a></section>` : suiteAiSummaryHtml(report, { isLive })}
     ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
-    <div class="section-row report-workbench-title"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${tr("左の一覧からケースを選択すると、評価・入力・実行結果を同じ順序で確認できます。", "Select a case to review its evaluation, input, and result in a consistent order.")}</p></div><b class="live-updated">${isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
+    <div class="section-row report-workbench-title"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${tr("左の一覧からケースを選択すると、評価・入力・実行結果を同じ順序で確認できます。", "Select a case to review its evaluation, input, and result in a consistent order.")}</p></div><b class="live-updated">${launchError ? tr("実行開始失敗", "Start failed") : launchPending ? tr("実行開始中", "Starting run") : isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
     <section class="report-workbench">
       <aside class="report-case-nav" aria-label="${tr("テストケース一覧", "Test case list")}">
         <div class="report-case-nav-head"><div><strong>${tr("テストケース", "Test cases")}</strong><small>${formatLocaleNumber(caseEntries.length)} ${tr("件", "cases")}</small></div><div class="case-filter" role="group" aria-label="${tr("ケース絞り込み", "Case filter")}"><button type="button" data-report-filter="all" class="${state.reportCaseFilter === "all" ? "active" : ""}">${tr("すべて", "All")}</button><button type="button" data-report-filter="issues" class="${state.reportCaseFilter === "issues" ? "active" : ""}">${tr("要対応", "Issues")}</button></div></div>
@@ -4278,7 +4319,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       }, { overlay: true });
     })
   );
-  if (!isLive && evidenceByCaseId == null && (report.caseRuns || []).some((item) => item.runId)) {
+  if (!launchPending && !isLive && evidenceByCaseId == null && (report.caseRuns || []).some((item) => item.runId)) {
     const limit = isPartial ? 2 : 50;
     loadReportCaseEvidence(report, { limit }).then((map) => {
       if (!location.hash.startsWith(`#/reports/${report.id}`)) return;
@@ -4311,7 +4352,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       if (button) button.disabled = false;
     }
   });
-  if (isLive || sheetExport.status === "exporting" || report.aiSummary?.status === "generating") {
+  if (!launchPending && (isLive || sheetExport.status === "exporting" || report.aiSummary?.status === "generating")) {
     state.reportPollTimer = setTimeout(async () => {
       if (!location.hash.startsWith(`#/reports/${report.id}`)) return;
       try {
@@ -4558,7 +4599,7 @@ async function route() {
       }
       else if (parts[0] === "reports" && parts[1]) {
         const selectedCaseId = parts[2] === "cases" && parts[3] ? decodeURIComponent(parts[3]) : null;
-        const report = await json(`/api/suite-runs/${parts[1]}`);
+        const report = state.pendingSuiteRuns.get(parts[1]) || await json(`/api/suite-runs/${parts[1]}`);
         state.activeReport = report;
         renderReport(report, { selectedCaseId });
       }

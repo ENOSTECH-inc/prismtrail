@@ -60,3 +60,21 @@ test("suite case workspace leads with the selected case and keeps actions in one
   assert.match(app, /selectedCase\?\.title/);
   assert.match(styles, /\.case-action-groups\s*\{[^}]*flex-wrap:\s*nowrap/);
 });
+
+test("single-case and full-suite runs navigate to an optimistic report before storage work", () => {
+  const selectedCaseSource = app.slice(
+    app.indexOf("async function runSelectedCase()"),
+    app.indexOf("function weatherItemList")
+  );
+  const suiteRunSource = app.slice(
+    app.indexOf("async function runSuite(id)"),
+    app.indexOf("function bytesToBase64")
+  );
+
+  assert.ok(selectedCaseSource.indexOf("beginSuiteRunNavigation") < selectedCaseSource.indexOf("await saveSuite"));
+  assert.ok(suiteRunSource.indexOf("beginSuiteRunNavigation") < suiteRunSource.indexOf("await saveSuite"));
+  assert.match(selectedCaseSource, /void completeSuiteRunNavigation/);
+  assert.match(suiteRunSource, /void completeSuiteRunNavigation/);
+  assert.match(app, /state\.pendingSuiteRuns\.get\(parts\[1\]\) \|\| await json/);
+  assert.match(app, /if \(!launchPending && \(isLive \|\| sheetExport\.status/);
+});
