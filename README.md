@@ -120,7 +120,9 @@ gcloud auth application-default login \
 ```
 
 After startup, open **Settings → Google authentication** to preflight ADC and the required
-`cloud-platform` / `spreadsheets` scopes. Known missing capabilities are shown across every page
+`cloud-platform` / `spreadsheets` scopes. For local use without a service account, user ADC with
+the Sheets scope can be used when the target spreadsheet is shared with that Google account.
+GCS and Data Agent operations still require the Cloud scope. Known missing capabilities are shown across every page
 and Google-backed operations are stopped before a request is sent. Access tokens are never
 returned to the browser.
 Google Sheets is outside the Google Cloud scope set. Impersonate a service account and share each

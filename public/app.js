@@ -308,7 +308,9 @@ function googleAuthStatus() {
   return {
     status,
     ready: status === "ready",
-    label: ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
+    label: status === "limited" && state.authReadiness?.setupMode === "sheets-only"
+      ? tr("Sheetsのみ利用可能", "Sheets available only")
+      : ({ ready: tr("認証準備OK", "Auth ready"), limited: tr("scope不足", "Missing scopes"), unavailable: tr("ADC未設定", "ADC unavailable"), unknown: tr("確認できません", "Unable to verify"), checking: tr("確認中", "Checking") })[status],
     detail: status === "ready"
       ? tr("必要scopeを確認済み", "Required scopes verified")
       : state.authReadiness?.message || tr("Google認証を確認しています", "Checking Google authentication")
@@ -3550,7 +3552,20 @@ function resolvedAuthCommand(option, command) {
   );
 }
 
-function authSetupOptionCopy() {
+function authSetupOptionCopy(option) {
+  if (option?.id === "user-adc") {
+    return {
+      title: tr("ユーザーADCでSheetsのみ利用", "Use Sheets with user ADC only"),
+      badge: tr("SA不要", "No service account"),
+      description: tr("自分のGoogleアカウントへ共有されたスプレッドシートを、ユーザーADCで読み書きします。ローカル利用専用です。", "Read and write spreadsheets shared with your Google account using user ADC. Intended for local use only."),
+      caution: tr("対象シートを現在のGoogleアカウントへ共有してください。GCS・Data Agent操作にはCloud scopeが別途必要です。", "Share the target sheet with the current Google account. GCS and Data Agent operations require the Cloud scope separately."),
+      steps: [
+        tr("Googleスプレッドシートを現在のGoogleアカウントへ共有する。", "Share the Google Sheet with your current Google account."),
+        tr("下のコマンドでSheets scope付きのユーザーADCを設定する。", "Run the command below to configure user ADC with the Sheets scope."),
+        tr("認証状態を再確認し、Sheetsが利用可能になったことを確認する。", "Recheck authentication and confirm that Sheets is available.")
+      ]
+    };
+  }
   return {
     title: tr("鍵なしでサービスアカウントをimpersonate", "Keyless service account impersonation"),
     badge: tr("おすすめ", "Recommended"),
@@ -3596,7 +3611,7 @@ function renderGoogleAuthSettings() {
         <div><strong>${tr("サービスアカウント鍵をSecret Managerへ保存しない", "Do not store service account keys in Secret Manager")}</strong><p>${tr("Secret Managerへアクセスする既存IDがあるなら、そのIDから鍵なしImpersonationを利用できます。長期鍵を作成・配布・ローテーションする運用は増やしません。", "If an existing identity can access Secret Manager, use that identity for keyless impersonation instead. Avoid creating, distributing, and rotating another long-lived key.")}</p></div>
       </aside>
       <div class="auth-setup-options">${(auth.setupOptions || []).map((option) => {
-        const copy = authSetupOptionCopy();
+        const copy = authSetupOptionCopy(option);
         return `<article class="auth-setup-option ${option.recommended ? "recommended" : ""}">
           <header><div><strong>${esc(copy.title)}</strong><span>${esc(copy.badge)}</span></div><div class="auth-doc-links"><a href="${esc(option.docsUrl)}" target="_blank" rel="noreferrer">${tr("公式手順", "Official guide")} ${icon("external-link", 12)}</a>${option.securityDocsUrl ? `<a href="${esc(option.securityDocsUrl)}" target="_blank" rel="noreferrer">${tr("鍵の安全指針", "Key security")} ${icon("external-link", 12)}</a>` : ""}</div></header>
           <p>${esc(copy.description)}</p>

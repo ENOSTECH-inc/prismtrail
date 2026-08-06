@@ -57,16 +57,21 @@ Node.js process may call `gcloud auth application-default print-access-token`; i
 to the active non-ADC gcloud user token. Access tokens remain in memory and are never written to
 JSON or sent to the browser.
 
-The server requests the complete application scope set (`cloud-platform` and `spreadsheets`) and
+The server requests the complete application scope set (`cloud-platform` and `spreadsheets`) for
+Cloud operations, while the Sheets connector requests only the Sheets scope. This lets a local
+user ADC credential operate Sheets without a service account when the spreadsheet is shared with
+that user. GCS and Data Agent operations still require the Cloud scope. The server
 exposes a token-free `GET /api/auth/readiness` preflight. It introspects the short-lived token,
 caches only public capability status for one minute, and reports Cloud and Sheets readiness
 separately. The shared UI renders failures on every page, links to the Settings authentication
 panel, and blocks known-incompatible external API mutations before sending them. An unavailable
 token-introspection service is reported as `unknown` and remains non-blocking so a temporary
 diagnostic outage does not disable otherwise valid credentials.
-Because Sheets is outside the Google Cloud scope set, recovery guidance uses keyless impersonation
-of a service account that has been granted access to each spreadsheet. The UI does not present the
-blocked bare-scope flow or a custom Desktop OAuth client flow.
+Because Sheets is outside the Google Cloud scope set, the UI offers two explicit local recovery
+paths: user ADC with the Sheets scope, or keyless impersonation of a service account that has been
+granted access to each spreadsheet. User ADC is not a privilege bypass: Google Sheets ACLs and the
+Sheets OAuth scope are still required. Keyless impersonation remains the recommended path for
+shared or Cloud-backed environments.
 Managed local environments prefer keyless impersonation from user ADC. The design does not create
 downloaded service-account key JSON or store it in Secret Manager. The browser may interpolate a
 validated service-account email into setup commands, but credentials and tokens never enter browser

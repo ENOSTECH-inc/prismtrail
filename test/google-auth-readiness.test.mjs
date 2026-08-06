@@ -31,7 +31,7 @@ test("Google auth readiness identifies a missing Sheets scope", async () => {
   assert.equal(result.features.find((feature) => feature.id === "cloud").status, "ready");
   assert.equal(result.features.find((feature) => feature.id === "sheets").status, "missing");
   const setupOptions = googleAuthSetupOptions("my-project");
-  assert.equal(setupOptions.length, 1);
+  assert.equal(setupOptions.length, 2);
   const serviceAccountOption = setupOptions[0];
   assert.equal(serviceAccountOption.recommended, true);
   assert.equal(serviceAccountOption.keyless, true);
@@ -41,6 +41,25 @@ test("Google auth readiness identifies a missing Sheets scope", async () => {
   assert.equal(serviceAccountOption.commands.some((command) => command.includes("set-quota-project")), false);
   assert.equal(serviceAccountOption.commands.some((command) => command.includes("client-id-file")), false);
   assert.match(serviceAccountOption.securityDocsUrl, /best-practices-for-managing-service-account-keys/);
+  const userAdcOption = setupOptions.find((option) => option.id === "user-adc");
+  assert.equal(userAdcOption.recommended, false);
+  assert.equal(userAdcOption.keyless, true);
+  assert.match(userAdcOption.commands[0], /--scopes=.*spreadsheets/);
+});
+
+test("Google auth readiness falls back to user ADC for Sheets when Cloud scope is unavailable", async () => {
+  const result = await diagnoseGoogleAuth({
+    tokenProvider: async () => { throw new Error("cloud scope unavailable"); },
+    sheetsTokenProvider: async () => ({ token: "sheets-secret", source: "user-adc-sheets" }),
+    tokenInfoProvider: async () => ({ scope: "https://www.googleapis.com/auth/spreadsheets" }),
+    now: fixedNow
+  });
+  assert.equal(result.status, "limited");
+  assert.equal(result.setupMode, "sheets-only");
+  assert.equal(result.features.find((feature) => feature.id === "sheets").status, "ready");
+  assert.equal(result.features.find((feature) => feature.id === "cloud").status, "missing");
+  assert.match(result.message, /Sheets/);
+  assert.equal(JSON.stringify(result).includes("sheets-secret"), false);
 });
 
 test("Google auth readiness handles missing ADC without exposing credentials", async () => {
