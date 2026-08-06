@@ -22,6 +22,11 @@ const MCP_CLIENTS = Object.freeze({
     description: "Claude CodeのHTTP MCPサーバーとして登録する",
     envName: "PRISMTRAIL_MCP_TOKEN"
   },
+  cursor: {
+    label: "Cursor",
+    description: "Cursorのプロジェクト／グローバルMCPサーバーとして登録する",
+    envName: "PRISMTRAIL_MCP_TOKEN"
+  },
   generic: {
     label: "汎用MCPクライアント",
     description: "URLとBearer Tokenを個別に設定する",
@@ -3798,6 +3803,13 @@ function mcpConnectionSetup(clientId, issued, endpoint) {
       verify: "claude mcp list"
     };
   }
+  if (clientId === "cursor") {
+    return {
+      command: "mkdir -p .cursor && $EDITOR .cursor/mcp.json",
+      config: JSON.stringify({ mcpServers: { prismtrail: { url: endpoint, headers: { Authorization: `Bearer \${env:${envName}}` } } } }, null, 2),
+      verify: "cursor-agent mcp list-tools prismtrail"
+    };
+  }
   if (clientId === "generic") {
     return {
       command: `MCP URL: ${endpoint}\nAuthorization: Bearer $${envName}`,
@@ -3817,6 +3829,12 @@ function mcpSkillSetup(clientId) {
     return {
       command: "npm run setup -- skill --install claude",
       note: tr("PrismTrailリポジトリのルートで実行すると、Claude Codeのプロジェクトスキルとして導入されます。", "Run this from the PrismTrail repository root to install the project skill for Claude Code.")
+    };
+  }
+  if (clientId === "cursor") {
+    return {
+      command: "npm run setup -- skill",
+      note: tr("表示されたSKILL.mdをCursorのプロジェクトルールやコンテキスト設定へ追加してください。", "Add the displayed SKILL.md to Cursor's project rules or context configuration.")
     };
   }
   if (clientId === "generic") {
@@ -3849,7 +3867,7 @@ function renderMcpConnectionSetup() {
       <article><span class="mcp-step-number">3</span><div class="mcp-step-content"><strong>${tr("MCPサーバーを登録", "Register the MCP server")}</strong>${terminal("command", setup.command, tr("登録コマンドをコピー", "Copy command"))}</div></article>
       <article><span class="mcp-step-number">4</span><div class="mcp-step-content"><strong>${tr("接続を確認", "Verify the connection")}</strong>${terminal("verify", setup.verify, tr("確認コマンドをコピー", "Copy command"))}</div></article>
     </div>
-    <details class="mcp-config-details"><summary>${tr("設定ファイルに貼り付ける場合", "If you prefer a config file")}</summary><pre id="mcp-config-snippet">${esc(setup.config)}</pre>${copyButton("config", tr("設定をコピー", "Copy config"))}<p>${tr("Codexは ~/.codex/config.toml の [mcp_servers.prismtrail] に貼り付けます。設定後はCodexを再起動してください。", "For Codex, paste this under [mcp_servers.prismtrail] in ~/.codex/config.toml, then restart Codex.")}</p></details>
+    <details class="mcp-config-details"><summary>${tr("設定ファイルに貼り付ける場合", "If you prefer a config file")}</summary><pre id="mcp-config-snippet">${esc(setup.config)}</pre>${copyButton("config", tr("設定をコピー", "Copy config"))}<p>${state.mcpClient === "cursor" ? tr("Cursorはプロジェクトの .cursor/mcp.json または ~/.cursor/mcp.json に貼り付けます。設定後はCursorを再起動してください。", "For Cursor, paste this into .cursor/mcp.json or ~/.cursor/mcp.json, then restart Cursor.") : tr("Codexは ~/.codex/config.toml の [mcp_servers.prismtrail] に貼り付けます。設定後はCodexを再起動してください。", "For Codex, paste this under [mcp_servers.prismtrail] in ~/.codex/config.toml, then restart Codex.")}</p></details>
   </section>`;
 }
 

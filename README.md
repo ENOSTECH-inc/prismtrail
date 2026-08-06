@@ -271,6 +271,10 @@ MCP `connect_google_sheet` requires `spreadsheetUrl`, the PrismTrail-managed `sh
 Listing, checking, suite import/export, and report export enforce the same agent isolation rules as
 the UI and REST API.
 
+To connect Cursor, set the issued token in `PRISMTRAIL_MCP_TOKEN` and paste the generated JSON into
+the project-level `.cursor/mcp.json` or global `~/.cursor/mcp.json`. Verify the connection with
+`cursor-agent mcp list-tools prismtrail`.
+
 The MCP endpoint and token-management UI follow the same local-workstation boundary as the rest of
 PrismTrail. Do not expose the Docker port to an untrusted network. A remote deployment must add TLS
 and authentication/authorization for **all** `/api` routes, not only `/mcp`; otherwise callers could
