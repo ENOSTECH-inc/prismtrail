@@ -33,3 +33,11 @@ test("Sheets Settings only manages connections and delegates workflows to their 
   assert.doesNotMatch(app, /data-export-report=/);
   assert.doesNotMatch(app, /スイートを作成・編集/);
 });
+
+test("Cursor is available as an MCP client with project config guidance", () => {
+  assert.match(app, /cursor:\s*\{/);
+  assert.match(app, /cursor-agent mcp list-tools prismtrail/);
+  assert.match(app, /\.cursor\/mcp\.json/);
+  assert.match(app, /\$\{env:\$\{envName\}\}/);
+  assert.match(app, /clientId === "cursor"[\s\S]*?npm run setup -- skill/);
+});

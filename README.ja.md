@@ -213,6 +213,8 @@ Agent登録と接続確認、単発／スイート実行、実行証跡、評価
 MCPの`connect_google_sheet`は`spreadsheetUrl`、PrismTrail上の管理名`sheetName`、登録済みローカル`agentId`を必須とし、Sheetsの
 一覧・確認・スイート入出力・レポート出力にも同じAgent分離ルールを適用します。
 
+Cursorを接続する場合は、設定画面で発行したトークンを環境変数`PRISMTRAIL_MCP_TOKEN`に設定し、プロジェクトの`.cursor/mcp.json`（または`~/.cursor/mcp.json`）へ表示されたJSONを貼り付けます。Cursor CLIでは`cursor-agent mcp list-tools prismtrail`で接続を確認できます。
+
 MCPトークンを使っても既存REST API全体が認証されるわけではありません。リモート公開時は、
 `/mcp`だけでなく全`/api`へTLSと認証・認可を追加してください。
 
