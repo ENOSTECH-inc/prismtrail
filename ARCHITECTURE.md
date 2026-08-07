@@ -211,6 +211,14 @@ persists the successful `sheetExport` destination back to the Suite Run. Full, p
 single-case Suite Runs all resolve the same Suite binding; a connection for another Suite is never a
 fallback even when both Suites use the same Agent.
 
+The Suite editor can also overwrite its managed `AgentEval_Report` tab from either the newest
+completed Suite Run or the same corrected, latest-result-per-current-case rollup used by PDF export.
+This Suite-scoped manual export revalidates the bound connection, runs under the spreadsheet lock,
+and refreshes the Suite-only catalogs. Exporting the newest stored run uses the normal manual-report
+path and persists its successful `sheetExport` destination. The synthetic per-case rollup and its
+export status are not persisted as a Suite Run, so exporting a current summary never invents or
+rewrites historical execution results.
+
 SQL evidence is normalized across three valid execution paths: a `data.generated_sql` event, a verified `data.matched_query` carrying `exampleQuery.sqlQuery`, or a BigQuery query job. This prevents the verified-query reuse path from failing `requireSql`. Run detail responses also resolve their originating Suite Run and case by stored context or reverse lookup, allowing old and new runs to render the same breadcrumb and back-navigation contract. Completed Suite Runs with the legacy false-negative SQL check are corrected in the API view without mutating the original trace.
 
 ## PDF export

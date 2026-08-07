@@ -463,6 +463,23 @@ test("report exports the same four-section improvement proposal contract", () =>
   assert.equal(row[31], "2026-08-07T01:02:03.000Z");
 });
 
+test("latest-per-case report rows identify the rollup without changing report columns", () => {
+  const rows = reportToRows({
+    id: "latest_results_suite_1",
+    suiteId: "suite_1",
+    suiteName: "回帰テスト",
+    status: "passed",
+    summary: {},
+    caseRuns: [],
+    rollup: { type: "latest_per_case", sourceSuiteRunIds: ["run_1", "run_2"] }
+  });
+  assert.equal(rows[0][0], "PrismTrail | ケース別最新結果レポート");
+  assert.equal(rows[3][0], "ロールアップレポートID");
+  assert.equal(rows[14][0], "集約方式");
+  assert.match(rows[14][1], /元Suite Run 2件/);
+  assert.deepEqual(rows[15], REPORT_DISPLAY_HEADERS);
+});
+
 test("report marks business summaries as unset when no business evaluation ran", () => {
   const rows = reportToRows({
     id: "suite_run_without_business",
