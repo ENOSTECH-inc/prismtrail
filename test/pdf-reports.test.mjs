@@ -75,7 +75,7 @@ const report = {
     total: 1,
     totalDurationMs: 1200,
     totalBytesBilled: 2048,
-    accuracyGrades: { A: 0, B: 1, C: 0, D: 0 }
+    businessGrades: { A: 0, B: 1, C: 0, D: 0 }
   },
   suiteSnapshot: { cases: suite.cases },
   caseRuns: [
