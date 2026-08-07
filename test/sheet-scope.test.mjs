@@ -36,6 +36,19 @@ test("report scope follows the immutable suite snapshot", () => {
   assert.throws(() => assertReportAgentScope(report, "agent_b"), /一致しません/);
 });
 
+test("single-case report falls back to its executed case agent", () => {
+  const report = {
+    partialRun: true,
+    suiteSnapshot: {
+      defaultAgentId: "agent_default",
+      cases: [{ id: "case_1", agentId: "agent_case" }]
+    },
+    caseRuns: [{ caseId: "case_1", agentId: "agent_case" }]
+  };
+  assert.equal(reportAgentId(report), "agent_case");
+  assert.equal(assertReportAgentScope(report, "agent_case"), "agent_case");
+});
+
 test("sheet connection binding enforces one agent to one spreadsheet", () => {
   const connections = [
     { id: "sheet_a", agentId: "agent_a", spreadsheetId: "spreadsheet_a" },

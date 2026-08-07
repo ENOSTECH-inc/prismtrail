@@ -1430,6 +1430,58 @@ async function autoExportSuiteRun(suiteRun) {
   }
 }
 
+async function exportSuiteRunToSheetConnection(connection, suiteRunId) {
+  const storedReport = await suiteRunStore.get(String(suiteRunId || ""));
+  if (isSuiteRunActive(storedReport)) {
+    const error = new Error("実行完了後にGoogle Sheetsへ出力してください。");
+    error.status = 409;
+    throw error;
+  }
+  const report = await correctedSuiteRunView(storedReport);
+  assertReportAgentScope(report, connection.agentId);
+  const catalog = await scopedSheetCatalog(connection.agentId);
+  const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+    const reportResult = await writeReportSheet(connection.spreadsheetId, report);
+    await writeCatalogSheets(connection.spreadsheetId, catalog);
+    return reportResult;
+  });
+  const now = new Date().toISOString();
+  const updatedConnection = await sheetConnectionStore.save({
+    ...connection,
+    title: result.spreadsheet.title,
+    spreadsheetUrl: result.spreadsheet.spreadsheetUrl,
+    authSource: result.spreadsheet.authSource,
+    status: "ready",
+    lastCheckedAt: now,
+    lastExportedAt: now,
+    lastOperation: `report-export:${report.id}`,
+    updatedAt: now
+  });
+  const sheetExport = {
+    status: "succeeded",
+    connectionId: updatedConnection.id,
+    spreadsheetTitle: updatedConnection.title,
+    spreadsheetUrl: updatedConnection.spreadsheetUrl,
+    tabName: result.sheetTitle,
+    rowCount: result.rowCount,
+    completedAt: now,
+    trigger: "manual"
+  };
+  await suiteRunStore.save({
+    ...storedReport,
+    sheetExport,
+    updatedAt: now
+  });
+  return {
+    connection: sheetConnectionProjection(updatedConnection),
+    tabName: result.sheetTitle,
+    rowCount: result.rowCount,
+    suiteRunId: report.id,
+    sheetExport,
+    report: slimSuiteRun({ ...report, sheetExport, updatedAt: now })
+  };
+}
+
 async function createSuiteAiSummary(suiteRun) {
   if (!config.vertexProject) {
     return {
@@ -2448,17 +2500,8 @@ const mcpOperations = {
   },
   async exportReportToSheet({ connectionId, reportId }) {
     const connection = await requireOwnedSheetConnection(connectionId);
-    const report = await correctedSuiteRunView(await suiteRunStore.get(reportId));
-    assertReportAgentScope(report, connection.agentId);
-    const catalog = await scopedSheetCatalog(connection.agentId);
-    const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
-      const reportResult = await writeReportSheet(connection.spreadsheetId, report);
-      await writeCatalogSheets(connection.spreadsheetId, catalog);
-      return reportResult;
-    });
-    const now = new Date().toISOString();
-    const updated = await sheetConnectionStore.save({ ...connection, title: result.spreadsheet.title, spreadsheetUrl: result.spreadsheet.spreadsheetUrl, authSource: result.spreadsheet.authSource, status: "ready", lastCheckedAt: now, lastExportedAt: now, lastOperation: `report-export:${report.id}`, updatedAt: now });
-    return { connection: sheetConnectionProjection(updated), tabName: result.sheetTitle, rowCount: result.rowCount, reportId: report.id };
+    const result = await exportSuiteRunToSheetConnection(connection, reportId);
+    return { ...result, reportId: result.suiteRunId };
   },
   async editSuiteWithAi({ suiteId, messages, applyPatch = false, expectedUpdatedAt }, context) {
     const suite = await suiteStore.get(suiteId);
@@ -3076,34 +3119,11 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && sheetExportReportMatch) {
       const connection = await requireOwnedSheetConnection(sheetExportReportMatch[1]);
       const body = await readJson(request);
-      const report = await correctedSuiteRunView(
-        await suiteRunStore.get(String(body.suiteRunId || ""))
+      sendJson(
+        response,
+        200,
+        await exportSuiteRunToSheetConnection(connection, body.suiteRunId)
       );
-      assertReportAgentScope(report, connection.agentId);
-      const catalog = await scopedSheetCatalog(connection.agentId);
-      const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
-        const reportResult = await writeReportSheet(connection.spreadsheetId, report);
-        await writeCatalogSheets(connection.spreadsheetId, catalog);
-        return reportResult;
-      });
-      const now = new Date().toISOString();
-      const updated = await sheetConnectionStore.save({
-        ...connection,
-        title: result.spreadsheet.title,
-        spreadsheetUrl: result.spreadsheet.spreadsheetUrl,
-        authSource: result.spreadsheet.authSource,
-        status: "ready",
-        lastCheckedAt: now,
-        lastExportedAt: now,
-        lastOperation: `report-export:${report.id}`,
-        updatedAt: now
-      });
-      sendJson(response, 200, {
-        connection: sheetConnectionProjection(updated),
-        tabName: result.sheetTitle,
-        rowCount: result.rowCount,
-        suiteRunId: report.id
-      });
       return;
     }
 

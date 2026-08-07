@@ -57,6 +57,20 @@ test("report actions have distinct Sheets, PDF, and raw JSON treatments", () => 
   assert.doesNotMatch(app, /window\.print\(/);
 });
 
+test("completed full and single-case reports can export through a newly registered Sheet connection", () => {
+  assert.match(app, /caseAgentIds = \[\.\.\.new Set/);
+  assert.match(app, /return caseAgentIds\.length === 1 \? caseAgentIds\[0\] : null/);
+  assert.match(app, /sheetButtonId = "export-report-sheet"/);
+  assert.match(app, /Gシートへ出力/);
+  assert.match(app, /\/export-report/);
+  assert.match(app, /body: JSON\.stringify\(\{ suiteRunId: report\.id \}\)/);
+  assert.match(app, /exported\.report \|\| \{ \.\.\.report, sheetExport: exported\.sheetExport \}/);
+  assert.match(app, /後から登録した接続が見つかりました/);
+  assert.match(app, /sheetButtonId: "export-context-report-sheet"/);
+  assert.match(app, /refreshReportSheetConnections/);
+  assert.match(app, /force: name === "sheetConnections" && refreshReportSheetConnections/);
+});
+
 test("run detail keeps the report header and provides a closeable case context", () => {
   assert.match(app, /case-drilldown-header/);
   assert.match(app, /case-drilldown-inner/);

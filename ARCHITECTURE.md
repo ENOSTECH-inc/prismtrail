@@ -189,6 +189,14 @@ non-authoritative and are never applied automatically.
 
 Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate the one-spreadsheet/one-agent invariant. After the final case, the Run is finalized before external reporting begins. Suite summary and case improvement generation run in parallel; their persisted results are saved before the report Sheet export starts. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The automatic destination is the one ready connection whose `agentId` matches the Suite Run's immutable suite snapshot; recent activity never changes routing. Export or Gemini failure is recorded on the Run without changing the completed evaluation result.
 
+Completed report and case-run detail routes refresh Sheet connection metadata before rendering. If
+automatic writeback was skipped because the matching Agent connection did not exist yet, registering
+that connection later activates a manual “Gシートへ出力” action on the existing result. Manual export
+revalidates report/connection Agent ownership on the server, writes the report and Agent-scoped
+catalogs, and persists the successful `sheetExport` destination back to the Suite Run. Partial
+single-case reports may resolve their target from the one executed `caseRun.agentId` when the reduced
+Suite snapshot itself is ambiguous; reports with multiple effective Agents remain ineligible.
+
 SQL evidence is normalized across three valid execution paths: a `data.generated_sql` event, a verified `data.matched_query` carrying `exampleQuery.sqlQuery`, or a BigQuery query job. This prevents the verified-query reuse path from failing `requireSql`. Run detail responses also resolve their originating Suite Run and case by stored context or reverse lookup, allowing old and new runs to render the same breadcrumb and back-navigation contract. Completed Suite Runs with the legacy false-negative SQL check are corrected in the API view without mutating the original trace.
 
 ## PDF export

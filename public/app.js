@@ -164,7 +164,14 @@ function suiteAgentId(suite = {}) {
 }
 
 function suiteRunAgentId(run = {}) {
-  return suiteAgentId(run.suiteSnapshot || state.suites.find((suite) => suite.id === run.suiteId) || {});
+  const snapshotId = suiteAgentId(
+    run.suiteSnapshot || state.suites.find((suite) => suite.id === run.suiteId) || {}
+  );
+  if (snapshotId) return snapshotId;
+  const caseAgentIds = [...new Set(
+    (run.caseRuns || []).map((item) => String(item.agentId || "").trim()).filter(Boolean)
+  )];
+  return caseAgentIds.length === 1 ? caseAgentIds[0] : null;
 }
 
 function sheetConnectionForAgent(agentId, { readyOnly = false } = {}) {
@@ -1148,19 +1155,58 @@ function navHeader({
     </header>`;
 }
 
-function reportToolbarActions(report, { jsonButtonId = "open-report-json", pdfButtonId = "export-report-pdf" } = {}) {
+function reportToolbarActions(report, {
+  jsonButtonId = "open-report-json",
+  pdfButtonId = "export-report-pdf",
+  sheetButtonId = "export-report-sheet"
+} = {}) {
   if (!report) return "";
   const isLive = ["running", "cancelling"].includes(report.status);
-  const sheet = report.sheetExport?.status === "succeeded" && report.sheetExport?.spreadsheetUrl
-    ? `<a class="button report-action-sheet" href="${esc(report.sheetExport.spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>`
-    : "";
   const proposalsGenerating = ["pending", "generating"].includes(report.improvementProposals?.status);
+  const connection = sheetConnectionForAgent(suiteRunAgentId(report), { readyOnly: true });
+  const spreadsheetUrl = report.sheetExport?.spreadsheetUrl || connection?.spreadsheetUrl || "";
+  const sheet = report.sheetExport?.status === "succeeded" && spreadsheetUrl
+    ? `<a class="button report-action-sheet" href="${esc(spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>`
+    : !isLive && !proposalsGenerating && connection
+      ? `<button id="${esc(sheetButtonId)}" class="button report-action-sheet" type="button">${icon("sheet", 15)}${tr("Gシートへ出力", "Export to Sheets")}</button>`
+      : "";
   const pdfDisabledReason = proposalsGenerating
     ? tr("改善提案の生成完了後にPDFを出力できます", "PDF export is available after proposal generation finishes")
     : isLive
       ? tr("実行完了後にPDFを出力できます", "PDF export is available after the run finishes")
       : "";
   return `${sheet}<button id="${esc(jsonButtonId)}" class="button secondary report-action-json" type="button">${icon("braces", 15)}JSON</button><button id="${esc(pdfButtonId)}" class="button report-action-pdf" type="button" ${isLive || proposalsGenerating ? `disabled title="${esc(pdfDisabledReason)}"` : ""}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button>`;
+}
+
+function bindReportSheetExport(report, {
+  buttonId = "export-report-sheet",
+  onSuccess = () => {}
+} = {}) {
+  document.querySelector(`#${buttonId}`)?.addEventListener("click", async () => {
+    const connection = sheetConnectionForAgent(suiteRunAgentId(report), { readyOnly: true });
+    if (!connection) {
+      notify(tr("対象Data AgentのGoogle Sheets接続がありません。", "No Google Sheets connection is registered for the target Data Agent."));
+      return;
+    }
+    const button = document.querySelector(`#${buttonId}`);
+    await withButtonBusy(button, tr("シート出力中…", "Exporting…"), async () => {
+      try {
+        const exported = await json(`/api/sheets/connections/${connection.id}/export-report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ suiteRunId: report.id })
+        });
+        updateSheetConnection(exported.connection);
+        const updatedReport = exported.report || { ...report, sheetExport: exported.sheetExport };
+        state.suiteRuns = [updatedReport, ...state.suiteRuns.filter((item) => item.id !== updatedReport.id)];
+        state.activeReport = updatedReport;
+        onSuccess(updatedReport);
+        notify(tr("テスト実行結果をGoogle Sheetsへ出力しました。", "Exported the test result to Google Sheets."), "success");
+      } catch (error) {
+        notify(error.message);
+      }
+    }, { overlay: true });
+  });
 }
 
 function openJsonViewer({ title, data }) {
@@ -4203,6 +4249,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       failed: formatLocaleNumber(report.summary?.failed || 0)
     });
   const sheetExport = report.sheetExport || { status: "pending" };
+  const reportSheetConnection = sheetConnectionForAgent(suiteRunAgentId(report), { readyOnly: true });
   const sheetPanel = sheetExport.status === "succeeded"
     ? ""
     : sheetExport.status === "exporting"
@@ -4210,7 +4257,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       : sheetExport.status === "failed"
         ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("Google Sheetsへの自動出力に失敗しました", "Automatic export to Google Sheets failed")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を確認", "Check Sheets integration")}</a></section>`
         : sheetExport.status === "skipped"
-          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a></section>`
+          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${reportSheetConnection ? tr("Google Sheetsへ出力できます", "Ready to export to Google Sheets") : tr("Google Sheetsへの自動出力は行われませんでした", "Automatic export to Google Sheets was skipped")}</strong><p>${reportSheetConnection ? tr("後から登録した接続が見つかりました。画面上部の「Gシートへ出力」から、この結果を出力できます。", "A connection registered later is now available. Use “Export to Sheets” above to export this result.") : esc(translateApiMessage(sheetExport.message))}</p></div>${reportSheetConnection ? "" : `<a class="button secondary" href="#/settings/sheets">${tr("Sheets連携を設定", "Configure Sheets integration")}</a>`}</section>`
           : "";
   const cancelAction = isRunning && !launchPending
     ? `<button id="cancel-suite-run" class="button danger" type="button">${icon("square", 15)}${tr("実行を中止", "Stop run")}</button>`
@@ -4321,6 +4368,12 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
         notify(error.message);
       }
     });
+  });
+  bindReportSheetExport(report, {
+    onSuccess: (updatedReport) => {
+      renderReport(updatedReport, { evidenceByCaseId, selectedCaseId: state.selectedReportCaseId });
+      refreshIcons();
+    }
   });
   document.querySelector("#open-report-json")?.addEventListener("click", () => {
     openJsonViewer({ title: suiteRunLabel(report), data: report });
@@ -4531,7 +4584,11 @@ function renderRunDetail(run) {
         subtitle: suiteRun.id,
         backHref: "#/reports",
         backLabel: tr("テスト実行結果一覧に戻る", "Back to test run results"),
-        actions: reportToolbarActions(suiteRun, { jsonButtonId: "open-context-report-json", pdfButtonId: "export-context-report-pdf" })
+        actions: reportToolbarActions(suiteRun, {
+          jsonButtonId: "open-context-report-json",
+          pdfButtonId: "export-context-report-pdf",
+          sheetButtonId: "export-context-report-sheet"
+        })
       })
     : navHeader({ title, subtitle, backHref, backLabel });
   const contextHeader = context
@@ -4555,6 +4612,15 @@ function renderRunDetail(run) {
     `)}
   `, context ? "reports" : "run", "detail");
   renderEvidenceCharts();
+  if (suiteRun) {
+    bindReportSheetExport(suiteRun, {
+      buttonId: "export-context-report-sheet",
+      onSuccess: () => {
+        renderRunDetail(run);
+        refreshIcons();
+      }
+    });
+  }
   document.querySelector("#open-context-report-json")?.addEventListener("click", () => {
     openJsonViewer({ title: suiteRunLabel(suiteRun), data: suiteRun });
   });
@@ -4607,8 +4673,8 @@ function renderRunDetail(run) {
   }
 }
 
-async function loadSecondaryData(name) {
-  if (secondaryDataReady[name]) return;
+async function loadSecondaryData(name, { force = false } = {}) {
+  if (secondaryDataReady[name] && !force) return;
   if (secondaryDataPromises.has(name)) return secondaryDataPromises.get(name);
   const loaders = {
     suiteRuns: async () => {
@@ -4643,13 +4709,21 @@ async function ensureRouteData(parts) {
   const requirements = [];
   if (parts[0] === "reports" && !parts[1]) requirements.push("suiteRuns");
   if (parts[0] === "agents" && parts[1]) requirements.push("runs");
+  const refreshReportSheetConnections =
+    (parts[0] === "reports" && Boolean(parts[1])) ||
+    (parts[0] === "runs" && Boolean(parts[1]));
+  if (refreshReportSheetConnections) requirements.push("sheetConnections");
   if (parts[0] === "suites" && parts[1] && parts[2] === "edit") {
     requirements.push("suiteRuns", "sheetConnections");
   }
   if (parts[0] === "settings" && (parts[1] || state.settingsTab) === "sheets") {
     requirements.push("sheetConnections");
   }
-  await Promise.all([...new Set(requirements)].map(loadSecondaryData));
+  await Promise.all([...new Set(requirements)].map((name) =>
+    loadSecondaryData(name, {
+      force: name === "sheetConnections" && refreshReportSheetConnections
+    })
+  ));
 }
 
 async function preloadSecondaryData() {
