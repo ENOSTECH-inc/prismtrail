@@ -102,7 +102,7 @@ Suite cases use bounded concurrency to limit rate and cost surprises. Each case 
 
 The suite report shows both the average score and hard pass rate. A Data Agent may return a valid answer while failing a suite contract, which is intentionally reported as a test failure rather than an infrastructure error.
 
-Suite-run history is also indexed by the stable case ID. The Suite editor shows each current case's latest result, latest successful completion, and latest failed/review-required completion. Before a suite run, the server can select either every runnable case or only runnable cases with no historical `passed` result. The server recomputes this scope immediately before launch, so the cost-saving selection does not rely on stale browser state. Draft cases and results belonging to deleted case IDs remain outside the selection.
+Suite-run history is also indexed by the stable case ID. The Suite editor shows each current case's latest result, latest successful completion, and latest failed/review-required completion. Before a suite run, the server can select either every runnable case or only runnable cases with no historical `passed` result. The server recomputes this scope immediately before launch from the same corrected Suite Run views used by reports, including the legacy SQL-evidence false-negative correction, so the cost-saving selection does not rely on stale browser state or contradict the visible result. Draft cases and results belonging to deleted case IDs remain outside the selection.
 
 ## AI editor
 

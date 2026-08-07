@@ -908,6 +908,13 @@ async function correctedSuiteRunView(run) {
   return view;
 }
 
+async function correctedSuiteRunsForRollup(suiteId, suiteRuns = null) {
+  const runs = (suiteRuns || await suiteRunStore.list()).filter((run) => run.suiteId === suiteId);
+  return Promise.all(
+    runs.map((run) => isSuiteRunActive(run) ? run : correctedSuiteRunView(run))
+  );
+}
+
 function sheetConnectionProjection(connection) {
   return {
     schemaVersion: connection.schemaVersion || 1,
@@ -2105,7 +2112,10 @@ async function startSuiteRun(suite, { caseIds, scope = "all", retryOfSuiteRunId 
     throw error;
   }
   const selectedCaseIds = normalizedScope === "without_success"
-    ? suiteCaseIdsWithoutSuccess(suite, suiteRuns)
+    ? suiteCaseIdsWithoutSuccess(
+        suite,
+        await correctedSuiteRunsForRollup(suite.id, suiteRuns)
+      )
     : caseIds;
   if (normalizedScope === "without_success" && !selectedCaseIds.length) {
     const error = new Error("実行可能なケースはすべて成功履歴があります。");
@@ -2361,7 +2371,7 @@ async function pdfRunBodies(report) {
 }
 
 async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
-  const suiteRuns = (await suiteRunStore.list()).filter((run) => run.suiteId === suite.id);
+  const suiteRuns = await correctedSuiteRunsForRollup(suite.id);
   const rollup = buildSuiteCaseResultRollup(suite, suiteRuns);
   if (!rollup.latestRun) {
     const error = new Error("このスイートにはPDF出力できる実行結果がありません。");
@@ -2372,7 +2382,7 @@ async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
   let report;
   let filename;
   if (mode === "latest_run") {
-    report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(rollup.latestRun.id)));
+    report = slimSuiteRun(suiteRuns.find((run) => run.id === rollup.latestRun.id));
     assertPdfProposalReady(report);
     filename = pdfFilename("latest-run", suite.id);
   } else if (mode === "latest_per_case") {
@@ -2381,17 +2391,11 @@ async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
       error.status = 404;
       throw error;
     }
-    const initial = buildLatestCaseResultReport(suite, suiteRuns);
-    const correctedSources = new Map();
-    for (const sourceId of initial.rollup.sourceSuiteRunIds) {
-      const corrected = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(sourceId)));
-      assertPdfProposalReady(corrected);
-      correctedSources.set(sourceId, corrected);
+    report = buildLatestCaseResultReport(suite, suiteRuns);
+    const sourceIds = new Set(report.rollup.sourceSuiteRunIds);
+    for (const source of suiteRuns.filter((run) => sourceIds.has(run.id))) {
+      assertPdfProposalReady(source);
     }
-    report = buildLatestCaseResultReport(
-      suite,
-      suiteRuns.map((run) => correctedSources.get(run.id) || run)
-    );
     filename = pdfFilename("latest-case-results", suite.id);
   } else {
     const error = new Error("PDF出力範囲が不正です。");
@@ -3514,7 +3518,7 @@ const server = createServer(async (request, response) => {
       sendJson(
         response,
         200,
-        buildSuiteCaseResultRollup(suite, await suiteRunStore.list())
+        buildSuiteCaseResultRollup(suite, await correctedSuiteRunsForRollup(suite.id))
       );
       return;
     }
