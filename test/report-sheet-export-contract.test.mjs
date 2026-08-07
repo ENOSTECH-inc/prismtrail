@@ -11,7 +11,8 @@ test("manual report export persists a successful Sheet destination on the Suite 
   );
   assert.match(source, /suiteRunStore\.get\(String\(suiteRunId/);
   assert.match(source, /isSuiteRunActive\(storedReport\)/);
-  assert.match(source, /assertReportAgentScope\(report, connection\.agentId\)/);
+  assert.match(source, /assertConnectionSuiteScope\(connection, report\.suiteId/);
+  assert.match(source, /scopedSheetCatalog\(report\.suiteId\)/);
   assert.match(source, /writeReportSheet\(connection\.spreadsheetId, report\)/);
   assert.match(source, /writeCatalogSheets\(connection\.spreadsheetId, catalog\)/);
   assert.match(source, /trigger: "manual"/);

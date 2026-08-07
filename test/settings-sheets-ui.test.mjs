@@ -11,23 +11,25 @@ test("Google Sheets is a Settings tab instead of a sidebar integration", () => {
   assert.doesNotMatch(app, /href="#\/sheets"/);
 });
 
-test("Google Sheets links and legacy route resolve to Settings", () => {
-  assert.match(app, /href="#\/settings\/sheets"/);
+test("legacy Sheets route resolves to the Settings diagnostic tab", () => {
   assert.match(app, /location\.replace\("#\/settings\/sheets"\)/);
   assert.match(app, /\["auth", "sheets", "storage", "mcp"\]/);
 });
 
-test("Sheets mutations rerender the Settings shell", () => {
+test("Sheets diagnostics rerender the Settings shell after a connection check", () => {
   assert.match(app, /function bindSheets\(\)/);
   assert.doesNotMatch(app, /renderSheets\(\)/);
   assert.match(app, /renderSettings\(\); refreshIcons\(\);/);
 });
 
-test("Sheets Settings only manages connections and delegates workflows to their owning screens", () => {
-  assert.match(app, /id="sheet-connect-form"/);
+test("Sheets Settings is diagnostic-only and delegates connection ownership to Suite detail", () => {
+  assert.doesNotMatch(app, /id="sheet-connect-form"/);
+  assert.doesNotMatch(app, /<select name="agentId" required/);
   assert.match(app, /data-check-sheet=/);
   assert.match(app, /スプレッドシートを開く/);
-  assert.match(app, /テストスイート画面とテスト実行結果画面から更新します/);
+  assert.match(app, /接続先の追加・変更は各テストスイートの詳細画面で行います/);
+  assert.match(app, /Suiteで接続設定/);
+  assert.match(app, /Suite専用の固定タブ/);
   assert.doesNotMatch(app, /data-export-suite=/);
   assert.doesNotMatch(app, /data-import-suite=/);
   assert.doesNotMatch(app, /data-export-report=/);

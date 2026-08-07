@@ -183,7 +183,7 @@ npm run setup -- skill --install claude
 ## Core workflow
 
 1. Register an existing Data Agent with its full resource name.
-2. Create a test suite in the app or export the managed Google Sheet.
+2. Create a test suite in the app and optionally connect its dedicated managed Google Sheet.
 3. Define system requirements and optional natural-language business requirements.
 4. Run the suite and watch cases populate in real time.
 5. Review traces, SQL/job evidence, scores, costs, and business-grade explanations.
@@ -204,20 +204,23 @@ of being converted into a fabricated D grade.
 
 ## Google Sheets
 
-Open **Settings → Google Sheets**, share spreadsheets with the ADC identity, and register each spreadsheet by URL and a PrismTrail-managed
-sheet name, then link one registered Data Agent. Three agents therefore use three isolated spreadsheets. Suite import/export, report
-writeback, automatic export, and catalog synchronization run only when the resource's effective
-agent matches the connection owner. The app owns only:
+Open a Test Suite and use its **Google Sheets integration** action to connect a spreadsheet by URL
+and a PrismTrail-managed sheet name. Connections are one-to-one: each Suite has at most one Sheet,
+and each spreadsheet can be claimed by at most one Suite. Saving the modal activates that Suite's
+Sheet edit and export actions immediately. **Settings → Google authentication** remains the place to
+verify ADC and Sheets readiness; global Settings does not choose a Suite's spreadsheet. The app owns
+only:
 
 - `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including business acceptance conditions and newline-separated provenance URLs
 - `AgentEval_Report` — read-only suite-run summary and case results
-- `AgentEval_DataAgents` — the single Data Agent that owns the spreadsheet
-- `AgentEval_Suites` — suites that use only that owning Data Agent
+- `AgentEval_DataAgents` — the registered Data Agents referenced by the bound Suite
+- `AgentEval_Suites` — the one Suite bound to the spreadsheet
 
 The app clears and rewrites those fixed tabs while preserving their sheet IDs. Mixed-agent suites
-and imports or exports targeting a different agent are rejected server-side. It does not modify
-user-created tabs. Imported values are validated server-side; hidden columns and pasted data are
-not trusted.
+are supported without exposing other Suites: the server derives the Agent catalog from the bound
+Suite. Imports update only the bound Suite, and exports or reports targeting a different Suite are
+rejected server-side. It does not modify user-created tabs. Imported values are validated
+server-side; hidden columns and pasted data are not trusted.
 
 ## Storage
 
@@ -252,9 +255,9 @@ suite editing; and storage inspection/switching. Storage switching requires its 
 plus a five-minute, token-bound preview confirmation. Source data is never deleted. Delete, purge,
 run-cancel, arbitrary HTTP, and shell tools are intentionally not registered.
 
-MCP `connect_google_sheet` requires `spreadsheetUrl`, the PrismTrail-managed `sheetName`, and the registered local `agentId`.
-Listing, checking, suite import/export, and report export enforce the same agent isolation rules as
-the UI and REST API.
+MCP `connect_google_sheet` requires `spreadsheetUrl`, the PrismTrail-managed `sheetName`, and the
+registered local `suiteId`. Listing, checking, suite import/export, and report export enforce the
+same one-Suite/one-spreadsheet isolation rules as the UI and REST API.
 
 To connect Cursor, set the issued token in `PRISMTRAIL_MCP_TOKEN` and paste the generated JSON into
 the project-level `.cursor/mcp.json` or global `~/.cursor/mcp.json`. Verify the connection with
