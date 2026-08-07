@@ -65,6 +65,15 @@ test("suite editor separates run history from version history and groups actions
   assert.match(app, /case-action-groups/);
   assert.match(app, /case-export-menu/);
   assert.match(styles, /\.case-export-menu\s*\{/);
+  assert.match(app, /id="export-latest-results-pdf"/);
+  assert.match(app, /function askLatestResultsPdfScope\(/);
+  assert.match(app, /latest_per_case/);
+  assert.match(app, /latest_run/);
+  assert.match(app, /case-nav-result-history/);
+  assert.match(app, /case-result-history/);
+  assert.match(app, /最終成功/);
+  assert.match(app, /最終失敗/);
+  assert.match(styles, /\.suite-result-rollup-summary\s*\{/);
 });
 
 test("suite case workspace leads with the selected case and keeps actions in one row", () => {
@@ -95,6 +104,15 @@ test("single-case and full-suite runs navigate to an optimistic report before st
   assert.match(app, /if \(!launchPending && \(isLive \|\| sheetExport\.status/);
   assert.match(app, /const saveState = document\.querySelector\("#save-state"\)/);
   assert.match(app, /if \(saveState\) saveState\.textContent/);
+});
+
+test("suite run modal supports all runnable and never-successful scopes", () => {
+  assert.match(app, /function askSuiteRunScope\(/);
+  assert.match(app, /value="all"/);
+  assert.match(app, /value="without_success"/);
+  assert.match(app, /成功履歴がないものだけ実行/);
+  assert.match(app, /body: JSON\.stringify\(\{ scope \}\)/);
+  assert.match(styles, /\.suite-action-scope-dialog\s*\{/);
 });
 
 test("response-failure reruns reuse optimistic report navigation", () => {

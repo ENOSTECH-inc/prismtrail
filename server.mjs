@@ -24,6 +24,11 @@ import { diagnoseGoogleAuth, googleAuthSetupOptions } from "./lib/google-auth-re
 import { normalizeMessages, summarizeRun } from "./lib/normalize.mjs";
 import { buildSuiteSummaryContext, normalizeSuiteAiSummary } from "./lib/suite-ai-summary.mjs";
 import {
+  buildLatestCaseResultReport,
+  buildSuiteCaseResultRollup,
+  suiteCaseIdsWithoutSuccess
+} from "./lib/suite-result-rollup.mjs";
+import {
   buildCaseImprovementContext,
   failedCaseImprovementProposal,
   improvementEligibility,
@@ -901,6 +906,13 @@ async function correctedSuiteRunView(run) {
     };
   }
   return view;
+}
+
+async function correctedSuiteRunsForRollup(suiteId, suiteRuns = null) {
+  const runs = (suiteRuns || await suiteRunStore.list()).filter((run) => run.suiteId === suiteId);
+  return Promise.all(
+    runs.map((run) => isSuiteRunActive(run) ? run : correctedSuiteRunView(run))
+  );
 }
 
 function sheetConnectionProjection(connection) {
@@ -2081,8 +2093,15 @@ async function processSuiteRun(suite, suiteRun, abortController) {
   return suiteRun;
 }
 
-async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryReason = null } = {}) {
-  const activeRun = (await suiteRunStore.list()).find(
+async function startSuiteRun(suite, { caseIds, scope = "all", retryOfSuiteRunId = null, retryReason = null } = {}) {
+  const normalizedScope = String(scope || "all").trim().toLowerCase();
+  if (!["all", "without_success"].includes(normalizedScope)) {
+    const error = new Error("実行範囲が不正です。");
+    error.status = 400;
+    throw error;
+  }
+  const suiteRuns = await suiteRunStore.list();
+  const activeRun = suiteRuns.find(
     (run) => run.suiteId === suite.id && isSuiteRunActive(run)
   );
   if (activeRun) {
@@ -2092,20 +2111,32 @@ async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryRe
     error.status = 409;
     throw error;
   }
-  const runSuite = selectSuiteCasesForRun(suite, caseIds);
+  const selectedCaseIds = normalizedScope === "without_success"
+    ? suiteCaseIdsWithoutSuccess(
+        suite,
+        await correctedSuiteRunsForRollup(suite.id, suiteRuns)
+      )
+    : caseIds;
+  if (normalizedScope === "without_success" && !selectedCaseIds.length) {
+    const error = new Error("実行可能なケースはすべて成功履歴があります。");
+    error.status = 409;
+    throw error;
+  }
+  const runSuite = selectSuiteCasesForRun(suite, selectedCaseIds);
   // フル実行では下書きをスナップショットに含めない（実行対象のみ）
   const suiteForRun =
-    Array.isArray(caseIds) && caseIds.length
+    Array.isArray(selectedCaseIds) && selectedCaseIds.length
       ? runSuite
       : {
           ...runSuite,
           cases: (runSuite.cases || []).filter((item) => isCaseRunnable(item))
         };
   const suiteRun = await createSuiteRun(suiteForRun);
-  if (Array.isArray(caseIds) && caseIds.length) {
+  if (Array.isArray(selectedCaseIds) && selectedCaseIds.length) {
     suiteRun.selectedCaseIds = suiteForRun.cases.map((item) => item.id);
     suiteRun.partialRun = true;
   }
+  suiteRun.runScope = normalizedScope;
   if (retryOfSuiteRunId) suiteRun.retryOfSuiteRunId = retryOfSuiteRunId;
   if (retryReason) suiteRun.retryReason = retryReason;
   await suiteRunStore.save(suiteRun);
@@ -2316,6 +2347,68 @@ async function normalizeValidateAndSaveSuite(input, existing, context, method) {
     updateMethod: method,
     updatedBy: `mcp:${context.token.id}`
   });
+}
+
+function assertPdfProposalReady(report) {
+  if (["pending", "generating"].includes(report.improvementProposals?.status)) {
+    const error = new Error("改善提案の生成完了後にPDFを出力してください。");
+    error.status = 409;
+    throw error;
+  }
+}
+
+async function pdfRunBodies(report) {
+  const runsById = {};
+  for (const item of report.caseRuns || []) {
+    if (!item.runId || runsById[item.runId]) continue;
+    try {
+      runsById[item.runId] = await runStore.get(item.runId);
+    } catch {
+      // Evidence is best-effort; the persisted evaluation still exports.
+    }
+  }
+  return runsById;
+}
+
+async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
+  const suiteRuns = await correctedSuiteRunsForRollup(suite.id);
+  const rollup = buildSuiteCaseResultRollup(suite, suiteRuns);
+  if (!rollup.latestRun) {
+    const error = new Error("このスイートにはPDF出力できる実行結果がありません。");
+    error.status = 404;
+    throw error;
+  }
+
+  let report;
+  let filename;
+  if (mode === "latest_run") {
+    report = slimSuiteRun(suiteRuns.find((run) => run.id === rollup.latestRun.id));
+    assertPdfProposalReady(report);
+    filename = pdfFilename("latest-run", suite.id);
+  } else if (mode === "latest_per_case") {
+    if (!rollup.summary.resultCaseCount) {
+      const error = new Error("現在のテストケースに対応する実行結果がありません。");
+      error.status = 404;
+      throw error;
+    }
+    report = buildLatestCaseResultReport(suite, suiteRuns);
+    const sourceIds = new Set(report.rollup.sourceSuiteRunIds);
+    for (const source of suiteRuns.filter((run) => sourceIds.has(run.id))) {
+      assertPdfProposalReady(source);
+    }
+    filename = pdfFilename("latest-case-results", suite.id);
+  } else {
+    const error = new Error("PDF出力範囲が不正です。");
+    error.status = 400;
+    throw error;
+  }
+
+  const bytes = await renderSuiteRunPdf({
+    report,
+    agents: await agentStore.list(),
+    runsById: await pdfRunBodies(report)
+  });
+  return { bytes, filename, report };
 }
 
 async function renderReportPdfResource({ reportId, caseId, scope = "all" }) {
@@ -3409,10 +3502,35 @@ const server = createServer(async (request, response) => {
         202,
         slimSuiteRun(
           await startSuiteRun(await suiteStore.get(suiteRunMatch[1]), {
-            caseIds: body?.caseIds
+            caseIds: body?.caseIds,
+            scope: body?.scope
           })
         )
       );
+      return;
+    }
+
+    const suiteResultRollupMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/result-rollup$/
+    );
+    if (request.method === "GET" && suiteResultRollupMatch) {
+      const suite = await suiteStore.get(suiteResultRollupMatch[1]);
+      sendJson(
+        response,
+        200,
+        buildSuiteCaseResultRollup(suite, await correctedSuiteRunsForRollup(suite.id))
+      );
+      return;
+    }
+
+    const suiteLatestResultsPdfMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/latest-results-pdf$/
+    );
+    if (request.method === "GET" && suiteLatestResultsPdfMatch) {
+      const suite = await suiteStore.get(suiteLatestResultsPdfMatch[1]);
+      const mode = String(url.searchParams.get("mode") || "latest_per_case").trim().toLowerCase();
+      const result = await renderLatestSuiteResultsPdf(suite, mode);
+      sendPdf(response, result.bytes, result.filename);
       return;
     }
 

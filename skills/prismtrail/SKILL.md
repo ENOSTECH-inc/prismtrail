@@ -99,10 +99,12 @@ npm start
   original Slack message, ticket, document, or other source URL when it explains why the case was
   added or changed. The links round-trip through the UI, MCP, Sheets, history, and case-spec PDFs.
 - Prefer suite evaluation over ad-hoc `/api/runs` when the user cares about pass/fail criteria.
-- From the suite editor, **このケースを実行** runs one case via `POST /api/suites/:id/run` with `{ "caseIds": [...] }`, then opens the evaluation detail (`#/reports/:id`) with a live skeleton until results appear; **スイートを実行** still runs the full suite and opens the same report page.
+- From the suite editor, **このケースを実行** runs one case via `POST /api/suites/:id/run` with `{ "caseIds": [...] }`, then opens the evaluation detail (`#/reports/:id`) with a live skeleton until results appear. **スイートを実行** opens a scope modal for all runnable cases or only runnable cases with no historical success; the server recomputes the latter from stored Suite Runs immediately before launch.
+- The Suite editor shows latest pass/failure timestamps by stable case ID. **最新結果でPDF出力** can download the newest Suite Run or a read-only rollup containing each current case's latest stored result. Never-run cases stay visible as unevaluated.
 - For stakeholder handoff, prefer PDF export over screenshots:
   - Suite editor → **このケースをPDF** / **全ケースをPDF** (case specification, TestRail case-print style)
   - Evaluation report → **PDF出力** (full run: Runs Summary cover with status pie + case index, then case details)
+  - Suite editor → **最新結果でPDF出力** (latest one-run report or latest-result-per-case rollup)
   - Single-case / partial runs export **case detail only** (no suite cover page)
   - Endpoints live under `/api/suites/:id/export/*-pdf` and `/api/suite-runs/:id/export/pdf`
   - Generation uses pdfme on the server with Noto Sans JP; SVG pie/bar charts are embedded for at-a-glance status
