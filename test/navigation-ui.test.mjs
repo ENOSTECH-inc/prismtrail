@@ -44,6 +44,19 @@ test("knowledge stays out of the active client surface without erasing stored id
   assert.match(app, /state\.selectedSuite\.knowledgeSourceIds \|\| \[\]/);
 });
 
+test("initial UI render does not block on heavy GCS-backed history collections", () => {
+  const blockingStart = initializeSource.indexOf("const [config, authReadiness, agents, suites, storageConfig]");
+  const blockingEnd = initializeSource.indexOf("Object.assign(state", blockingStart);
+  const blockingBootstrap = initializeSource.slice(blockingStart, blockingEnd);
+  assert.ok(blockingStart >= 0 && blockingEnd > blockingStart);
+  assert.doesNotMatch(blockingBootstrap, /\/api\/suite-runs/);
+  assert.doesNotMatch(blockingBootstrap, /\/api\/runs/);
+  assert.doesNotMatch(blockingBootstrap, /\/api\/sheets\/connections/);
+  assert.ok(initializeSource.indexOf("await route()") < initializeSource.indexOf("preloadSecondaryData()"));
+  assert.match(app, /async function ensureRouteData\(parts\)/);
+  assert.match(app, /suiteRuns: async \(\) => \{[\s\S]*?state\.suiteRuns = payload\.suiteRuns \|\| \[\];[\s\S]*?renderSuites\(\);/);
+});
+
 test("suite editor separates run history from version history and groups actions", () => {
   assert.match(app, /data-editor-tab="runs"/);
   assert.match(app, /実行履歴/);
