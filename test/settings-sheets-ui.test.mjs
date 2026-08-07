@@ -16,20 +16,21 @@ test("legacy Sheets route resolves to the Settings diagnostic tab", () => {
   assert.match(app, /\["auth", "sheets", "storage", "mcp"\]/);
 });
 
-test("Sheets diagnostics rerender the Settings shell after a connection check", () => {
+test("Sheets Settings rerenders the shell after Suite-scoped actions", () => {
   assert.match(app, /function bindSheets\(\)/);
   assert.doesNotMatch(app, /renderSheets\(\)/);
   assert.match(app, /renderSettings\(\); refreshIcons\(\);/);
 });
 
-test("Sheets Settings is diagnostic-only and delegates connection ownership to Suite detail", () => {
+test("Sheets Settings only exposes Suite-scoped binding status and delegates ownership to Suite detail", () => {
   assert.doesNotMatch(app, /id="sheet-connect-form"/);
   assert.doesNotMatch(app, /<select name="agentId" required/);
-  assert.match(app, /data-check-sheet=/);
-  assert.match(app, /スプレッドシートを開く/);
-  assert.match(app, /接続先の追加・変更は各テストスイートの詳細画面で行います/);
-  assert.match(app, /Suiteで接続設定/);
-  assert.match(app, /Suite専用の固定タブ/);
+  assert.match(app, /テストスイート別のGシート紐付け/);
+  assert.match(app, /const suiteBindings = state\.suites/);
+  assert.match(app, /新規紐付け/);
+  assert.doesNotMatch(app, /Google Sheets接続の診断/);
+  assert.doesNotMatch(app, /Suite専用の固定タブ/);
+  assert.doesNotMatch(app, /<section class="sheet-grid"/);
   assert.doesNotMatch(app, /data-export-suite=/);
   assert.doesNotMatch(app, /data-import-suite=/);
   assert.doesNotMatch(app, /data-export-report=/);
