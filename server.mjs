@@ -8,6 +8,7 @@ import {
   downloadGcsObject,
   fetchJobDetails,
   generateAgentPlan,
+  generateCaseImprovementProposal,
   generateSuiteRunAiSummary,
   generateSuiteAssistantReply,
   getDataAgent,
@@ -22,6 +23,13 @@ import {
 import { diagnoseGoogleAuth, googleAuthSetupOptions } from "./lib/google-auth-readiness.mjs";
 import { normalizeMessages, summarizeRun } from "./lib/normalize.mjs";
 import { buildSuiteSummaryContext, normalizeSuiteAiSummary } from "./lib/suite-ai-summary.mjs";
+import {
+  buildCaseImprovementContext,
+  failedCaseImprovementProposal,
+  improvementEligibility,
+  improvementTargetCaseIds,
+  normalizeCaseImprovementProposal
+} from "./lib/improvement-proposals.mjs";
 import {
   appendContextEvaluation,
   composeEvaluation,
@@ -213,6 +221,8 @@ const mcpTokenManager = new McpTokenManager(mcpTokenPath);
 const withSpreadsheetLock = createKeyedAsyncMutex();
 /** Serialize connection binding changes so one-agent/one-sheet remains atomic in this process. */
 const withSheetConnectionBindingLock = createAsyncMutex();
+/** Reject duplicate user-triggered Gemini regeneration for the same persisted report. */
+const activeImprovementRegenerations = new Set();
 /** In-process abort controllers for live suite runs (lost on process restart). */
 const suiteRunControllers = new Map();
 const port = Number(process.env.PORT || 4318);
@@ -1317,7 +1327,7 @@ async function createSuiteRun(suite) {
     throw new Error("実行可のテストケースがありません。ケースのステータスを「実行可」にしてください。");
   }
   const suiteRun = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: objectId("suite_run"),
     suiteId: suite.id,
     suiteName: suite.name,
@@ -1330,6 +1340,7 @@ async function createSuiteRun(suite) {
     activeCases: [],
     sheetExport: { status: "pending" },
     aiSummary: { status: "pending" },
+    improvementProposals: { status: "pending", targetCaseIds: [] },
     caseRuns: [],
     responseReceipt: {
       total: suite.cases.length,
@@ -1444,6 +1455,197 @@ async function createSuiteAiSummary(suiteRun) {
       model: config.vertexModel,
       promptTemplateVersion: "suite-summary-v1"
     };
+  }
+}
+
+function prepareImprovementGeneration(suiteRun) {
+  const targetCaseIds = improvementTargetCaseIds(suiteRun);
+  const targetSet = new Set(targetCaseIds);
+  suiteRun.caseRuns = (suiteRun.caseRuns || []).map((caseRun) => {
+    const eligibility = improvementEligibility(caseRun);
+    if (!targetSet.has(caseRun.caseId)) {
+      return {
+        ...caseRun,
+        improvementProposal: {
+          schemaVersion: 1,
+          status: "not_applicable",
+          eligible: false,
+          eligibilityReason: eligibility.reason,
+          caseId: caseRun.caseId,
+          agentId: caseRun.agentId || null,
+          sourceOverallScore: eligibility.score,
+          sourceOverallGrade: eligibility.grade
+        }
+      };
+    }
+    return {
+      ...caseRun,
+      improvementProposal: {
+        schemaVersion: 1,
+        status: "generating",
+        eligible: true,
+        eligibilityReason: eligibility.reason,
+        caseId: caseRun.caseId,
+        agentId: caseRun.agentId || null,
+        sourceOverallScore: eligibility.score,
+        sourceOverallGrade: eligibility.grade,
+        startedAt: new Date().toISOString()
+      }
+    };
+  });
+  suiteRun.improvementProposals = targetCaseIds.length
+    ? { status: "generating", targetCaseIds, startedAt: new Date().toISOString() }
+    : { status: "not_applicable", targetCaseIds: [], completedAt: new Date().toISOString() };
+  return targetCaseIds;
+}
+
+async function createSuiteImprovementProposals(suiteRun, targetCaseIds) {
+  if (!targetCaseIds.length) {
+    return { status: "not_applicable", targetCaseIds: [], cases: [], completedAt: new Date().toISOString() };
+  }
+  const targetSet = new Set(targetCaseIds);
+  const targets = (suiteRun.caseRuns || []).filter((caseRun) => targetSet.has(caseRun.caseId));
+  if (!config.vertexProject) {
+    const message = "Vertex AIプロジェクトが設定されていないため、改善提案を生成できませんでした。";
+    return {
+      status: "failed",
+      targetCaseIds,
+      cases: targets.map((caseRun) => failedCaseImprovementProposal(caseRun, message)),
+      message,
+      completedAt: new Date().toISOString()
+    };
+  }
+
+  try {
+    const suiteCases = new Map(
+      (suiteRun.suiteSnapshot?.cases || []).map((testCase) => [testCase.id || testCase.caseId, testCase])
+    );
+    const agents = new Map((await agentStore.list()).map((agent) => [agent.id, agent]));
+    const targetAgentIds = [...new Set(targets.map((caseRun) =>
+      caseRun.agentId || suiteCases.get(caseRun.caseId)?.agentId || suiteRun.suiteSnapshot?.defaultAgentId
+    ).filter(Boolean))];
+    const agentConfigurations = new Map(
+      await mapWithConcurrency(targetAgentIds, 5, async (agentId) => {
+        const agent = agents.get(agentId);
+        if (!agent?.resourceName) return [agentId, null];
+        try {
+          const remote = await getDataAgent({
+            resourceName: agent.resourceName,
+            billingProject: agent.projectId || config.billingProject
+          });
+          return [agentId, remote.agent];
+        } catch {
+          return [agentId, null];
+        }
+      })
+    );
+    const runs = new Map(
+      await mapWithConcurrency(targets, 5, async (caseRun) => {
+        if (!caseRun.runId) return [caseRun.caseId, null];
+        try {
+          return [caseRun.caseId, await runStore.get(caseRun.runId)];
+        } catch {
+          return [caseRun.caseId, null];
+        }
+      })
+    );
+
+    const cases = await mapWithConcurrency(targets, 3, async (caseRun) => {
+      const testCase = suiteCases.get(caseRun.caseId) || {};
+      const agentId = caseRun.agentId || testCase.agentId || suiteRun.suiteSnapshot?.defaultAgentId || null;
+      try {
+        const generated = await generateCaseImprovementProposal({
+          project: config.vertexProject,
+          location: config.vertexLocation,
+          model: config.vertexModel,
+          context: buildCaseImprovementContext({
+            suiteRun,
+            caseRun,
+            run: runs.get(caseRun.caseId) || {},
+            agentConfiguration: agentConfigurations.get(agentId) || null
+          })
+        });
+        return normalizeCaseImprovementProposal(generated, {
+          caseRun: { ...caseRun, agentId },
+          audit: generated.audit
+        });
+      } catch (error) {
+        return failedCaseImprovementProposal(
+          { ...caseRun, agentId },
+          `Geminiによる改善提案の生成に失敗しました: ${error.message}`
+        );
+      }
+    });
+    const succeeded = cases.filter((item) => item.status === "succeeded").length;
+    return {
+      status: succeeded === cases.length ? "succeeded" : succeeded ? "partial" : "failed",
+      targetCaseIds,
+      generatedCaseCount: succeeded,
+      failedCaseCount: cases.length - succeeded,
+      cases,
+      completedAt: new Date().toISOString(),
+      provider: "vertex-ai",
+      model: config.vertexModel,
+      promptTemplateVersion: "case-improvement-v1"
+    };
+  } catch (error) {
+    const message = `改善提案の準備に失敗しました: ${error.message}`;
+    return {
+      status: "failed",
+      targetCaseIds,
+      generatedCaseCount: 0,
+      failedCaseCount: targets.length,
+      cases: targets.map((caseRun) => failedCaseImprovementProposal(caseRun, message)),
+      message,
+      completedAt: new Date().toISOString(),
+      provider: "vertex-ai",
+      model: config.vertexModel,
+      promptTemplateVersion: "case-improvement-v1"
+    };
+  }
+}
+
+function applySuiteImprovementProposals(suiteRun, result) {
+  const byCaseId = new Map((result.cases || []).map((item) => [item.caseId, item]));
+  suiteRun.caseRuns = (suiteRun.caseRuns || []).map((caseRun) =>
+    byCaseId.has(caseRun.caseId)
+      ? { ...caseRun, improvementProposal: byCaseId.get(caseRun.caseId) }
+      : caseRun
+  );
+  const { cases: _cases, ...summary } = result;
+  suiteRun.improvementProposals = summary;
+}
+
+async function regenerateSuiteImprovementProposals(reportId) {
+  if (activeImprovementRegenerations.has(reportId)) {
+    const error = new Error("このレポートの改善提案はすでに再生成中です。");
+    error.status = 409;
+    throw error;
+  }
+  activeImprovementRegenerations.add(reportId);
+  try {
+    const suiteRun = await suiteRunStore.get(reportId);
+    if (isSuiteRunActive(suiteRun)) {
+      const error = new Error("実行完了後に改善提案を生成してください。");
+      error.status = 409;
+      throw error;
+    }
+    const targetCaseIds = prepareImprovementGeneration(suiteRun);
+    suiteRun.sheetExport = { status: "pending" };
+    suiteRun.updatedAt = new Date().toISOString();
+    await suiteRunStore.save(suiteRun);
+    const result = await createSuiteImprovementProposals(suiteRun, targetCaseIds);
+    applySuiteImprovementProposals(suiteRun, result);
+    suiteRun.updatedAt = new Date().toISOString();
+    await suiteRunStore.save(suiteRun);
+    suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.updatedAt };
+    await suiteRunStore.save(suiteRun);
+    suiteRun.sheetExport = await autoExportSuiteRun(suiteRun);
+    suiteRun.updatedAt = new Date().toISOString();
+    await suiteRunStore.save(suiteRun);
+    return suiteRun;
+  } finally {
+    activeImprovementRegenerations.delete(reportId);
   }
 }
 
@@ -1726,7 +1928,8 @@ async function processSuiteRun(suite, suiteRun, abortController) {
   suiteRun.summary.concurrency = concurrency;
   if (wasCancelled) suiteRun.summary.status = "cancelled";
   suiteRun.aiSummary = { status: "generating", startedAt: suiteRun.completedAt };
-  suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.completedAt };
+  const improvementTargetIds = wasCancelled ? [] : prepareImprovementGeneration(suiteRun);
+  suiteRun.sheetExport = { status: "pending" };
   await suiteRunStore.save(suiteRun);
   const existingSuite = await suiteStore.get(suite.id).catch(() => null);
   if (existingSuite) {
@@ -1736,10 +1939,17 @@ async function processSuiteRun(suite, suiteRun, abortController) {
       updatedAt: suiteRun.completedAt
     });
   }
-  [suiteRun.aiSummary, suiteRun.sheetExport] = await Promise.all([
+  const [aiSummary, improvementResult] = await Promise.all([
     createSuiteAiSummary(suiteRun),
-    autoExportSuiteRun(suiteRun)
+    createSuiteImprovementProposals(suiteRun, improvementTargetIds)
   ]);
+  suiteRun.aiSummary = aiSummary;
+  applySuiteImprovementProposals(suiteRun, improvementResult);
+  suiteRun.updatedAt = new Date().toISOString();
+  await suiteRunStore.save(suiteRun);
+  suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.updatedAt };
+  await suiteRunStore.save(suiteRun);
+  suiteRun.sheetExport = await autoExportSuiteRun(suiteRun);
   suiteRun.updatedAt = new Date().toISOString();
   await suiteRunStore.save(suiteRun);
   return suiteRun;
@@ -1777,6 +1987,21 @@ async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryRe
         suiteRun.activeCases = [];
         suiteRun.completedAt = now;
         suiteRun.updatedAt = now;
+        suiteRun.aiSummary = {
+          status: "failed",
+          message: abortController.signal.aborted
+            ? "実行が中止されたため、AIコメントを生成していません。"
+            : "実行処理が中断されたため、AIコメントを生成していません。",
+          completedAt: now
+        };
+        suiteRun.improvementProposals = {
+          status: abortController.signal.aborted ? "not_applicable" : "failed",
+          targetCaseIds: [],
+          message: abortController.signal.aborted
+            ? "実行が中止されたため、改善提案を生成していません。"
+            : "実行処理が中断されたため、改善提案を生成していません。",
+          completedAt: now
+        };
         suiteRun.sheetExport = {
           status: "skipped",
           message: abortController.signal.aborted
@@ -3095,6 +3320,11 @@ const server = createServer(async (request, response) => {
     const reportPdfMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/export\/pdf$/);
     if (request.method === "GET" && reportPdfMatch) {
       const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportPdfMatch[1])));
+      if (["pending", "generating"].includes(report.improvementProposals?.status)) {
+        const error = new Error("改善提案の生成完了後にPDFを出力してください。");
+        error.status = 409;
+        throw error;
+      }
       const caseId = String(url.searchParams.get("caseId") || "").trim();
       const caseIds = caseId
         ? [caseId]
@@ -3146,6 +3376,17 @@ const server = createServer(async (request, response) => {
     const aiSummaryMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/ai-summary$/);
     if (request.method === "POST" && aiSummaryMatch) {
       sendJson(response, 200, slimSuiteRun(await regenerateSuiteAiSummary(aiSummaryMatch[1])));
+      return;
+    }
+    const improvementProposalsMatch = url.pathname.match(
+      /^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/improvement-proposals$/
+    );
+    if (request.method === "POST" && improvementProposalsMatch) {
+      sendJson(
+        response,
+        200,
+        slimSuiteRun(await regenerateSuiteImprovementProposals(improvementProposalsMatch[1]))
+      );
       return;
     }
     const rerunResponseFailuresMatch = url.pathname.match(

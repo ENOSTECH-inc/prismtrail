@@ -85,6 +85,18 @@ const report = {
       status: "passed",
       runId: "run_1",
       runSummary: { durationMs: 1200, totalBytesBilled: 2048 },
+      improvementProposal: {
+        status: "succeeded",
+        eligible: true,
+        model: "gemini-2.5-flash",
+        generatedAt: "2026-08-07T01:02:03.000Z",
+        sections: {
+          systemPrompt: { summary: "期間指定を明確化する", actions: [{ proposal: "対象月の解釈規則を追加", rationale: "月の曖昧さ", expectedEffect: "誤集計を防ぐ" }] },
+          referenceQuery: { summary: "月次集計SQLの例を追加", actions: [] },
+          sourceMart: { summary: "対象月キーを追加", actions: [] },
+          other: { summary: "回帰テストを追加", actions: [] }
+        }
+      },
       evaluation: {
         score: 90,
         system: { status: "passed", score: 100, checks: [{ passed: true, label: "SQLを生成" }] },
@@ -142,7 +154,7 @@ test("builds case-spec inputs with checklist and system lines", () => {
 
 test("builds suite-run cover plus case pages, or a single case page", () => {
   const batch = buildSuiteRunInputs({ report, agents, runsById: { run_1: runFixture } });
-  assert.equal(batch.length, 6); // cover + index + overview + trace + business + response
+  assert.equal(batch.length, 7); // cover + index + overview + trace + business + response + improvement
   assert.ok(batch[0].summaryTable);
   assert.match(batch[0].heroMetric, /%/);
   assert.match(batch[0].statusPieSvg, /<svg/);
@@ -187,6 +199,16 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.equal(batch[3]._pageKind, "case-trace");
   assert.equal(batch[4]._pageKind, "case-detail");
   assert.equal(batch[5]._pageKind, "case-evidence");
+  assert.equal(batch[6]._pageKind, "case-improvement");
+  assert.equal(batch[6].improvementLabel0, "① システムプロンプト");
+  assert.match(batch[6].improvementBody0, /対象月の解釈規則を追加/);
+  assert.match(batch[6].improvementDisclaimer, /評価・合否にも影響しません/);
+  assert.equal(batch[6].referenceLabel0, "データエージェント");
+  assert.deepEqual(batch[6]._referenceLinks, [
+    dataAgentResourceUrl(agents[0].resourceName),
+    suiteEditorUrl("suite_demo"),
+    suiteRunReportUrl("suite_run_1")
+  ]);
   assert.match(batch[4].businessTable, /適合|一部適合|不適合/);
   assert.equal(batch[2].systemChecksHead0, "判定");
   assert.equal(batch[4].businessHeadReason, "判定根拠");
@@ -217,8 +239,8 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.match(batch[3].executedSqlBody, /SELECT SUM\(sales\)/);
   assert.equal(batch[3].executedSqlBody.match(/SELECT/g)?.length, 1);
   assert.match(batch[2].systemPieSvg, /<svg/);
-  assert.equal(batch[0].pageLabel, "1 / 6 ページ");
-  assert.equal(batch[5].pageLabel, "6 / 6 ページ");
+  assert.equal(batch[0].pageLabel, "1 / 7 ページ");
+  assert.equal(batch[6].pageLabel, "7 / 7 ページ");
   assert.equal(batch[5].sectionStep, "セクション 3 / 3");
   assert.equal(batch[5].sectionName, "回答・データ・チャート");
 
@@ -228,7 +250,7 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
     agents,
     runsById: { run_1: runFixture }
   });
-  assert.equal(one.length, 4);
+  assert.equal(one.length, 5);
   assert.equal(one[0].summaryTable, undefined);
   assert.equal(one[0].docType, "");
   assert.equal(one[1]._pageKind, "case-trace");
@@ -266,7 +288,7 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
       }
     }
   });
-  assert.equal(partial.length, 4);
+  assert.equal(partial.length, 5);
   assert.equal(partial[0].summaryTable, undefined);
   assert.match(partial[1].executedSqlBody, /GROUP BY month/);
   assert.equal(partial[2]._pageKind, "case-detail");
@@ -276,6 +298,7 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.match(partial[3].sectionResponseChart, /チャート/);
   assert.match(partial[0].systemTable, /適合|不適合/);
   assert.equal(partial[3].responseDataHead0, "month");
+  assert.equal(partial[4]._pageKind, "case-improvement");
 });
 
 test("paginates long acceptance criteria before PDF rendering", () => {
@@ -323,11 +346,12 @@ test("paginates long acceptance criteria before PDF rendering", () => {
     },
     agents
   });
-  assert.equal(reportInputs.length, 6);
+  assert.equal(reportInputs.length, 7);
   assert.match(reportInputs[4].sectionBusiness, /1 \/ 2/);
   assert.match(reportInputs[5].sectionBusiness, /2 \/ 2/);
   assert.equal(reportInputs[5]._businessItems[0].criterion, "判定項目 4");
   assert.equal(reportInputs[5]._businessItems[1].criterion, "判定項目 5");
+  assert.equal(reportInputs[6]._pageKind, "case-improvement");
 });
 
 test("renders zero-evaluation and skipped cases without a misleading pass rate", () => {
@@ -369,6 +393,7 @@ test("renders zero-evaluation and skipped cases without a misleading pass rate",
 
 test("omits the business page when business requirements are not configured", () => {
   const noBusinessReport = structuredClone(report);
+  delete noBusinessReport.caseRuns[0].improvementProposal;
   noBusinessReport.caseRuns[0].evaluation.business = {
     status: "not_configured",
     grade: null,
@@ -444,7 +469,7 @@ test("renderSuiteRunPdf returns a PDF and rejects live runs", async () => {
   assert.match(latin1, /geminidataanalytics\.googleapis\.com\/v1\/projects\/demo/);
   assert.match(latin1, /127\.0\.0\.1:4318\/#\/suites\/suite_demo\/edit/);
   const document = await PDFDocument.load(pdf);
-  assert.equal(document.getPageCount(), 6);
+  assert.equal(document.getPageCount(), 7);
   const pages = document.getPages();
   const overviewAnnotations = pages[2].node.lookup(PDFName.of("Annots"));
   const overviewGoTo = Array.from({ length: overviewAnnotations.size() }, (_, index) =>
