@@ -3503,53 +3503,11 @@ function renderSheetsSettings() {
       </article>`;
     })
     .join("");
-  const connections = state.sheetConnections
-    .map((connection) => {
-      const suite = state.suites.find((item) => item.id === connection.suiteId);
-      return `
-      <article class="sheet-card" data-sheet-card="${esc(connection.id)}">
-        <header>
-          <span class="sheet-mark">${icon("sheet", 20)}</span>
-          <div><h2>${esc(connection.sheetName || connection.title)}</h2><small>${tr("Google上の名前", "Google title")}: ${esc(connection.title)}</small><strong class="sheet-agent-name">${icon("layers-3", 13)}${esc(suite?.name || tr("対象Suiteなし", "Suite unavailable"))}</strong><code>${esc(connection.spreadsheetId)}</code></div>
-          ${statusPill(connection.status)}
-        </header>
-        <div class="sheet-meta">
-          <span><b>認証</b>${esc(String(connection.authSource || "ADC").toUpperCase())}</span>
-          <span><b>最終確認</b>${fmtDate(connection.lastCheckedAt)}</span>
-          <span><b>最終入出力</b>${fmtDate(connection.lastImportedAt || connection.lastExportedAt)}</span>
-        </div>
-        <footer>
-          ${suite ? `<a class="text-link" href="#/suites/${encodeURIComponent(suite.id)}/edit/sheets">${icon("settings-2", 13)}${tr("Suiteで接続設定", "Configure in suite")}</a>` : `<span class="muted-copy">${tr("対象Suiteが見つかりません", "Target suite not found")}</span>`}
-          <button class="text-button" data-check-sheet="${esc(connection.id)}" data-sheet-suite="${esc(connection.suiteId || "")}" ${suite ? "" : "disabled"}>${icon("refresh-cw", 13)}${tr("接続を再確認", "Recheck connection")}</button>
-          <a class="text-link" href="${esc(connection.spreadsheetUrl)}" target="_blank" rel="noreferrer">スプレッドシートを開く ${icon("external-link", 13)}</a>
-        </footer>
-      </article>`;
-    })
-    .join("");
-  const authNotice = googleAuthStatus().ready || googleAuthStatus().status === "checking" ? "" : `
-    <section class="sheets-auth">
-      <div class="sheets-auth-copy">${icon("triangle-alert", 24)}<div><strong>${tr("Google認証を確認してください", "Review Google authentication")}</strong><p>${esc(googleAuthStatus().detail)}</p></div></div>
-      <a class="button bright small" href="#/settings/auth">${icon("key-round", 13)}${tr("認証方式とscopeを確認", "Review authentication method and scopes")}</a>
-    </section>`;
   return `
-    <section class="settings-panel sheets-settings-head">
-      <div class="settings-section-head">
-        <div><h2>${tr("Google Sheets接続の診断", "Google Sheets connection diagnostics")}</h2><p>${tr("接続先の追加・変更は各テストスイートの詳細画面で行います。ここでは認証状態と登録済み接続を確認できます。", "Add or change destinations from each test suite. Use this page to review authentication and existing connections.")}</p></div>
-      </div>
-    </section>
     <section class="settings-panel suite-sheet-binding-panel">
       <div class="settings-section-head"><div><h2>${tr("テストスイート別のGシート紐付け", "Google Sheets bindings by test suite")}</h2><p>${tr("Gシートの主体はData Agentではなくテストスイートです。各Suiteの現在の紐付け状況を確認し、新規紐付けや接続先変更を行えます。", "Test suites own their Google Sheets destinations. Review each Suite's binding and connect or change it here.")}</p></div></div>
       <div class="suite-sheet-binding-list">${suiteBindings || empty(tr("テストスイートがありません", "No test suites"), tr("先にテストスイートを作成してください。", "Create a test suite first."))}</div>
     </section>
-    ${authNotice}
-    <section class="sheet-connect-panel sheet-diagnostics-panel">
-      <div class="format-note">
-        <span>${icon("lock-keyhole", 17)}</span>
-        <div><strong>${tr("Suite専用の固定タブ", "Suite-scoped managed tabs")}</strong><p><code>${esc(state.sheetFormat?.suiteTab || "AgentEval_TestSuite")}</code> / <code>${esc(state.sheetFormat?.reportTab || "AgentEval_Report")}</code> ${tr("は対象Suiteの定義と最新の実行結果を保持します。", "hold the target suite definition and latest run result.")} <code>${esc(state.sheetFormat?.agentsTab || "AgentEval_DataAgents")}</code> ${tr("にはSuiteが参照するData Agentだけを書き出します。", "contains only the Data Agents referenced by the suite.")}</p></div>
-        <b>${tr("スキーマ", "Schema")} v${state.sheetFormat?.schemaVersion || 1}</b>
-      </div>
-    </section>
-    <section class="sheet-grid">${connections || empty("接続先がありません", "ADCアカウントへ共有済みのGoogleスプレッドシートを追加してください。")}</section>
   `;
 }
 
