@@ -304,6 +304,29 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.equal(partial[4]._pageKind, "case-improvement");
 });
 
+test("latest-per-case rollup PDF identifies the rollup and links case pages to source runs", () => {
+  const rollupReport = structuredClone(report);
+  rollupReport.id = "latest_results_suite_demo";
+  rollupReport.reportTitle = "デモスイート｜ケース別最新結果";
+  rollupReport.rollup = { type: "latest_per_case", sourceSuiteRunIds: ["suite_run_source"] };
+  rollupReport.caseRuns[0].rollupSource = {
+    suiteRunId: "suite_run_source",
+    completedAt: "2026-08-07T05:00:00.000Z"
+  };
+  const inputs = buildSuiteRunInputs({
+    report: rollupReport,
+    agents,
+    runsById: { run_1: runFixture }
+  });
+  assert.equal(inputs[0].docType, "ケース別最新結果サマリー");
+  assert.match(inputs[0].title, /ケース別最新結果/);
+  assert.equal(inputs[0].referenceLabel2, "集約方式");
+  assert.match(inputs[0].referenceValue2, /ケースIDごとの最新保存結果/);
+  assert.equal(inputs[2]._referenceLinks[2], suiteRunReportUrl("suite_run_source"));
+  assert.equal(pdfFilename("latest-run", "suite_demo"), "prismtrail-suite-suite_demo-latest-run.pdf");
+  assert.equal(pdfFilename("latest-case-results", "suite_demo"), "prismtrail-suite-suite_demo-latest-case-results.pdf");
+});
+
 test("paginates long acceptance criteria before PDF rendering", () => {
   const manyCriteria = Array.from({ length: 6 }, (_, index) => `受入基準 ${index + 1}`);
   const specInputs = buildCaseSpecInputs({

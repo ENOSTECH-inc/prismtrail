@@ -102,6 +102,8 @@ Suite cases use bounded concurrency to limit rate and cost surprises. Each case 
 
 The suite report shows both the average score and hard pass rate. A Data Agent may return a valid answer while failing a suite contract, which is intentionally reported as a test failure rather than an infrastructure error.
 
+Suite-run history is also indexed by the stable case ID. The Suite editor shows each current case's latest result, latest successful completion, and latest failed/review-required completion. Before a suite run, the server can select either every runnable case or only runnable cases with no historical `passed` result. The server recomputes this scope immediately before launch, so the cost-saving selection does not rely on stale browser state. Draft cases and results belonging to deleted case IDs remain outside the selection.
+
 ## AI editor
 
 The UI supports an Algolia-style command palette (`Ctrl/⌘K`, or the search control in the sidebar / case list) powered by Fuse.js. It fuzzy-searches cases (title, id, prompt), suites, reports, agents, and main pages, with keyboard navigation and recent selections.
@@ -223,6 +225,7 @@ PDF evaluation summaries use A/B/C/D as the primary display for system, business
 
 - Case specs: `GET /api/suites/:id/export/case-pdf?caseId=` (one case) and `GET /api/suites/:id/export/cases-pdf` (all cases as one multi-page PDF)
 - Suite-run reports: `GET /api/suite-runs/:id/export/pdf` (Runs Summary cover + case detail pages). Partial / single-case runs (`partialRun` or `?caseId=`) omit the cover and export case detail only. Every case is labeled as a test-case execution report with its case ID and JST start time, and includes a dedicated paginated execution-trace page containing the full user prompt and de-duplicated SQL body. Case pages also include the result banner, system/business check tables, and a short evidence preview (answer / sample table / chart note).
+- Suite latest-result reports: `GET /api/suites/:id/export/latest-results-pdf?mode=latest_run` exports the newest completed Suite Run as-is; `mode=latest_per_case` builds a read-only synthetic report containing the newest stored result for every current case ID. Never-run current cases remain explicit non-evaluated rows. Each detail page links to its original source Suite Run, and the synthetic report is not persisted.
 
 Live (`running` / `cancelling`) suite runs return `409`. The UI exposes download buttons on the suite case editor and the evaluation report detail page; browser print remains available as a fallback.
 

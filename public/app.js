@@ -44,6 +44,7 @@ const state = {
   suiteRuns: [],
   runs: [],
   sheetConnections: [],
+  suiteResultRollup: null,
   sheetFormat: null,
   suitePasteOpen: false,
   suitePasteText: "",
@@ -140,6 +141,17 @@ function relatedUrlLinks(urls = []) {
 
 function fmtDate(value) {
   return value ? formatLocaleDate(value, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : tr("未実行", "Never");
+}
+
+async function loadSuiteResultRollup(suiteId) {
+  if (!suiteId) return null;
+  const rollup = await json(`/api/suites/${encodeURIComponent(suiteId)}/result-rollup`);
+  if (state.selectedSuite?.id === suiteId) state.suiteResultRollup = rollup;
+  return rollup;
+}
+
+function caseResultHistory(caseId) {
+  return state.suiteResultRollup?.cases?.find((item) => item.caseId === caseId) || null;
 }
 
 /** Display name for a suite evaluation run: 実行時刻_テストスイート名 */
@@ -329,6 +341,91 @@ function askPdfExportScope({ totalCount = 0, failedCount = 0 } = {}) {
       const selected = dialog.querySelector('input[name="pdf-scope"]:checked')?.value || "all";
       finish(selected === "failed" ? "failed" : "all");
     };
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    refreshIcons();
+    dialog.querySelector('button[value="confirm"]')?.focus();
+  });
+}
+
+function askSuiteRunScope({ runnableCount = 0, withoutSuccessCount = 0 } = {}) {
+  return new Promise((resolve) => {
+    document.querySelector("#suite-run-scope-dialog")?.remove();
+    const preferWithoutSuccess = withoutSuccessCount > 0;
+    const dialog = document.createElement("dialog");
+    dialog.id = "suite-run-scope-dialog";
+    dialog.className = "suite-action-scope-dialog";
+    dialog.innerHTML = `
+      <form method="dialog" class="suite-action-scope-shell">
+        <header><span class="eyebrow">RUN SCOPE</span><h2>${tr("スイートの実行範囲", "Suite run scope")}</h2><p>${tr("BigQuery利用料金を抑えるため、成功履歴がないケースだけを選べます。", "To control BigQuery costs, you can run only cases without a successful history.")}</p></header>
+        <div class="suite-action-scope-options" role="radiogroup">
+          <label class="suite-action-scope-option">
+            <input type="radio" name="suite-run-scope" value="all" ${preferWithoutSuccess ? "" : "checked"}>
+            <span><strong>${tr("実行可能なものを全件実行", "Run all runnable cases")}</strong><small>${tr("実行可 {count} 件をすべて再実行します", "Run all {count} runnable cases", { count: formatLocaleNumber(runnableCount) })}</small></span>
+          </label>
+          <label class="suite-action-scope-option ${withoutSuccessCount ? "" : "is-disabled"}">
+            <input type="radio" name="suite-run-scope" value="without_success" ${preferWithoutSuccess ? "checked" : ""} ${withoutSuccessCount ? "" : "disabled"}>
+            <span><strong>${tr("成功履歴がないものだけ実行", "Run cases without success")}</strong><small>${withoutSuccessCount
+              ? tr("成功したことがない実行可 {count} 件を実行します", "Run {count} runnable cases that have never passed", { count: formatLocaleNumber(withoutSuccessCount) })
+              : tr("すべての実行可能ケースに成功履歴があります", "Every runnable case has a successful history")}</small></span>
+          </label>
+        </div>
+        <aside class="suite-action-cost-note">${icon("badge-dollar-sign", 16)}<span>${tr("実行するとData Agent・BigQueryの利用料金が発生する可能性があります。", "Data Agent and BigQuery usage charges may apply.")}</span></aside>
+        <footer><button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button><button value="confirm" class="button bright" type="submit">${icon("play", 15)}${tr("実行を開始", "Start run")}</button></footer>
+      </form>`;
+    document.body.appendChild(dialog);
+    const finish = (value) => {
+      dialog.removeEventListener("close", onClose);
+      dialog.remove();
+      resolve(value);
+    };
+    const onClose = () => finish(
+      dialog.returnValue === "confirm"
+        ? dialog.querySelector('input[name="suite-run-scope"]:checked')?.value || "all"
+        : null
+    );
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    refreshIcons();
+    dialog.querySelector('button[value="confirm"]')?.focus();
+  });
+}
+
+function askLatestResultsPdfScope(rollup = {}) {
+  return new Promise((resolve) => {
+    document.querySelector("#suite-latest-pdf-dialog")?.remove();
+    const hasLatestRun = Boolean(rollup.latestRun?.id);
+    const resultCount = Number(rollup.summary?.resultCaseCount || 0);
+    const totalCount = Number(rollup.summary?.totalCaseCount || 0);
+    const dialog = document.createElement("dialog");
+    dialog.id = "suite-latest-pdf-dialog";
+    dialog.className = "suite-action-scope-dialog";
+    dialog.innerHTML = `
+      <form method="dialog" class="suite-action-scope-shell">
+        <header><span class="eyebrow">LATEST RESULTS</span><h2>${tr("最新結果でPDF出力", "Export latest results PDF")}</h2><p>${tr("1回の実行結果、またはケースIDごとの最新結果を選べます。", "Choose one recent run or the latest stored result for each case ID.")}</p></header>
+        <div class="suite-action-scope-options" role="radiogroup">
+          <label class="suite-action-scope-option ${hasLatestRun ? "" : "is-disabled"}">
+            <input type="radio" name="suite-pdf-scope" value="latest_run" ${hasLatestRun && !resultCount ? "checked" : ""} ${hasLatestRun ? "" : "disabled"}>
+            <span><strong>${tr("直近のテスト実行", "Latest test run")}</strong><small>${hasLatestRun ? tr("{date} の実行をそのまま出力", "Export the run from {date}", { date: fmtDate(rollup.latestRun.completedAt) }) : tr("実行履歴がありません", "No run history")}</small></span>
+          </label>
+          <label class="suite-action-scope-option ${resultCount ? "" : "is-disabled"}">
+            <input type="radio" name="suite-pdf-scope" value="latest_per_case" ${resultCount ? "checked" : "disabled"}>
+            <span><strong>${tr("テストケースごとの最新結果", "Latest result per case")}</strong><small>${tr("現在の {total} ケースに、保存済み最新結果 {results} 件をロールアップ", "Roll up {results} stored results across the current {total} cases", { total: formatLocaleNumber(totalCount), results: formatLocaleNumber(resultCount) })}</small></span>
+          </label>
+        </div>
+        <footer><button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button><button value="confirm" class="button report-action-pdf" type="submit">${icon("file-down", 15)}${tr("PDFをダウンロード", "Download PDF")}</button></footer>
+      </form>`;
+    document.body.appendChild(dialog);
+    const finish = (value) => {
+      dialog.removeEventListener("close", onClose);
+      dialog.remove();
+      resolve(value);
+    };
+    const onClose = () => finish(
+      dialog.returnValue === "confirm"
+        ? dialog.querySelector('input[name="suite-pdf-scope"]:checked')?.value || null
+        : null
+    );
     dialog.addEventListener("close", onClose);
     dialog.showModal();
     refreshIcons();
@@ -1426,6 +1523,7 @@ function caseNav(suite) {
             tr("Data Agent未選択", "No Data Agent selected");
           const thinking = item.thinkingMode === "THINKING" ? "THINKING" : "FAST";
           const caseStatus = item.status === "draft" ? "draft" : "active";
+          const resultHistory = caseResultHistory(item.id);
           const promptPreview = String(item.prompt || "").trim();
           const flags = [
             system.requireSql !== false
@@ -1448,6 +1546,7 @@ function caseNav(suite) {
             <span class="case-nav-mode${thinking === "THINKING" ? " thinking" : ""}">${thinking}</span>
             ${promptPreview ? `<span class="case-nav-prompt">${esc(promptPreview)}</span>` : `<span class="case-nav-prompt muted">${tr("プロンプト未設定", "No prompt yet")}</span>`}
             ${flags ? `<div class="case-nav-flags">${flags}</div>` : ""}
+            <div class="case-nav-result-history"><span class="success">${tr("最終成功", "Last pass")} <b>${esc(fmtDate(resultHistory?.latestSuccessAt))}</b></span><span class="failure">${tr("最終失敗", "Last failure")} <b>${esc(fmtDate(resultHistory?.latestFailureAt))}</b></span></div>
           </button>`;
         })
         .join("")}
@@ -1458,10 +1557,11 @@ function caseNav(suite) {
 function caseForm(item, index) {
   const system = item.expectations?.systemRequirements || item.expectations || {};
   const business = item.expectations?.businessRequirements || {};
+  const resultHistory = caseResultHistory(item.id);
   return `<article class="case-editor" data-case-index="${index}">
     <div class="case-titlebar">
       <span class="case-number">${String(index + 1).padStart(2, "0")}</span>
-      <div><input class="plain-title" data-field="title" value="${esc(item.title)}" aria-label="${tr("テストケース名", "Test case name")}"><small>${esc(state.agents.find((a) => a.id === item.agentId)?.displayName || tr("Data Agent未選択", "No Data Agent selected"))}</small></div>
+      <div><input class="plain-title" data-field="title" value="${esc(item.title)}" aria-label="${tr("テストケース名", "Test case name")}"><small>${esc(state.agents.find((a) => a.id === item.agentId)?.displayName || tr("Data Agent未選択", "No Data Agent selected"))}</small><div class="case-result-history"><span class="success">${icon("circle-check", 13)}<small>${tr("最終成功", "Last pass")}</small><strong>${esc(fmtDate(resultHistory?.latestSuccessAt))}</strong></span><span class="failure">${icon("circle-x", 13)}<small>${tr("最終失敗", "Last failure")}</small><strong>${esc(fmtDate(resultHistory?.latestFailureAt))}</strong></span><span><small>${tr("直近結果", "Latest result")}</small><strong>${resultHistory?.latestStatus ? statusPill(resultHistory.latestStatus) : "—"}</strong></span></div></div>
       <button class="icon-button danger" data-remove-case="${index}" aria-label="${tr("ケースを削除", "Delete case")}">${icon("trash-2")}</button>
     </div>
     <div class="field-grid">
@@ -1571,6 +1671,9 @@ function renderEditor() {
   const onCasesTab = state.editorTab === "cases";
   const connectedSheet = sheetConnectionForSuite(suite.id, { readyOnly: true }) || sheetConnectionForSuite(suite.id);
   const sheetReady = connectedSheet?.status === "ready";
+  const resultRollup = state.suiteResultRollup?.suiteId === suite.id ? state.suiteResultRollup : null;
+  const latestResultCount = Number(resultRollup?.summary?.resultCaseCount || 0);
+  const hasLatestPdfResult = Boolean(latestResultCount || resultRollup?.latestRun?.id);
   const sheetShortcut = sheetReady
     ? `<button id="open-linked-sheet" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("同期してGシートを開く", "Sync and open Sheets")}${icon("external-link", 13)}</button>`
     : `<button class="button secondary" type="button" data-open-suite-sheet>${icon(connectedSheet ? "triangle-alert" : "link", 15)}${connectedSheet ? tr("Sheets接続を確認", "Review Sheets connection") : tr("Google Sheetsを連携", "Connect Google Sheets")}</button>`;
@@ -1633,6 +1736,7 @@ function renderEditor() {
           <div id="case-detail">${selectedCase ? caseForm(selectedCase, state.selectedCaseIndex) : empty(tr("ケースがありません", "No test cases"), tr("上の作成方法から、最初のケースを追加してください。", "Choose a method above to add your first case."))}</div>`;
   const suiteRunHistory = state.suiteRuns.filter((run) => run.suiteId === suite.id);
   const runsPanel = `<section class="suite-run-history">
+    <section class="suite-result-rollup-summary"><div><small>${tr("成功履歴あり", "With pass history")}</small><strong>${formatLocaleNumber(resultRollup?.summary?.passedHistoryCaseCount || 0)}</strong></div><div><small>${tr("成功履歴なし", "Without pass history")}</small><strong>${formatLocaleNumber(resultRollup?.summary?.withoutSuccessCaseCount || 0)}</strong></div><div><small>${tr("最新結果あり", "With latest result")}</small><strong>${formatLocaleNumber(latestResultCount)} / ${formatLocaleNumber(resultRollup?.summary?.totalCaseCount || suite.cases.length)}</strong></div></section>
     <div class="suite-run-history-head"><div><span class="eyebrow">${tr("TEST RUN HISTORY", "TEST RUN HISTORY")}</span><h2>${tr("このスイートの実行履歴", "Run history for this suite")}</h2><p>${tr("スイート横断ではなく、この定義から実行した結果だけを表示します。", "Shows only runs created from this suite definition.")}</p></div><a class="button secondary" href="#/reports">${icon("chart-no-axes-combined", 15)}${tr("すべての実行結果", "All run results")}</a></div>
     <div class="table-panel"><table><thead><tr><th>${tr("実行日時", "Executed at")}</th><th>${tr("結果", "Result")}</th><th>${tr("合格ケース", "Passed cases")}</th><th>${tr("所要時間", "Duration")}</th><th></th></tr></thead><tbody>${suiteRunHistory.map((run) => `<tr><td><strong>${esc(suiteRunLabel(run))}</strong><small>${esc(run.id)}</small></td><td>${statusPill(run.status)}</td><td><strong>${formatLocaleNumber(run.summary?.passed || 0)} / ${formatLocaleNumber(run.summary?.total || 0)}</strong><small>${formatLocaleNumber(run.summary?.passRate || 0)}%</small></td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td><a class="button primary small" href="#/reports/${run.id}">${tr("結果を開く", "Open result")}${icon("arrow-right", 13)}</a></td></tr>`).join("")}</tbody></table>${suiteRunHistory.length ? "" : empty(tr("実行履歴はありません", "No run history"), tr("このスイートを実行すると、結果がここに並びます。", "Run this suite to see its results here."))}</div>
   </section>`;
@@ -1697,7 +1801,7 @@ function renderEditor() {
         subtitleHtml: `<em id="save-state">${tr("保存済み", "Saved")}</em> · ${tr("テストスイート", "Test suites")}`,
         backHref: "#/suites",
         backLabel: tr("テストスイート一覧に戻る", "Back to test suites"),
-        actions: `${localeSelector(true)}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
+        actions: `${localeSelector(true)}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="export-latest-results-pdf" class="button report-action-pdf" type="button" ${hasLatestPdfResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("file-down", 15)}${tr("最新結果でPDF出力", "Export latest results")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
       })}
       <div class="${columnClass}">
         ${showCaseNav ? caseNav(suite) : ""}
@@ -2842,26 +2946,56 @@ async function runSuite(id) {
   if (!runnable.length) {
     return notify(tr("実行可のテストケースがありません。", "There are no runnable test cases."));
   }
-  const skipped = suite.cases.length - runnable.length;
-  const message = skipped
-    ? tr(
-        "{name} の実行可 {runnable} ケースを実行します（下書き {skipped} 件はスキップ）。BigQuery利用料金が発生する可能性があります。続けますか？",
-        "Run {runnable} runnable cases in {name} ({skipped} draft cases will be skipped)? BigQuery usage charges may apply. Continue?",
-        { name: suite.name, runnable: formatLocaleNumber(runnable.length), skipped: formatLocaleNumber(skipped) }
-      )
-    : tr(
-        "{name} の {count} ケースを実行します。BigQuery利用料金が発生する可能性があります。続けますか？",
-        "Run {count} cases in {name}? BigQuery usage charges may apply. Continue?",
-        { name: suite.name, count: formatLocaleNumber(suite.cases.length) }
-      );
-  if (!(await askConfirm(message, { confirmLabel: tr("スイートを実行", "Run suite") }))) return;
-  const pendingReport = beginSuiteRunNavigation(suite);
+  let rollup;
+  try {
+    rollup = state.suiteResultRollup?.suiteId === id
+      ? state.suiteResultRollup
+      : await loadSuiteResultRollup(id);
+  } catch (error) {
+    return notify(error.message);
+  }
+  const passedIds = new Set((rollup?.cases || []).filter((item) => item.hasPassed).map((item) => item.caseId));
+  const withoutSuccess = runnable.filter((item) => !passedIds.has(item.id));
+  const scope = await askSuiteRunScope({
+    runnableCount: runnable.length,
+    withoutSuccessCount: withoutSuccess.length
+  });
+  if (!scope) return;
+  const selectedCaseIds = scope === "without_success" ? withoutSuccess.map((item) => item.id) : null;
+  const pendingReport = beginSuiteRunNavigation(suite, { caseIds: selectedCaseIds });
   void completeSuiteRunNavigation(pendingReport, async () => {
     if (state.selectedSuite?.id === id) {
       await saveSuite({ silent: true });
     }
-    return json(`/api/suites/${id}/run`, { method: "POST" });
+    return json(`/api/suites/${id}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope })
+    });
   });
+}
+
+async function exportLatestSuiteResultsPdf() {
+  const suite = state.selectedSuite;
+  if (!suite?.id) return notify(tr("スイートが見つかりません。", "Suite not found."));
+  try {
+    if (document.querySelector("#suite-name")) await saveSuite({ silent: true });
+    const rollup = await loadSuiteResultRollup(suite.id);
+    const mode = await askLatestResultsPdfScope(rollup);
+    if (!mode) return;
+    setBusyOverlay(true, tr("最新結果PDFを生成中…", "Generating latest-results PDF…"));
+    const filename = await downloadPdf(
+      `/api/suites/${encodeURIComponent(suite.id)}/export/latest-results-pdf?mode=${encodeURIComponent(mode)}`,
+      mode === "latest_per_case"
+        ? `prismtrail-suite-${suite.id}-latest-case-results.pdf`
+        : `prismtrail-suite-${suite.id}-latest-run.pdf`
+    );
+    notify(tr("最新結果PDFをダウンロードしました: {name}", "Downloaded latest-results PDF: {name}", { name: filename }), "success");
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    setBusyOverlay(false);
+  }
 }
 
 function bytesToBase64(bytes) {
@@ -4939,6 +5073,7 @@ async function route() {
           state.suitePasteValidation = null;
           state.suitePasteError = "";
           state.suiteSheetModalOpen = false;
+          state.suiteResultRollup = null;
           state.selectedCaseIndex = 0;
           state.editorTab = "cases";
           state.suiteVersions = [];
@@ -4948,7 +5083,12 @@ async function route() {
         if (state.preserveEditorOnLocale && state.selectedSuite?.id === parts[1]) {
           state.preserveEditorOnLocale = false;
         } else {
-          state.selectedSuite = await json(`/api/suites/${parts[1]}`);
+          const [selectedSuite, resultRollup] = await Promise.all([
+            json(`/api/suites/${parts[1]}`),
+            loadSuiteResultRollup(parts[1])
+          ]);
+          state.selectedSuite = selectedSuite;
+          state.suiteResultRollup = resultRollup;
           state.selectedCaseIndex = 0;
         }
         if (deepCaseId && state.selectedSuite?.cases) {
@@ -5027,6 +5167,12 @@ app.addEventListener("click", async (event) => {
   if (runButton) {
     event.preventDefault();
     runSuite(runButton.dataset.runSuite || state.selectedSuite?.id);
+    return;
+  }
+  const latestResultsPdfButton = event.target.closest("#export-latest-results-pdf");
+  if (latestResultsPdfButton) {
+    event.preventDefault();
+    exportLatestSuiteResultsPdf();
     return;
   }
   const quickSearchButton = event.target.closest("#open-quick-search");
