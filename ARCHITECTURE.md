@@ -6,7 +6,7 @@
 - `TestSuite`: a reusable collection of prompts, selected agents, thinking modes, and deterministic expectations.
 - `Run`: the existing single-prompt execution capture, including normalized events and BigQuery job metadata.
 - `SuiteRun`: an immutable suite snapshot plus one evaluated result per case. Completed runs also persist a bounded Gemini-generated `aiSummary` and case-level `improvementProposal` records; both are commentary only and never change deterministic scores, grades, pass/fail state, Agent configuration, or mart data.
-- `SheetConnection`: metadata for one ADC-accessible Google Spreadsheet. `sheetName` is the PrismTrail-managed display name, while `title` records the current Google-side title. The spreadsheet is owned by exactly one registered `DataAgent` through `agentId`. Cell values and access tokens are not persisted.
+- `SheetConnection`: metadata for one ADC-accessible Google Spreadsheet. `sheetName` is the PrismTrail-managed display name, while `title` records the current Google-side title. The spreadsheet is bound one-to-one to exactly one `TestSuite` through `suiteId`. Cell values and access tokens are not persisted.
 
 Domain JSON is persisted through a switchable primary-storage interface. Local storage uses
 `data/<namespace>/<id>.json`; GCS uses
@@ -130,17 +130,26 @@ The same retrieval path grounds suite editing and the Data Agent planner. This k
 ## Google Sheets connector
 
 The local server calls Google Sheets API v4 with the same short-lived ADC access token used by the Google Cloud integrations. A connection stores only spreadsheet metadata and operation timestamps.
-The connection UI lives under the Settings `Google Sheets` tab (`#/settings/sheets`); the legacy
-`#/sheets` route redirects there and the sidebar has no separate integration group.
+The connection UI lives in each Test Suite detail. An unbound Suite shows a connection action that
+opens a modal; saving a verified spreadsheet immediately activates that Suite's Sheet edit/export
+actions. Global Settings exposes Google authentication and connection diagnostics, but it does not
+create or choose a Suite's connection. The legacy `#/sheets` route redirects to the diagnostic view.
 
-Every registered Data Agent may own at most one Sheet connection, and one spreadsheet may belong to
-at most one Data Agent. All connection, bootstrap, suite import/export, report export, catalog sync,
-automatic report writeback, UI shortcuts, and MCP operations enforce that ownership on the server.
-`AgentEval_DataAgents` contains only the owning agent, while `AgentEval_Suites` contains only suites
-whose effective case agents resolve uniquely to that owner. Mixed-agent suites are never written to
-a sheet. Legacy unowned connections are auto-assigned only when exactly one registered agent and one
-unowned connection make the mapping unambiguous; otherwise they remain inactive until explicitly
-reconnected with an Agent.
+Every Test Suite may own at most one Sheet connection, and one spreadsheet may belong to at most one
+Test Suite. All connection, bootstrap, suite import/export, report export, catalog sync, automatic
+report writeback, UI shortcuts, and MCP operations enforce that ownership on the server. The browser
+cannot select an Agent as the authorization boundary: the server loads the bound Suite, verifies its
+registered Agent references, and derives the catalog from that Suite. `AgentEval_DataAgents` contains
+only the distinct Agents referenced by the bound Suite, while `AgentEval_Suites` contains only that
+Suite. Mixed-Agent Suites therefore remain isolated and are supported.
+
+Sheet connection schema v4 adds the authoritative `suiteId`. Legacy Agent-scoped connections are
+migrated automatically only when their Agent maps to exactly one live eligible Suite and neither the
+Suite nor spreadsheet conflicts with another binding. The previous bootstrap Suite ID is not enough
+to infer ownership because older connections could bootstrap the Agent's most recently updated Suite
+without an explicit user choice. Ambiguous legacy connections remain inactive and non-destructive
+until a user explicitly claims them from a Suite's connection modal. Migration is idempotent and never
+duplicates a spreadsheet across Suites.
 
 Exports use schema version 7; schema versions 1–6 remain import-compatible:
 
@@ -187,15 +196,15 @@ persists partial failures per case. `POST /api/suite-runs/:id/improvement-propos
 the immutable Suite snapshot and stored runs, then refreshes the bound report Sheet. Proposals are
 non-authoritative and are never applied automatically.
 
-Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate the one-spreadsheet/one-agent invariant. After the final case, the Run is finalized before external reporting begins. Suite summary and case improvement generation run in parallel; their persisted results are saved before the report Sheet export starts. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The automatic destination is the one ready connection whose `agentId` matches the Suite Run's immutable suite snapshot; recent activity never changes routing. Export or Gemini failure is recorded on the Run without changing the completed evaluation result.
+Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate either side of the one-spreadsheet/one-Suite invariant. A Suite Run snapshots its ready connection ID, spreadsheet ID/URL, and Suite ID when execution starts, so changing the Suite's connection while a long run is active cannot redirect that run to a different spreadsheet. A run that started without a connection records an explicit null snapshot and does not acquire a newly added destination automatically; the completed report can still be exported manually. Legacy Suite Runs without the snapshot field fall back to the current Suite binding for backward compatibility. After the final case, the Run is finalized before external reporting begins. Suite summary and case improvement generation run in parallel; their persisted results are saved before the report Sheet export starts. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. Agent similarity and recent activity never change routing. Export or Gemini failure is recorded on the Run without changing the completed evaluation result.
 
 Completed report and case-run detail routes refresh Sheet connection metadata before rendering. If
-automatic writeback was skipped because the matching Agent connection did not exist yet, registering
-that connection later activates a manual “Gシートへ出力” action on the existing result. Manual export
-revalidates report/connection Agent ownership on the server, writes the report and Agent-scoped
-catalogs, and persists the successful `sheetExport` destination back to the Suite Run. Partial
-single-case reports may resolve their target from the one executed `caseRun.agentId` when the reduced
-Suite snapshot itself is ambiguous; reports with multiple effective Agents remain ineligible.
+automatic writeback was skipped because the Suite had no connection yet, registering one later
+activates a manual “Gシートへ出力” action on the existing result. Manual export revalidates that the
+report and connection have the same Suite ID, writes the report and Suite-scoped catalogs, and
+persists the successful `sheetExport` destination back to the Suite Run. Full, partial, and
+single-case Suite Runs all resolve the same Suite binding; a connection for another Suite is never a
+fallback even when both Suites use the same Agent.
 
 SQL evidence is normalized across three valid execution paths: a `data.generated_sql` event, a verified `data.matched_query` carrying `exampleQuery.sqlQuery`, or a BigQuery query job. This prevents the verified-query reuse path from failing `requireSql`. Run detail responses also resolve their originating Suite Run and case by stored context or reverse lookup, allowing old and new runs to render the same breadcrumb and back-navigation contract. Completed Suite Runs with the legacy false-negative SQL check are corrected in the API view without mutating the original trace.
 

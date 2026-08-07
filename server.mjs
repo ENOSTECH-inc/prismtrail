@@ -46,11 +46,10 @@ import { createMcpHttpHandler } from "./lib/mcp-server.mjs";
 import { createPrismTrailMcpTools } from "./lib/mcp-tools.mjs";
 import { normalizeRelatedUrls } from "./lib/related-urls.mjs";
 import {
-  assertReportAgentScope,
-  assertSuiteAgentScope,
-  reportAgentId,
-  selectSheetConnectionBinding,
+  assertConnectionSuiteScope,
+  selectSuiteSheetConnectionBinding,
   suiteAgentId,
+  suiteAgentIds,
   suitesForAgent
 } from "./lib/sheet-scope.mjs";
 import {
@@ -71,7 +70,6 @@ import { pdfFilename, renderCaseSpecPdf, renderSuiteRunPdf, isPartialSuiteRun } 
 import {
   AGENTS_SHEET,
   bootstrapManagedSheets,
-  emptySuiteTemplate,
   getSpreadsheet,
   parseSpreadsheetId,
   pastedTextToSuiteInput,
@@ -228,7 +226,7 @@ const suiteRunControllers = new Map();
 const port = Number(process.env.PORT || 4318);
 const host = process.env.HOST || "127.0.0.1";
 const SUITE_RUN_MAX_CONCURRENCY = 30;
-const SHEET_CONNECTION_SCHEMA_VERSION = 3;
+const SHEET_CONNECTION_SCHEMA_VERSION = 4;
 const storageSwitchConfirmations = new Map();
 let cachedGoogleAuthReadiness = { value: null, expiresAt: 0 };
 
@@ -909,6 +907,9 @@ function sheetConnectionProjection(connection) {
   return {
     schemaVersion: connection.schemaVersion || 1,
     id: connection.id,
+    suiteId: connection.suiteId || null,
+    migrationStatus: connection.migrationStatus || null,
+    // Kept in projections while legacy clients migrate. suiteId is authoritative.
     agentId: connection.agentId || null,
     spreadsheetId: connection.spreadsheetId,
     sheetName: connection.sheetName || connection.title,
@@ -938,19 +939,34 @@ async function migrateLegacySheetConnections() {
     });
     connections = connections.map((item) => (item.id === saved.id ? saved : item));
   }
-  const agents = await agentStore.list();
-  const unassigned = connections.filter((connection) => !connection.agentId);
-  if (agents.length !== 1 || unassigned.length !== 1 || connections.some((connection) => connection.agentId === agents[0].id)) {
-    return connections;
+  const suites = await suiteStore.list();
+  const claimedSuiteIds = new Set(connections.map((item) => item.suiteId).filter(Boolean));
+  const claimedSpreadsheetIds = new Set(
+    connections.filter((item) => item.suiteId).map((item) => item.spreadsheetId).filter(Boolean)
+  );
+  for (const connection of connections.filter((item) => !item.suiteId && item.migrationStatus !== "legacy_unbound")) {
+    const candidates = connection.agentId
+      ? suitesForAgent(suites, connection.agentId).filter((suite) => !claimedSuiteIds.has(suite.id))
+      : [];
+    const suiteId = candidates.length === 1 && !claimedSpreadsheetIds.has(connection.spreadsheetId)
+      ? candidates[0].id
+      : null;
+    const migrated = await sheetConnectionStore.save({
+      ...connection,
+      schemaVersion: SHEET_CONNECTION_SCHEMA_VERSION,
+      suiteId,
+      migrationStatus: suiteId ? "claimed" : "legacy_unbound",
+      status: suiteId ? connection.status : "unbound",
+      sheetName: connection.sheetName || connection.title,
+      updatedAt: new Date().toISOString()
+    });
+    if (suiteId) {
+      claimedSuiteIds.add(suiteId);
+      claimedSpreadsheetIds.add(connection.spreadsheetId);
+    }
+    connections = connections.map((item) => (item.id === migrated.id ? migrated : item));
   }
-  const migrated = await sheetConnectionStore.save({
-    ...unassigned[0],
-    schemaVersion: SHEET_CONNECTION_SCHEMA_VERSION,
-    agentId: agents[0].id,
-    sheetName: unassigned[0].sheetName || unassigned[0].title,
-    updatedAt: new Date().toISOString()
-  });
-  return connections.map((connection) => (connection.id === migrated.id ? migrated : connection));
+  return connections;
 }
 
 let sheetConnectionMigrationPromise = null;
@@ -966,47 +982,52 @@ async function sheetConnections() {
   return sheetConnectionStore.list();
 }
 
-async function requireSheetAgent(agentId) {
-  const normalized = String(agentId || "").trim();
-  if (!normalized) throw Object.assign(new Error("Data Agentを選択してください。"), { status: 400 });
-  try {
-    return await agentStore.get(normalized);
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw Object.assign(new Error("選択されたData Agentが登録されていません。"), { status: 400 });
-    }
-    throw error;
+async function scopedSheetCatalog(suiteOrId) {
+  const suite = typeof suiteOrId === "string" ? await suiteStore.get(suiteOrId) : suiteOrId;
+  if (!suite?.id) throw Object.assign(new Error("テストスイートが見つかりません。"), { status: 404 });
+  const referencedIds = new Set(suiteAgentIds(suite));
+  const agents = (await agentStore.list()).filter((agent) => referencedIds.has(agent.id));
+  if (agents.length !== referencedIds.size) {
+    throw Object.assign(new Error("テストスイートが参照するData Agentに未登録のものがあります。"), { status: 400 });
   }
-}
-
-async function scopedSheetCatalog(agentId) {
-  const agent = await requireSheetAgent(agentId);
-  return { agents: [agent], suites: suitesForAgent(await suiteStore.list(), agent.id) };
+  return { agents, suites: [suite] };
 }
 
 async function requireOwnedSheetConnection(connectionId) {
   const connection = await sheetConnectionStore.get(connectionId);
-  if (!connection.agentId) {
-    throw Object.assign(new Error("Google Sheets接続にData Agentが紐づいていません。再接続してください。"), { status: 409 });
+  if (!connection.suiteId) {
+    throw Object.assign(new Error("Google Sheets接続にテストスイートが紐づいていません。再接続してください。"), { status: 409 });
   }
-  await requireSheetAgent(connection.agentId);
+  await suiteStore.get(connection.suiteId);
   return connection;
 }
 
-async function connectionForBinding(agentId, spreadsheetId) {
-  const agent = await requireSheetAgent(agentId);
-  const connections = await sheetConnections();
-  return { agent, existing: selectSheetConnectionBinding(connections, agent.id, spreadsheetId) };
+async function requireSheetConnectionForSuite(suiteId, connectionId = null) {
+  const normalizedSuiteId = String(suiteId || "").trim();
+  if (!normalizedSuiteId) throw Object.assign(new Error("テストスイートを指定してください。"), { status: 400 });
+  const connection = connectionId
+    ? await requireOwnedSheetConnection(connectionId)
+    : (await sheetConnections()).find((item) => item.suiteId === normalizedSuiteId && item.status === "ready");
+  if (!connection) {
+    throw Object.assign(new Error("テストスイートにGoogle Sheets接続が設定されていません。"), { status: 404 });
+  }
+  assertConnectionSuiteScope(connection, normalizedSuiteId);
+  return connection;
 }
 
-async function bindSheetConnection({ agentId, spreadsheetId, sheetName, suiteId, forceOperational = false }) {
+async function connectionForBinding(suiteId, spreadsheetId) {
+  const suite = await suiteStore.get(String(suiteId || ""));
+  const connections = await sheetConnections();
+  return { suite, existing: selectSuiteSheetConnectionBinding(connections, suite.id, spreadsheetId) };
+}
+
+async function bindSheetConnection({ spreadsheetId, sheetName, suiteId, forceOperational = false }) {
   return withSheetConnectionBindingLock(async () => {
-    const binding = await connectionForBinding(agentId, spreadsheetId);
+    const binding = await connectionForBinding(suiteId, spreadsheetId);
     const connection = await connectAndBootstrapSheet({
       spreadsheetId,
-      agentId: binding.agent.id,
+      suite: binding.suite,
       sheetName,
-      suiteId,
       existing: binding.existing,
       forceOperational
     });
@@ -1014,35 +1035,17 @@ async function bindSheetConnection({ agentId, spreadsheetId, sheetName, suiteId,
   });
 }
 
-async function resolveBootstrapSuite(suiteId, agentId) {
-  if (suiteId) {
-    const suite = await findLocalSuite(String(suiteId));
-    if (!suite) throw new Error("初期化に使うテストスイートが見つかりません。");
-    assertSuiteAgentScope(suite, agentId, "初期化に使うテストスイート");
-    return suite;
-  }
-  const suites = suitesForAgent(await suiteStore.list(), agentId);
-  if (!suites.length) return emptySuiteTemplate({ defaultAgentId: agentId });
-  return [...suites].sort((left, right) =>
-    String(right.updatedAt || right.createdAt || "").localeCompare(
-      String(left.updatedAt || left.createdAt || "")
-    )
-  )[0];
-}
-
 async function connectAndBootstrapSheet({
   spreadsheetId,
-  agentId,
+  suite,
   sheetName,
-  suiteId,
   existing = null,
   forceOperational = false
 }) {
   const now = new Date().toISOString();
-  const agent = await requireSheetAgent(agentId);
-  const suite = await resolveBootstrapSuite(suiteId, agent.id);
-  const agents = [agent];
-  const suites = suitesForAgent(await suiteStore.list(), agent.id);
+  const catalog = await scopedSheetCatalog(suite);
+  const agents = catalog.agents;
+  const suites = catalog.suites;
   const bootstrap = await withSpreadsheetLock(spreadsheetId, () =>
     bootstrapManagedSheets(spreadsheetId, {
       suite,
@@ -1059,7 +1062,9 @@ async function connectAndBootstrapSheet({
   return sheetConnectionStore.save({
     schemaVersion: SHEET_CONNECTION_SCHEMA_VERSION,
     id: existing?.id || objectId("sheet"),
-    agentId: agent.id,
+    suiteId: suite.id,
+    migrationStatus: null,
+    agentId: suiteAgentId(suite),
     spreadsheetId,
     sheetName: managedSheetName,
     title: remote.title,
@@ -1094,28 +1099,29 @@ async function connectAndBootstrapSheet({
 }
 
 async function refreshSheetConnection(connection, { suiteId, forceOperational = false } = {}) {
+  const targetSuiteId = String(suiteId || connection.suiteId || "");
+  assertConnectionSuiteScope(connection, targetSuiteId);
   return connectAndBootstrapSheet({
     spreadsheetId: connection.spreadsheetId,
-    agentId: connection.agentId,
+    suite: await suiteStore.get(targetSuiteId),
     sheetName: connection.sheetName,
-    suiteId,
     existing: connection,
     forceOperational
   });
 }
 
-async function syncReadySheetCatalogs(agentIds = []) {
-  const requestedAgentIds = new Set((Array.isArray(agentIds) ? agentIds : [agentIds]).filter(Boolean));
+async function syncReadySheetCatalogs(suiteIds = []) {
+  const requestedSuiteIds = new Set((Array.isArray(suiteIds) ? suiteIds : [suiteIds]).filter(Boolean));
   const connections = (await sheetConnections()).filter(
     (connection) => connection.status === "ready" &&
-      (!requestedAgentIds.size || requestedAgentIds.has(connection.agentId))
+      connection.suiteId &&
+      (!requestedSuiteIds.size || requestedSuiteIds.has(connection.suiteId))
   );
   if (!connections.length) return [];
   const results = [];
   for (const connection of connections) {
     try {
-      if (!connection.agentId) continue;
-      const { agents, suites } = await scopedSheetCatalog(connection.agentId);
+      const { agents, suites } = await scopedSheetCatalog(connection.suiteId);
       const catalog = await withSpreadsheetLock(connection.spreadsheetId, () =>
         writeCatalogSheets(connection.spreadsheetId, { agents, suites })
       );
@@ -1140,9 +1146,24 @@ async function syncReadySheetCatalogs(agentIds = []) {
 }
 
 function syncSuiteCatalogChanges(previousSuite, nextSuite) {
-  const agentIds = [...new Set([suiteAgentId(previousSuite || {}), suiteAgentId(nextSuite || {})].filter(Boolean))];
-  if (!agentIds.length) return;
-  syncReadySheetCatalogs(agentIds).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+  const suiteId = nextSuite?.id || previousSuite?.id;
+  if (!suiteId) return;
+  if (!nextSuite) {
+    sheetConnections()
+      .then((connections) => Promise.all(connections.filter((item) => item.suiteId === suiteId).map((item) => sheetConnectionStore.delete(item.id))))
+      .catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+    return;
+  }
+  syncReadySheetCatalogs([suiteId]).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+}
+
+function syncSheetCatalogsForAgent(agentId) {
+  suiteStore.list()
+    .then((suites) => {
+      const suiteIds = suites.filter((suite) => suiteAgentIds(suite).includes(agentId)).map((suite) => suite.id);
+      return suiteIds.length ? syncReadySheetCatalogs(suiteIds) : [];
+    })
+    .catch((error) => console.error(`[sheets-catalog] ${error.message}`));
 }
 
 async function findLocalSuite(id) {
@@ -1326,6 +1347,9 @@ async function createSuiteRun(suite) {
   if (!runnableCount) {
     throw new Error("実行可のテストケースがありません。ケースのステータスを「実行可」にしてください。");
   }
+  const readyConnection = (await sheetConnections()).find(
+    (connection) => connection.status === "ready" && connection.suiteId === suite.id
+  );
   const suiteRun = {
     schemaVersion: 3,
     id: objectId("suite_run"),
@@ -1338,6 +1362,15 @@ async function createSuiteRun(suite) {
     completedAt: null,
     currentCase: null,
     activeCases: [],
+    sheetConnectionSnapshot: readyConnection
+      ? {
+          connectionId: readyConnection.id,
+          spreadsheetId: readyConnection.spreadsheetId,
+          spreadsheetUrl: readyConnection.spreadsheetUrl,
+          sheetName: readyConnection.sheetName,
+          suiteId: suite.id
+        }
+      : null,
     sheetExport: { status: "pending" },
     aiSummary: { status: "pending" },
     improvementProposals: { status: "pending", targetCaseIds: [] },
@@ -1378,40 +1411,62 @@ async function createSuiteRun(suite) {
   return suiteRun;
 }
 
-async function autoExportSuiteRun(suiteRun) {
-  const agentId = reportAgentId(suiteRun);
-  if (!agentId) {
+async function autoExportSuiteRun(suiteRun, { allowCurrentConnection = false } = {}) {
+  const connections = await sheetConnections();
+  const hasSnapshot = Object.hasOwn(suiteRun, "sheetConnectionSnapshot");
+  const snapshot = suiteRun.sheetConnectionSnapshot;
+  const currentConnection = connections.find(
+    (item) => item.status === "ready" && item.suiteId === suiteRun.suiteId
+  );
+  const snapshotConflict = snapshot && connections.find(
+    (item) => item.spreadsheetId === snapshot.spreadsheetId && item.suiteId !== suiteRun.suiteId
+  );
+  if (snapshotConflict) {
     return {
-      status: "skipped",
-      message: "評価対象のData Agentを一意に特定できないため、自動出力をスキップしました。"
+      status: "failed",
+      message: "実行開始時のGoogleスプレッドシートが別のテストスイートへ再接続されたため、自動出力を停止しました。",
+      completedAt: new Date().toISOString()
     };
   }
-  const connection = (await sheetConnections()).find(
-    (item) => item.status === "ready" && item.agentId === agentId
-  );
+  const connection = snapshot
+    ? {
+        ...currentConnection,
+        id: snapshot.connectionId,
+        suiteId: snapshot.suiteId,
+        spreadsheetId: snapshot.spreadsheetId,
+        spreadsheetUrl: snapshot.spreadsheetUrl,
+        sheetName: snapshot.sheetName,
+        status: "ready"
+      }
+    : hasSnapshot && !allowCurrentConnection ? null : currentConnection;
   if (!connection) {
     return {
       status: "skipped",
-      message: "評価対象のData Agentに接続されたGoogleスプレッドシートがないため、自動出力をスキップしました。"
+      message: "テストスイートに接続されたGoogleスプレッドシートがないため、自動出力をスキップしました。"
     };
   }
   try {
-    assertReportAgentScope(suiteRun, connection.agentId);
+    assertConnectionSuiteScope(connection, suiteRun.suiteId, "評価レポートのテストスイート");
     const result = await withSpreadsheetLock(connection.spreadsheetId, () =>
       writeReportSheet(connection.spreadsheetId, suiteRun)
     );
     const now = new Date().toISOString();
-    const updated = await sheetConnectionStore.save({
-      ...connection,
-      title: result.spreadsheet.title,
-      spreadsheetUrl: result.spreadsheet.spreadsheetUrl,
-      authSource: result.spreadsheet.authSource,
-      status: "ready",
-      lastCheckedAt: now,
-      lastExportedAt: now,
-      lastOperation: `report-auto-export:${suiteRun.id}`,
-      updatedAt: now
-    });
+    const persistedConnection = connections.find(
+      (item) => item.id === connection.id && item.spreadsheetId === connection.spreadsheetId
+    );
+    const updated = persistedConnection
+      ? await sheetConnectionStore.save({
+          ...persistedConnection,
+          title: result.spreadsheet.title,
+          spreadsheetUrl: result.spreadsheet.spreadsheetUrl,
+          authSource: result.spreadsheet.authSource,
+          status: "ready",
+          lastCheckedAt: now,
+          lastExportedAt: now,
+          lastOperation: `report-auto-export:${suiteRun.id}`,
+          updatedAt: now
+        })
+      : { ...connection, title: result.spreadsheet.title, spreadsheetUrl: result.spreadsheet.spreadsheetUrl };
     return {
       status: "succeeded",
       connectionId: updated.id,
@@ -1438,8 +1493,8 @@ async function exportSuiteRunToSheetConnection(connection, suiteRunId) {
     throw error;
   }
   const report = await correctedSuiteRunView(storedReport);
-  assertReportAgentScope(report, connection.agentId);
-  const catalog = await scopedSheetCatalog(connection.agentId);
+  assertConnectionSuiteScope(connection, report.suiteId, "評価レポートのテストスイート");
+  const catalog = await scopedSheetCatalog(report.suiteId);
   const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
     const reportResult = await writeReportSheet(connection.spreadsheetId, report);
     await writeCatalogSheets(connection.spreadsheetId, catalog);
@@ -1692,7 +1747,7 @@ async function regenerateSuiteImprovementProposals(reportId) {
     await suiteRunStore.save(suiteRun);
     suiteRun.sheetExport = { status: "exporting", startedAt: suiteRun.updatedAt };
     await suiteRunStore.save(suiteRun);
-    suiteRun.sheetExport = await autoExportSuiteRun(suiteRun);
+    suiteRun.sheetExport = await autoExportSuiteRun(suiteRun, { allowCurrentConnection: true });
     suiteRun.updatedAt = new Date().toISOString();
     await suiteRunStore.save(suiteRun);
     return suiteRun;
@@ -2364,7 +2419,7 @@ const mcpOperations = {
       description: String(body.description || "").trim().slice(0, 1000),
       resourceName, ...parsed, status: "unchecked", lastCheckedAt: null, createdAt: now, updatedAt: now
     });
-    syncReadySheetCatalogs(agent.id).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+    syncSheetCatalogsForAgent(agent.id);
     return agent;
   },
   async checkAgent(agentId) {
@@ -2379,7 +2434,7 @@ const mcpOperations = {
       lastCheckedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });
-    syncReadySheetCatalogs(updated.id).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+    syncSheetCatalogsForAgent(updated.id);
     return updated;
   },
   async listRuns(args) {
@@ -2443,21 +2498,20 @@ const mcpOperations = {
     const plan = await generateAgentPlan({ project: config.vertexProject, location: config.vertexLocation, model: config.vertexModel, goal: normalizedGoal, knowledgeContext: retrieved.context, sources });
     return { plan, retrieved: retrieved.matches.map(({ text, ...metadata }) => metadata) };
   },
-  async listSheetConnections({ agentId } = {}) {
+  async listSheetConnections({ suiteId, agentId } = {}) {
     const connections = await sheetConnections();
     return {
       connections: connections
-        .filter((connection) => !agentId || connection.agentId === agentId)
+        .filter((connection) => (!suiteId || connection.suiteId === suiteId) && (!agentId || connection.agentId === agentId))
         .map(sheetConnectionProjection),
       format: { suiteTab: SUITE_SHEET, reportTab: REPORT_SHEET, agentsTab: AGENTS_SHEET, suitesTab: SUITES_SHEET, schemaVersion: Number(SHEET_SCHEMA_VERSION), maxCases: MAX_SUITE_CASES }
     };
   },
-  async connectSheet({ spreadsheetUrl, sheetName, agentId, suiteId, forceOperational = false }) {
+  async connectSheet({ spreadsheetUrl, sheetName, suiteId, forceOperational = false }) {
     const spreadsheetId = parseSpreadsheetId(spreadsheetUrl);
     const { connection } = await bindSheetConnection({
       spreadsheetId,
       sheetName,
-      agentId,
       suiteId,
       forceOperational: Boolean(forceOperational)
     });
@@ -2467,10 +2521,10 @@ const mcpOperations = {
     return sheetConnectionProjection(await refreshSheetConnection(await requireOwnedSheetConnection(connectionId), { suiteId }));
   },
   async exportSuiteToSheet({ connectionId, suiteId }) {
-    const connection = await requireOwnedSheetConnection(connectionId);
+    const connection = await requireSheetConnectionForSuite(suiteId, connectionId);
     const suite = await suiteStore.get(suiteId);
-    assertSuiteAgentScope(suite, connection.agentId);
-    const { agents, suites } = await scopedSheetCatalog(connection.agentId);
+    assertConnectionSuiteScope(connection, suite.id);
+    const { agents, suites } = await scopedSheetCatalog(suite);
     const prepared = prepareSuiteForSheetExport(suite, agents);
     const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
       const suiteResult = await writeSuiteSheet(connection.spreadsheetId, prepared, { agents });
@@ -2481,25 +2535,28 @@ const mcpOperations = {
     const updated = await sheetConnectionStore.save({ ...connection, title: result.spreadsheet.title, spreadsheetUrl: result.spreadsheet.spreadsheetUrl, authSource: result.spreadsheet.authSource, status: "ready", lastCheckedAt: now, lastExportedAt: now, lastOperation: `suite-export:${suite.id}`, updatedAt: now });
     return { connection: sheetConnectionProjection(updated), tabName: result.sheetTitle, rowCount: result.rowCount, suiteId: suite.id };
   },
-  async importSuiteFromSheet({ connectionId }, context) {
-    const connection = await requireOwnedSheetConnection(connectionId);
-    const { imported, suite, existing } = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+  async importSuiteFromSheet({ connectionId, suiteId }, context) {
+    const connection = await requireSheetConnectionForSuite(suiteId, connectionId);
+    const { imported, suite } = await withSpreadsheetLock(connection.spreadsheetId, async () => {
       const importedSuite = await readSuiteSheet(connection.spreadsheetId);
       const references = await validateSuiteReferences(importedSuite.suite);
-      assertSuiteAgentScope(references.suite, connection.agentId, "取り込むテストスイート");
-      const existingSuite = await findLocalSuite(references.suite.sourceSuiteId || importedSuite.suite.sourceSuiteId);
-      if (existingSuite) assertSuiteAgentScope(existingSuite, connection.agentId, "更新対象のテストスイート");
-      const saved = await saveSuiteWithHistory(normalizeSuite(references.suite, existingSuite || {}), { updateMethod: "sheet_import", updatedBy: `mcp:${context.token.id}` });
-      const catalog = await scopedSheetCatalog(connection.agentId);
+      const existingSuite = await suiteStore.get(connection.suiteId);
+      const sourceSuiteId = String(references.suite.sourceSuiteId || importedSuite.suite.sourceSuiteId || "").trim();
+      if (sourceSuiteId && sourceSuiteId !== existingSuite.id) {
+        throw Object.assign(new Error("このGoogle Sheets接続に紐づくテストスイートと、シート内のSuite IDが一致しません。"), { status: 409 });
+      }
+      const saved = await saveSuiteWithHistory(normalizeSuite(references.suite, existingSuite), { updateMethod: "sheet_import", updatedBy: `mcp:${context.token.id}` });
+      const catalog = await scopedSheetCatalog(saved);
       await writeCatalogSheets(connection.spreadsheetId, catalog);
-      return { imported: importedSuite, suite: saved, existing: existingSuite };
+      return { imported: importedSuite, suite: saved };
     });
     const now = new Date().toISOString();
     const updated = await sheetConnectionStore.save({ ...connection, authSource: imported.authSource, status: "ready", lastCheckedAt: now, lastImportedAt: now, lastOperation: `suite-import:${suite.id}`, updatedAt: now });
-    return { connection: sheetConnectionProjection(updated), suite, mode: existing ? "updated" : "created" };
+    return { connection: sheetConnectionProjection(updated), suite, mode: "updated" };
   },
   async exportReportToSheet({ connectionId, reportId }) {
-    const connection = await requireOwnedSheetConnection(connectionId);
+    const report = await suiteRunStore.get(String(reportId || ""));
+    const connection = await requireSheetConnectionForSuite(report.suiteId, connectionId);
     const result = await exportSuiteRunToSheetConnection(connection, reportId);
     return { ...result, reportId: result.suiteRunId };
   },
@@ -2965,7 +3022,7 @@ const server = createServer(async (request, response) => {
         createdAt: now,
         updatedAt: now
       });
-      syncReadySheetCatalogs(agent.id).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+      syncSheetCatalogsForAgent(agent.id);
       sendJson(response, 201, agent);
       return;
     }
@@ -2982,7 +3039,7 @@ const server = createServer(async (request, response) => {
         lastCheckedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
-      syncReadySheetCatalogs(updated.id).catch((error) => console.error(`[sheets-catalog] ${error.message}`));
+      syncSheetCatalogsForAgent(updated.id);
       sendJson(response, 200, {
         ...updated,
         remoteConfiguration: remote.agent,
@@ -2993,9 +3050,10 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/sheets/connections") {
       const agentId = String(url.searchParams.get("agentId") || "").trim();
+      const suiteId = String(url.searchParams.get("suiteId") || "").trim();
       sendJson(response, 200, {
         connections: (await sheetConnections())
-          .filter((connection) => !agentId || connection.agentId === agentId)
+          .filter((connection) => (!suiteId || connection.suiteId === suiteId) && (!agentId || connection.agentId === agentId))
           .map(sheetConnectionProjection),
         format: {
           suiteTab: SUITE_SHEET,
@@ -3014,7 +3072,6 @@ const server = createServer(async (request, response) => {
       const { connection, replaced } = await bindSheetConnection({
         spreadsheetId,
         sheetName: body.sheetName,
-        agentId: body.agentId,
         suiteId: body.suiteId,
         forceOperational: Boolean(body.forceOperational || body.forceSamples)
       });
@@ -3045,8 +3102,8 @@ const server = createServer(async (request, response) => {
       const connection = await requireOwnedSheetConnection(sheetExportSuiteMatch[1]);
       const body = await readJson(request);
       const suite = await suiteStore.get(String(body.suiteId || ""));
-      assertSuiteAgentScope(suite, connection.agentId);
-      const { agents, suites } = await scopedSheetCatalog(connection.agentId);
+      assertConnectionSuiteScope(connection, suite.id);
+      const { agents, suites } = await scopedSheetCatalog(suite);
       const prepared = prepareSuiteForSheetExport(suite, agents);
       const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
         const suiteResult = await writeSuiteSheet(connection.spreadsheetId, prepared, { agents });
@@ -3078,22 +3135,22 @@ const server = createServer(async (request, response) => {
     );
     if (request.method === "POST" && sheetImportSuiteMatch) {
       const connection = await requireOwnedSheetConnection(sheetImportSuiteMatch[1]);
-      const { imported, suite, existing } = await withSpreadsheetLock(
+      const { imported, suite } = await withSpreadsheetLock(
         connection.spreadsheetId,
         async () => {
           const importedSuite = await readSuiteSheet(connection.spreadsheetId);
           const references = await validateSuiteReferences(importedSuite.suite);
-          assertSuiteAgentScope(references.suite, connection.agentId, "取り込むテストスイート");
-          const existingSuite = await findLocalSuite(
-            references.suite.sourceSuiteId || importedSuite.suite.sourceSuiteId
-          );
-          if (existingSuite) assertSuiteAgentScope(existingSuite, connection.agentId, "更新対象のテストスイート");
+          const existingSuite = await suiteStore.get(connection.suiteId);
+          const sourceSuiteId = String(references.suite.sourceSuiteId || importedSuite.suite.sourceSuiteId || "").trim();
+          if (sourceSuiteId && sourceSuiteId !== existingSuite.id) {
+            throw Object.assign(new Error("このGoogle Sheets接続に紐づくテストスイートと、シート内のSuite IDが一致しません。"), { status: 409 });
+          }
           const saved = await saveSuiteWithHistory(
-            normalizeSuite(references.suite, existingSuite || {}),
+            normalizeSuite(references.suite, existingSuite),
             { updateMethod: "sheet_import" }
           );
-          await writeCatalogSheets(connection.spreadsheetId, await scopedSheetCatalog(connection.agentId));
-          return { imported: importedSuite, suite: saved, existing: existingSuite };
+          await writeCatalogSheets(connection.spreadsheetId, await scopedSheetCatalog(saved));
+          return { imported: importedSuite, suite: saved };
         }
       );
       const now = new Date().toISOString();
@@ -3106,10 +3163,10 @@ const server = createServer(async (request, response) => {
         lastOperation: `suite-import:${suite.id}`,
         updatedAt: now
       });
-      sendJson(response, existing ? 200 : 201, {
+      sendJson(response, 200, {
         connection: sheetConnectionProjection(updated),
         suite,
-        mode: existing ? "updated" : "created"
+        mode: "updated"
       });
       return;
     }
@@ -3229,7 +3286,8 @@ const server = createServer(async (request, response) => {
       }
       await suiteStore.delete(suite.id);
       await deleteSuiteVersions(suite.id);
-      syncSuiteCatalogChanges(suite, null);
+      const boundConnections = (await sheetConnections()).filter((item) => item.suiteId === suite.id);
+      await Promise.all(boundConnections.map((item) => sheetConnectionStore.delete(item.id)));
       sendJson(response, 200, { deleted: true, id: suite.id, name: suite.name });
       return;
     }

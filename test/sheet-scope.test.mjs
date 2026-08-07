@@ -1,16 +1,57 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertConnectionSuiteScope,
   assertReportAgentScope,
   assertSuiteAgentScope,
   reportAgentId,
   selectSheetConnectionBinding,
+  selectSuiteSheetConnectionBinding,
   suiteAgentId,
   suiteAgentIds,
   suitesForAgent
 } from "../lib/sheet-scope.mjs";
 
-test("suite scope resolves one effective agent and rejects mixed-agent suites", () => {
+test("suite sheet scope is independent from the suite's agent composition", () => {
+  const connection = { id: "sheet_a", suiteId: "suite_a", spreadsheetId: "spreadsheet_a" };
+  assert.equal(assertConnectionSuiteScope(connection, "suite_a"), "suite_a");
+  assert.throws(
+    () => assertConnectionSuiteScope(connection, "suite_b"),
+    /一致しません/
+  );
+  assert.throws(
+    () => assertConnectionSuiteScope({ ...connection, suiteId: null }, "suite_a"),
+    /再接続/
+  );
+});
+
+test("suite sheet binding enforces one suite to one spreadsheet in both directions", () => {
+  const connections = [
+    { id: "sheet_a", suiteId: "suite_a", spreadsheetId: "spreadsheet_a" },
+    { id: "legacy", suiteId: null, spreadsheetId: "spreadsheet_legacy" }
+  ];
+  assert.equal(
+    selectSuiteSheetConnectionBinding(connections, "suite_a", "spreadsheet_new").id,
+    "sheet_a"
+  );
+  assert.equal(
+    selectSuiteSheetConnectionBinding(connections, "suite_b", "spreadsheet_legacy").id,
+    "legacy"
+  );
+  assert.throws(
+    () => selectSuiteSheetConnectionBinding(connections, "suite_b", "spreadsheet_a"),
+    /別のテストスイート/
+  );
+  assert.throws(
+    () => selectSuiteSheetConnectionBinding([
+      ...connections,
+      { id: "sheet_b", suiteId: "suite_b", spreadsheetId: "spreadsheet_b" }
+    ], "suite_b", "spreadsheet_legacy"),
+    /重複した接続/
+  );
+});
+
+test("legacy Agent scope helper still rejects mixed-agent ownership", () => {
   const single = { defaultAgentId: "agent_a", cases: [{ agentId: "" }, { agentId: "agent_a" }] };
   const mixed = { defaultAgentId: "agent_a", cases: [{ agentId: "agent_b" }] };
   assert.deepEqual(suiteAgentIds(single), ["agent_a"]);
@@ -19,7 +60,7 @@ test("suite scope resolves one effective agent and rejects mixed-agent suites", 
   assert.throws(() => assertSuiteAgentScope(mixed, "agent_a"), /一致しません/);
 });
 
-test("suite catalogs are isolated to the linked agent", () => {
+test("legacy Agent catalog helper remains available during migration", () => {
   const suites = [
     { id: "a", defaultAgentId: "agent_a", cases: [] },
     { id: "b", defaultAgentId: "agent_b", cases: [{ agentId: "agent_b" }] },
@@ -49,7 +90,7 @@ test("single-case report falls back to its executed case agent", () => {
   assert.equal(assertReportAgentScope(report, "agent_case"), "agent_case");
 });
 
-test("sheet connection binding enforces one agent to one spreadsheet", () => {
+test("legacy Agent binding helper remains available during migration", () => {
   const connections = [
     { id: "sheet_a", agentId: "agent_a", spreadsheetId: "spreadsheet_a" },
     { id: "legacy", agentId: null, spreadsheetId: "spreadsheet_legacy" }

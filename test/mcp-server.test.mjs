@@ -83,9 +83,17 @@ test("PrismTrail MCP exposes the complete non-destructive operation surface", ()
   assert.equal(expectationProperties.businessRequirements.properties.criteriaItems.maxItems, 20);
   assert.equal(createCase.inputSchema.properties.testCase.properties.relatedUrls.items.format, "uri");
   const connectSheet = tools.find((tool) => tool.name === "connect_google_sheet");
-  assert.deepEqual(connectSheet.inputSchema.required, ["spreadsheetUrl", "sheetName", "agentId"]);
+  assert.deepEqual(connectSheet.inputSchema.required, ["spreadsheetUrl", "sheetName", "suiteId"]);
   assert.equal(connectSheet.inputSchema.properties.sheetName.maxLength, 120);
-  assert.equal(connectSheet.inputSchema.properties.agentId.pattern, "^[a-zA-Z0-9_-]+$");
+  assert.equal(connectSheet.inputSchema.properties.suiteId.pattern, "^[a-zA-Z0-9_-]+$");
   const listSheets = tools.find((tool) => tool.name === "list_sheet_connections");
+  assert.equal(listSheets.inputSchema.properties.suiteId.pattern, "^[a-zA-Z0-9_-]+$");
+  // Read compatibility for older MCP clients; suiteId remains authoritative for mutations.
   assert.equal(listSheets.inputSchema.properties.agentId.pattern, "^[a-zA-Z0-9_-]+$");
+  const exportSuite = tools.find((tool) => tool.name === "export_suite_to_sheet");
+  assert.deepEqual(exportSuite.inputSchema.required, ["suiteId"]);
+  const importSuite = tools.find((tool) => tool.name === "import_suite_from_sheet");
+  assert.deepEqual(importSuite.inputSchema.required, ["suiteId"]);
+  const exportReport = tools.find((tool) => tool.name === "export_report_to_sheet");
+  assert.deepEqual(exportReport.inputSchema.required, ["reportId"]);
 });

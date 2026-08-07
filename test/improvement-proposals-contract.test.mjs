@@ -30,7 +30,7 @@ test("proposal API regenerates from persisted run data and refreshes Sheets", ()
   );
   assert.match(source, /suiteRunStore\.get\(reportId\)/);
   assert.match(source, /prepareImprovementGeneration\(suiteRun\)/);
-  assert.match(source, /autoExportSuiteRun\(suiteRun\)/);
+  assert.match(source, /autoExportSuiteRun\(suiteRun, \{ allowCurrentConnection: true \}\)/);
   assert.match(source, /activeImprovementRegenerations\.has\(reportId\)/);
   assert.match(source, /activeImprovementRegenerations\.delete\(reportId\)/);
   assert.doesNotMatch(source, /body\?\.caseIds|request\.body/);
