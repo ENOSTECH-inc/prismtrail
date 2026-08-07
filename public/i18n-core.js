@@ -58,6 +58,8 @@ const UI_COPY_PAIRS = [
   ["編集する", "Edit"],
   ["実行中", "Running"],
   ["中止", "Cancelled"],
+  ["中断", "Interrupted"],
+  ["実行が中断されました", "Run was interrupted"],
   ["中止中", "Cancelling"],
   ["中止中…", "Stopping…"],
   ["中止待ち", "Waiting to stop"],

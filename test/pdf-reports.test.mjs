@@ -10,6 +10,7 @@ import {
   pdfFilename,
   renderCaseSpecPdf,
   renderSuiteRunPdf,
+  resolveSuiteRunPdfCaseIds,
   runDetailUrl,
   suiteEditorUrl,
   suiteRunReportUrl
@@ -515,4 +516,55 @@ test("fits up to fourteen cases on one compact index page", () => {
   const indexPages = inputs.filter((input) => input._pageKind === "index");
   assert.equal(indexPages.length, 1);
   assert.equal(indexPages[0]._caseRows.length, 14);
+});
+
+test("resolveSuiteRunPdfCaseIds filters failed cases and ignores drafts", () => {
+  const scoped = {
+    suiteSnapshot: {
+      cases: [
+        { id: "a", status: "active" },
+        { id: "b", status: "active" },
+        { id: "c", status: "draft" },
+        { id: "d", status: "active" }
+      ]
+    },
+    caseRuns: [
+      { caseId: "a", status: "passed" },
+      { caseId: "b", status: "failed" },
+      { caseId: "d", status: "error" }
+    ]
+  };
+  assert.deepEqual(resolveSuiteRunPdfCaseIds(scoped, { scope: "all" }), ["a", "b", "d"]);
+  assert.deepEqual(resolveSuiteRunPdfCaseIds(scoped, { scope: "failed" }), ["b", "d"]);
+  assert.deepEqual(resolveSuiteRunPdfCaseIds(scoped, { caseId: "a", scope: "failed" }), ["a"]);
+});
+
+test("suite run PDF paginates long answers instead of hard-clipping at ~320 chars", () => {
+  const longAnswer = [
+    "最新日における広告実績の集計結果をご報告します。",
+    "### 広告実績の分析",
+    `- **集計日**: 2026年08月06日`,
+    `- **配信規模**: ${"あ".repeat(120)}`,
+    `- **クリック率 (CTR)**: 4.3%`,
+    `- **応募単価 (CPA)**: ${"い".repeat(120)}`
+  ].join("\n");
+  const run = {
+    ...runFixture,
+    events: [
+      { kind: "data.generated_sql", payload: "SELECT 1" },
+      { kind: "text.final_response", payload: { parts: [longAnswer] } }
+    ]
+  };
+  const inputs = buildSuiteRunInputs({
+    report,
+    agents,
+    runsById: { run_1: run },
+    caseIds: ["case_1"]
+  });
+  const evidencePages = inputs.filter((item) => item._pageKind === "case-evidence");
+  assert.ok(evidencePages.length >= 1);
+  const joined = evidencePages.map((page) => page.responseAnswer || "").join("\n");
+  assert.match(joined, /クリック率 \(CTR\)/);
+  assert.match(joined, /応募単価 \(CPA\)/);
+  assert.ok(joined.includes("4.3%"));
 });

@@ -66,7 +66,7 @@ import {
   searchChunks
 } from "./lib/knowledge.mjs";
 import { ensureNotoSansJpFont } from "./lib/pdf-font.mjs";
-import { pdfFilename, renderCaseSpecPdf, renderSuiteRunPdf, isPartialSuiteRun } from "./lib/pdf-reports.mjs";
+import { pdfFilename, renderCaseSpecPdf, renderSuiteRunPdf, isPartialSuiteRun, resolveSuiteRunPdfCaseIds } from "./lib/pdf-reports.mjs";
 import {
   AGENTS_SHEET,
   bootstrapManagedSheets,
@@ -1779,9 +1779,28 @@ async function processSuiteRun(suite, suiteRun, abortController) {
   const caseRunById = new Map();
   const activeCases = new Map();
   const signal = abortController.signal;
+  let lastProgressSaveAt = 0;
+  let unsavedProgressCount = 0;
+  const PROGRESS_SAVE_MIN_MS = 1_000;
 
   const orderedCaseRuns = () =>
     suite.cases.map((item) => caseRunById.get(item.id)).filter(Boolean);
+
+  /** 同一 suite-run オブジェクトへの連続 PUT を間引き（GCS 429 対策） */
+  const persistProgressLocked = async ({ force = false } = {}) => {
+    const now = Date.now();
+    unsavedProgressCount += 1;
+    if (
+      !force &&
+      unsavedProgressCount < 8 &&
+      now - lastProgressSaveAt < PROGRESS_SAVE_MIN_MS
+    ) {
+      return;
+    }
+    unsavedProgressCount = 0;
+    lastProgressSaveAt = now;
+    await suiteRunStore.save(suiteRun);
+  };
 
   const setCasePhase = (testCase, caseIndex, phase) =>
     withLock(async () => {
@@ -1796,7 +1815,7 @@ async function processSuiteRun(suite, suiteRun, abortController) {
       suiteRun.activeCases = active;
       suiteRun.currentCase = active[0] || null;
       suiteRun.updatedAt = new Date().toISOString();
-      await suiteRunStore.save(suiteRun);
+      await persistProgressLocked({ force: false });
     });
 
   const recordCaseResult = (caseResult) =>
@@ -1816,7 +1835,7 @@ async function processSuiteRun(suite, suiteRun, abortController) {
       suiteRun.summary.concurrency = concurrency;
       if (suiteRun.status !== "cancelling") suiteRun.status = "running";
       suiteRun.updatedAt = new Date().toISOString();
-      await suiteRunStore.save(suiteRun);
+      await persistProgressLocked({ force: active.length === 0 });
     });
 
   suiteRun.summary = {
@@ -2074,9 +2093,17 @@ async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryRe
     throw error;
   }
   const runSuite = selectSuiteCasesForRun(suite, caseIds);
-  const suiteRun = await createSuiteRun(runSuite);
+  // フル実行では下書きをスナップショットに含めない（実行対象のみ）
+  const suiteForRun =
+    Array.isArray(caseIds) && caseIds.length
+      ? runSuite
+      : {
+          ...runSuite,
+          cases: (runSuite.cases || []).filter((item) => isCaseRunnable(item))
+        };
+  const suiteRun = await createSuiteRun(suiteForRun);
   if (Array.isArray(caseIds) && caseIds.length) {
-    suiteRun.selectedCaseIds = runSuite.cases.map((item) => item.id);
+    suiteRun.selectedCaseIds = suiteForRun.cases.map((item) => item.id);
     suiteRun.partialRun = true;
   }
   if (retryOfSuiteRunId) suiteRun.retryOfSuiteRunId = retryOfSuiteRunId;
@@ -2085,15 +2112,34 @@ async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryRe
   const abortController = new AbortController();
   suiteRunControllers.set(suiteRun.id, abortController);
   setImmediate(() => {
-    processSuiteRun(runSuite, suiteRun, abortController)
+    processSuiteRun(suiteForRun, suiteRun, abortController)
       .catch(async (error) => {
         const now = new Date().toISOString();
         suiteRun.status = abortController.signal.aborted ? "cancelled" : "failed";
         suiteRun.fatalError = abortController.signal.aborted ? undefined : error.message;
+        const finishedIds = new Set((suiteRun.caseRuns || []).map((item) => item.caseId));
+        for (const testCase of suiteForRun.cases || []) {
+          if (finishedIds.has(testCase.id)) continue;
+          suiteRun.caseRuns.push({
+            ...cancelledCaseResult(testCase),
+            skipReason: abortController.signal.aborted
+              ? "実行が中止されたためスキップしました。"
+              : "実行処理が中断されたため完了できませんでした。"
+          });
+        }
+        suiteRun.caseRuns = (suiteForRun.cases || [])
+          .map((testCase) => suiteRun.caseRuns.find((item) => item.caseId === testCase.id))
+          .filter(Boolean);
         suiteRun.currentCase = null;
         suiteRun.activeCases = [];
         suiteRun.completedAt = now;
         suiteRun.updatedAt = now;
+        suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
+        suiteRun.responseReceipt = suiteResponseReceipt(suiteRun.summary, suiteForRun.cases.length);
+        suiteRun.summary.responseReceipt = suiteRun.responseReceipt;
+        suiteRun.summary.completed = suiteRun.caseRuns.length;
+        suiteRun.summary.running = 0;
+        suiteRun.summary.total = suiteForRun.cases.length;
         suiteRun.aiSummary = {
           status: "failed",
           message: abortController.signal.aborted
@@ -2115,7 +2161,13 @@ async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryRe
             ? "実行が中止されたため、Google Sheetsへ出力していません。"
             : "実行処理が中断されたため、Google Sheetsへ出力していません。"
         };
-        await suiteRunStore.save(suiteRun);
+        try {
+          await suiteRunStore.save(suiteRun);
+        } catch (saveError) {
+          console.error(
+            `[suite-run] ${suiteRun.id} failed to persist terminal state: ${saveError.stack || saveError.message}`
+          );
+        }
         console.error(`[suite-run] ${suiteRun.id} ${error.stack || error.message}`);
       })
       .finally(() => {
@@ -2266,21 +2318,28 @@ async function normalizeValidateAndSaveSuite(input, existing, context, method) {
   });
 }
 
-async function renderReportPdfResource({ reportId, caseId }) {
+async function renderReportPdfResource({ reportId, caseId, scope = "all" }) {
   const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportId)));
   if (isSuiteRunActive(report)) throw Object.assign(new Error("実行中のレポートはPDF出力できません。"), { status: 409 });
-  const caseIds = caseId ? [caseId] : null;
-  if (caseId && !(report.suiteSnapshot?.cases || []).some((item) => item.id === caseId)) {
+  const caseIds = resolveSuiteRunPdfCaseIds(report, { caseId, scope });
+  if (String(scope || "all").toLowerCase() === "failed" && !caseId && !(caseIds || []).length) {
+    throw Object.assign(new Error("不合格のケースがないため、失敗のみのPDFを出力できません。"), { status: 404 });
+  }
+  if (caseId && !(caseIds || []).includes(caseId)) {
     throw Object.assign(new Error("指定のテストケースが見つかりません。"), { status: 404 });
   }
-  const targetCaseIds = caseIds ? new Set(caseIds) : null;
+  const targetCaseIds = caseIds?.length ? new Set(caseIds) : null;
   const runsById = {};
   for (const item of report.caseRuns || []) {
     if (!item.runId || (targetCaseIds && !targetCaseIds.has(item.caseId))) continue;
     try { runsById[item.runId] = await runStore.get(item.runId); } catch { /* best effort */ }
   }
   const bytes = await renderSuiteRunPdf({ report, caseIds, agents: await agentStore.list(), runsById });
-  const filename = caseId ? pdfFilename("run-case", caseId) : pdfFilename("run", report.id);
+  const filename = caseId
+    ? pdfFilename("run-case", caseId)
+    : String(scope || "").toLowerCase() === "failed"
+      ? pdfFilename("run-failed", report.id)
+      : pdfFilename("run", report.id);
   return {
     content: [{
       type: "resource",
@@ -3404,16 +3463,13 @@ const server = createServer(async (request, response) => {
         throw error;
       }
       const caseId = String(url.searchParams.get("caseId") || "").trim();
-      const caseIds = caseId
-        ? [caseId]
-        : isPartialSuiteRun(report)
-          ? (report.selectedCaseIds?.length
-            ? report.selectedCaseIds
-            : (report.suiteSnapshot?.cases || report.caseRuns || [])
-                .map((item) => item.id || item.caseId)
-                .filter(Boolean)
-                .slice(0, 1))
-          : null;
+      const scope = String(url.searchParams.get("scope") || "all").trim().toLowerCase();
+      const caseIds = resolveSuiteRunPdfCaseIds(report, { caseId, scope });
+      if (scope === "failed" && !caseId && !(caseIds || []).length) {
+        const error = new Error("不合格のケースがないため、失敗のみのPDFを出力できません。");
+        error.status = 404;
+        throw error;
+      }
       const targetCaseIds = caseIds?.length ? new Set(caseIds) : null;
       const runIds = (report.caseRuns || [])
         .filter((item) => item.runId && (!targetCaseIds || targetCaseIds.has(item.caseId)))
@@ -3438,7 +3494,9 @@ const server = createServer(async (request, response) => {
         pdf,
         caseIds?.length === 1
           ? pdfFilename("run-case", caseIds[0])
-          : pdfFilename("run", report.id)
+          : scope === "failed"
+            ? pdfFilename("run-failed", report.id)
+            : pdfFilename("run", report.id)
       );
       return;
     }

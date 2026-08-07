@@ -277,6 +277,65 @@ function askConfirm(message, { confirmLabel = tr("続ける", "Continue"), cance
   });
 }
 
+/** PDF 出力対象: all | failed | null(cancel) */
+function askPdfExportScope({ totalCount = 0, failedCount = 0 } = {}) {
+  return new Promise((resolve) => {
+    const existing = document.querySelector("#pdf-export-scope-dialog");
+    existing?.remove();
+    const dialog = document.createElement("dialog");
+    dialog.id = "pdf-export-scope-dialog";
+    dialog.className = "pdf-export-scope-dialog";
+    dialog.innerHTML = `
+      <form method="dialog" class="pdf-export-scope-shell">
+        <header>
+          <span class="eyebrow">PDF</span>
+          <h2>${tr("PDFの出力対象", "PDF export scope")}</h2>
+          <p>${tr("ダウンロードするケース範囲を選んでください。", "Choose which cases to include in the download.")}</p>
+        </header>
+        <div class="pdf-export-scope-options" role="radiogroup" aria-label="${tr("出力対象", "Export scope")}">
+          <label class="pdf-export-scope-option">
+            <input type="radio" name="pdf-scope" value="all" checked>
+            <span>
+              <strong>${tr("すべて", "All cases")}</strong>
+              <small>${tr("実行対象 {count} 件を出力", "Export {count} runnable cases", { count: formatLocaleNumber(totalCount) })}</small>
+            </span>
+          </label>
+          <label class="pdf-export-scope-option ${failedCount ? "" : "is-disabled"}">
+            <input type="radio" name="pdf-scope" value="failed" ${failedCount ? "" : "disabled"}>
+            <span>
+              <strong>${tr("失敗のみ", "Failed only")}</strong>
+              <small>${failedCount
+                ? tr("不合格 {count} 件のみ出力", "Export {count} failed cases only", { count: formatLocaleNumber(failedCount) })
+                : tr("不合格ケースはありません", "There are no failed cases")}</small>
+            </span>
+          </label>
+        </div>
+        <footer>
+          <button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button>
+          <button value="confirm" class="button report-action-pdf" type="submit">${icon("file-down", 15)}${tr("PDFをダウンロード", "Download PDF")}</button>
+        </footer>
+      </form>`;
+    document.body.appendChild(dialog);
+    const finish = (result) => {
+      dialog.removeEventListener("close", onClose);
+      dialog.remove();
+      resolve(result);
+    };
+    const onClose = () => {
+      if (dialog.returnValue !== "confirm") {
+        finish(null);
+        return;
+      }
+      const selected = dialog.querySelector('input[name="pdf-scope"]:checked')?.value || "all";
+      finish(selected === "failed" ? "failed" : "all");
+    };
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    refreshIcons();
+    dialog.querySelector('button[value="confirm"]')?.focus();
+  });
+}
+
 async function json(url, options) {
   const requiredFeature = googleAuthFeatureForRequest(url, options);
   const readiness = requiredFeature
@@ -1736,8 +1795,8 @@ function weatherMarkLabel(mark) {
   return tr("未判定", "Not scored");
 }
 
-function clipPreviewText(value, max = 360) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+function clipPreviewText(value, max = 8_000) {
+  const text = String(value || "").trim();
   if (!text) return "";
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
@@ -1762,7 +1821,7 @@ function extractRunEvidenceClient(run = {}) {
       .filter((event) => event.kind === "text.final_response")
       .flatMap((event) => event.payload?.parts || [])
       .join("\n"),
-    420
+    8_000
   );
   const resultEvent = (run.events || []).find((event) => event.kind === "data.result");
   const payload = resultEvent?.payload || {};
@@ -2053,17 +2112,21 @@ function reportCaseCardHtml(item, { evidence = null, showRunLink = true, showImp
   </article>`;
 }
 
-function reportCasePendingHtml(testCase, index, { active = null, isCancelling = false } = {}) {
+function reportCasePendingHtml(testCase, index, { active = null, isCancelling = false, interrupted = false } = {}) {
   const phaseLabel = {
     running: tr("Data Agentを実行中", "Running Data Agent"),
     evaluating_system: tr("システム要件を確認中", "Checking system requirements"),
     evaluating_business: tr("Geminiでビジネス要件を判定中", "Evaluating business requirements with Gemini")
-  }[active?.phase] || (isCancelling ? tr("中止待ち", "Waiting to stop") : tr("実行待ち", "Waiting"));
-  return `<article class="report-case ${active ? "case-running" : "case-pending"}">
+  }[active?.phase] || (interrupted
+    ? tr("実行が中断されました", "Run was interrupted")
+    : isCancelling
+      ? tr("中止待ち", "Waiting to stop")
+      : tr("実行待ち", "Waiting"));
+  return `<article class="report-case ${active ? "case-running" : interrupted ? "case-interrupted" : "case-pending"}">
     <header>
       <span class="${active ? "live-spinner" : "case-index"}">${active ? "" : String(index + 1).padStart(2, "0")}</span>
-      <div><strong>${esc(testCase.title)}</strong><small>${active ? phaseLabel : (isCancelling ? tr("中止待ち", "Waiting to stop") : tr("実行待ち", "Waiting"))}</small></div>
-      <b>${active ? (isCancelling ? tr("中止中", "Cancelling") : tr("実行中", "Running")) : "—"}</b>
+      <div><strong>${esc(testCase.title)}</strong><small>${active ? phaseLabel : phaseLabel}</small></div>
+      <b>${active ? (isCancelling ? tr("中止中", "Cancelling") : tr("実行中", "Running")) : interrupted ? tr("中断", "Interrupted") : "—"}</b>
     </header>
     <div class="skeleton-layer"><strong>システム要件</strong><div class="skeleton-checks"><i></i><i></i><i></i></div></div>
     <div class="skeleton-layer"><strong>ビジネス要件</strong><div class="skeleton-grade"></div></div>
@@ -2072,7 +2135,9 @@ function reportCasePendingHtml(testCase, index, { active = null, isCancelling = 
 
 function beginSuiteRunNavigation(suite, { caseIds = null } = {}) {
   const requestedIds = Array.isArray(caseIds) && caseIds.length ? new Set(caseIds) : null;
-  const cases = (suite.cases || []).filter((item) => !requestedIds || requestedIds.has(item.id));
+  const cases = (suite.cases || [])
+    .filter((item) => !requestedIds || requestedIds.has(item.id))
+    .filter((item) => requestedIds || String(item.status || "").toLowerCase() !== "draft");
   const launchId = `launch_${Date.now().toString(36)}_${globalThis.crypto?.randomUUID?.().slice(0, 8) || Math.random().toString(36).slice(2, 10)}`;
   const report = {
     id: launchId,
@@ -4106,15 +4171,20 @@ function suiteAiSummaryHtml(report, { isLive = false } = {}) {
 }
 
 function reportCaseNavItemHtml(entry, selectedCaseId) {
-  const { testCase, item, index, active } = entry;
+  const { testCase, item, index, active, interrupted = false } = entry;
   const caseId = testCase.id || testCase.caseId;
-  const status = item?.status || (active ? "running" : "pending");
+  const status = item?.status || (active ? "running" : interrupted ? "cancelled" : "pending");
   const score = item?.evaluation?.score;
   const grade = scoreGrade(score);
+  const pendingLabel = active
+    ? tr("実行中", "Running")
+    : interrupted
+      ? tr("中断", "Interrupted")
+      : tr("待機", "Pending");
   return `<button type="button" class="report-case-nav-item ${status} ${caseId === selectedCaseId ? "selected" : ""}" data-report-case-id="${esc(caseId)}" aria-current="${caseId === selectedCaseId ? "true" : "false"}">
     <span class="case-nav-index">${String(index + 1).padStart(2, "0")}</span>
     <span class="case-nav-copy"><strong>${esc(item?.title || testCase.title || caseId)}</strong><small>${esc(caseId)}</small></span>
-    <span class="case-nav-result"><b>${grade || "—"}</b><small>${item ? responseReceiptLabel(item.responseReceipt) : active ? tr("実行中", "Running") : tr("待機", "Pending")}</small></span>
+    <span class="case-nav-result"><b>${grade || "—"}</b><small>${item ? responseReceiptLabel(item.responseReceipt) : pendingLabel}</small></span>
   </button>`;
 }
 
@@ -4147,21 +4217,41 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   const overallScore = report.summary?.score;
   const scoreText = (value) => value === null || value === undefined ? "—" : `${value}%`;
   const completedCases = new Map((report.caseRuns || []).map((item) => [item.caseId, item]));
-  const suiteCases = report.suiteSnapshot?.cases || report.caseRuns || [];
+  const allSuiteCases = report.suiteSnapshot?.cases || report.caseRuns || [];
+  // ケース別評価は実行対象（下書き以外）のみ。過去 run で snapshot に draft が残っていても隠す。
+  const suiteCases = allSuiteCases.filter(
+    (testCase) => String(testCase.status || "").toLowerCase() !== "draft"
+  );
   const focusCaseId = report.selectedCaseIds?.[0] || suiteCases[0]?.id || suiteCases[0]?.caseId || "";
   const focusCase =
     suiteCases.find((item) => (item.id || item.caseId) === focusCaseId) || suiteCases[0] || null;
-  const activeCases = report.activeCases?.length
-    ? report.activeCases
-    : report.currentCase
-      ? [report.currentCase]
-      : [];
-  const caseEntries = suiteCases.map((testCase, index) => ({
-    testCase,
-    index,
-    item: completedCases.get(testCase.id || testCase.caseId) || null,
-    active: activeCases.find((entry) => entry.caseId === (testCase.id || testCase.caseId)) || null
-  }));
+  // 完了／失敗後に残った activeCases は「実行中」表示に使わない（クラッシュ後の見た目バグ防止）
+  const liveActiveCases = isLive
+    ? report.activeCases?.length
+      ? report.activeCases
+      : report.currentCase
+        ? [report.currentCase]
+        : []
+    : [];
+  const staleActiveIds = new Set(
+    isLive
+      ? []
+      : (report.activeCases || [])
+          .map((entry) => entry.caseId)
+          .filter(Boolean)
+  );
+  const caseEntries = suiteCases.map((testCase, index) => {
+    const caseId = testCase.id || testCase.caseId;
+    const item = completedCases.get(caseId) || null;
+    const active = liveActiveCases.find((entry) => entry.caseId === caseId) || null;
+    return {
+      testCase,
+      index,
+      item,
+      active,
+      interrupted: Boolean(!item && !active && staleActiveIds.has(caseId))
+    };
+  });
   const filteredEntries = state.reportCaseFilter === "issues"
     ? caseEntries.filter((entry) => ["failed", "review_required", "error"].includes(entry.item?.status))
     : state.reportCaseFilter === "no_response"
@@ -4178,14 +4268,23 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   const selectedCaseDetail = selectedEntry?.item
     ? reportCaseCardHtml({ ...selectedEntry.item, prompt: selectedEntry.item.prompt || selectedEntry.testCase.prompt }, { evidence: evidenceByCaseId?.[selectedEntry.item.caseId] || null })
     : selectedEntry
-      ? reportCasePendingHtml(selectedEntry.testCase, selectedEntry.index, { active: selectedEntry.active, isCancelling })
+      ? reportCasePendingHtml(selectedEntry.testCase, selectedEntry.index, {
+          active: selectedEntry.active,
+          isCancelling,
+          interrupted: selectedEntry.interrupted
+        })
       : empty(
           filteredEntries.length ? tr("ケースがありません", "No cases") : tr("該当ケースはありません", "No matching cases"),
           filteredEntries.length ? tr("テストスイートにケースを追加してください。", "Add a case to the test suite.") : tr("別の絞り込み条件を選択してください。", "Choose a different filter.")
         );
   const systemGrades = systemGradeCounts(report);
-  const runningCount = report.summary?.running ?? (report.activeCases?.length || (report.currentCase ? 1 : 0));
+  const runningCount = isLive
+    ? report.summary?.running ?? (liveActiveCases.length || 0)
+    : 0;
   const concurrency = report.summary?.concurrency || 30;
+  const displayTotal = suiteCases.length || total;
+  const displayCompleted = caseEntries.filter((entry) => entry.item).length;
+  const displayProgress = displayTotal ? Math.round((displayCompleted / displayTotal) * 100) : 0;
   const runningHeadline = isCancelling
     ? tr("実行を中止しています", "Stopping the run")
     : isPartial
@@ -4276,18 +4375,18 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
     })}
     ${detailBody(`
       <section class="report-hero">
-      <div class="overall-score"><span>${isLive ? tr("実行進捗", "Run progress") : tr("総合スコア", "Overall score")}</span><strong>${isLive ? completed : overallScore ?? "—"}<small>/${isLive ? total : 100}</small></strong>${!isLive && businessConfigured > 0 ? `<em>${tr("システム 40% + ビジネス 60%", "System 40% + business 60%")}</em>` : !isLive ? `<em>${tr("ビジネス要件未評価のためシステムスコアを採用", "System score used because business requirements were not evaluated")}</em>` : ""}</div>
+      <div class="overall-score"><span>${isLive ? tr("実行進捗", "Run progress") : tr("総合スコア", "Overall score")}</span><strong>${isLive ? displayCompleted : overallScore ?? "—"}<small>/${isLive ? displayTotal : 100}</small></strong>${!isLive && businessConfigured > 0 ? `<em>${tr("システム 40% + ビジネス 60%", "System 40% + business 60%")}</em>` : !isLive ? `<em>${tr("ビジネス要件未評価のためシステムスコアを採用", "System score used because business requirements were not evaluated")}</em>` : ""}</div>
       <div class="ring" style="--progress:${systemScore};--ring-color:#5d86ff"><b>${scoreText(systemScore)}</b><span>${tr("システム要件", "System requirements")}</span></div>
       <div class="ring ${businessConfigured ? "" : "unscored"}" style="--progress:${businessScore || 0};--ring-color:#55d3a2"><b>${scoreText(businessScore)}</b><span>${tr("ビジネス要件", "Business requirements")}</span></div>
       <div class="hero-copy">${statusPill(report.status)}${isPartial ? `<span class="partial-run-badge">${tr("個別実行", "Single-case")}</span>` : ""}<h2>${isLive ? runningHeadline : finishedHeadline}</h2><p>${isLive ? (isCancelling ? tr("進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled.") : isPartial ? tr("完了するまでこの画面で待機します。システム要件とビジネス要件の判定が順に表示されます。", "Stay on this screen until the run finishes. System and business checks appear as they complete.") : tr("ケースが完了するたびに、このテスト実行結果へ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear here as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) })) : finishedCopy}</p></div>
-      ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
+      ${isLive ? `<div class="live-progress"><span style="width:${displayProgress}%"></span></div>` : ""}
     </section>
     <section class="report-metrics"><div class="response-receipt-metric"><span>${tr("レスポンス受領", "Response receipt")}</span><strong>${responseReceipt.receiptRate == null ? "—" : `${formatLocaleNumber(responseReceipt.receiptRate)}%`}</strong><small>${tr("受領 {received} / 試行 {attempted} · 未受領 {failed}", "{received} received / {attempted} attempted · {failed} not received", { received: formatLocaleNumber(responseReceipt.received || 0), attempted: formatLocaleNumber(responseReceipt.attempted || 0), failed: formatLocaleNumber(responseReceipt.notReceived || 0) })}</small></div><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(report.summary?.evaluated ?? completed) })}</small></div><div><span>${tr("ビジネス要件 適合率", "Business requirement fulfillment")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("受入条件未設定", "No acceptance criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
     ${launchError ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("実行開始処理に失敗しました", "Failed to start the run")}</strong><p>${esc(launchError)}</p></div><a class="button secondary" href="${esc(launchBackHref)}">${tr("編集画面に戻る", "Back to editor")}</a></section>` : suiteAiSummaryHtml(report, { isLive })}
     ${proposalGenerationBanner}
     ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
-    <div class="section-row report-workbench-title"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${tr("左の一覧からケースを選択すると、評価・入力・実行結果を同じ順序で確認できます。", "Select a case to review its evaluation, input, and result in a consistent order.")}</p></div><b class="live-updated">${launchError ? tr("実行開始失敗", "Start failed") : launchPending ? tr("実行開始中", "Starting run") : isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
+    <div class="section-row report-workbench-title"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${tr("左の一覧からケースを選択すると、評価・入力・実行結果を同じ順序で確認できます。", "Select a case to review its evaluation, input, and result in a consistent order.")}</p></div><b class="live-updated">${launchError ? tr("実行開始失敗", "Start failed") : launchPending ? tr("実行開始中", "Starting run") : isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(displayCompleted), total: formatLocaleNumber(displayTotal) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
     <section class="report-workbench">
       <aside class="report-case-nav" aria-label="${tr("テストケース一覧", "Test case list")}">
         <div class="report-case-nav-head"><div><strong>${tr("テストケース", "Test cases")}</strong><small>${formatLocaleNumber(caseEntries.length)} ${tr("件", "cases")}</small></div><div class="case-filter" role="group" aria-label="${tr("ケース絞り込み", "Case filter")}"><button type="button" data-report-filter="all" class="${state.reportCaseFilter === "all" ? "active" : ""}">${tr("すべて", "All")}</button><button type="button" data-report-filter="issues" class="${state.reportCaseFilter === "issues" ? "active" : ""}">${tr("要対応", "Issues")}</button><button type="button" data-report-filter="no_response" class="${state.reportCaseFilter === "no_response" ? "active" : ""}">${tr("未受領", "No response")}</button><button type="button" data-report-filter="improvements" class="${state.reportCaseFilter === "improvements" ? "active" : ""}">${tr("改善提案", "Proposals")}</button></div></div>
@@ -4359,17 +4458,32 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   });
   document.querySelector("#export-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-report-pdf");
+    const runnableCases = (report.suiteSnapshot?.cases || []).filter(
+      (item) => String(item.status || "").toLowerCase() !== "draft"
+    );
+    const failedCount = (report.caseRuns || []).filter((item) =>
+      ["failed", "error"].includes(item.status)
+    ).length;
+    const totalCount = runnableCases.length || (report.caseRuns || []).length;
+    let scope = "all";
+    if (!(isPartial && focusCaseId)) {
+      scope = await askPdfExportScope({ totalCount, failedCount });
+      if (!scope) return;
+    }
     await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
       try {
-        const pdfPath =
-          isPartial && focusCaseId
-            ? `/api/suite-runs/${report.id}/export/pdf?caseId=${encodeURIComponent(focusCaseId)}`
-            : `/api/suite-runs/${report.id}/export/pdf`;
+        const params = new URLSearchParams();
+        if (isPartial && focusCaseId) params.set("caseId", focusCaseId);
+        else if (scope === "failed") params.set("scope", "failed");
+        const qs = params.toString();
+        const pdfPath = `/api/suite-runs/${report.id}/export/pdf${qs ? `?${qs}` : ""}`;
         const filename = await downloadPdf(
           pdfPath,
           isPartial && focusCaseId
             ? `prismtrail-run-case-${focusCaseId}.pdf`
-            : `prismtrail-run-${report.id}.pdf`
+            : scope === "failed"
+              ? `prismtrail-run-failed-${report.id}.pdf`
+              : `prismtrail-run-${report.id}.pdf`
         );
         notify(tr("テスト実行結果PDFをダウンロードしました: {name}", "Downloaded test run result PDF: {name}", { name: filename }), "success");
       } catch (error) {
@@ -4606,9 +4720,26 @@ function renderRunDetail(run) {
   });
   document.querySelector("#export-context-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-context-report-pdf");
+    const runnableCases = (suiteRun.suiteSnapshot?.cases || []).filter(
+      (item) => String(item.status || "").toLowerCase() !== "draft"
+    );
+    const failedCount = (suiteRun.caseRuns || []).filter((item) =>
+      ["failed", "error"].includes(item.status)
+    ).length;
+    const scope = await askPdfExportScope({
+      totalCount: runnableCases.length || (suiteRun.caseRuns || []).length,
+      failedCount
+    });
+    if (!scope) return;
     await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
       try {
-        const filename = await downloadPdf(`/api/suite-runs/${suiteRun.id}/export/pdf`, `prismtrail-run-${suiteRun.id}.pdf`);
+        const qs = scope === "failed" ? "?scope=failed" : "";
+        const filename = await downloadPdf(
+          `/api/suite-runs/${suiteRun.id}/export/pdf${qs}`,
+          scope === "failed"
+            ? `prismtrail-run-failed-${suiteRun.id}.pdf`
+            : `prismtrail-run-${suiteRun.id}.pdf`
+        );
         notify(tr("テスト実行結果PDFをダウンロードしました: {name}", "Downloaded test run result PDF: {name}", { name: filename }), "success");
       } catch (error) {
         notify(error.message);
