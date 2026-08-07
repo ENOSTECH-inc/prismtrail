@@ -44,6 +44,18 @@ GCS objects are written with generation preconditions. Reads cache the observed 
 subsequent writes use `ifGenerationMatch`; a concurrent modification returns a storage conflict
 instead of silently overwriting newer data.
 
+GCS list reads use a generation-aware local read-through cache under ignored runtime `data/`.
+Every list still asks GCS for object metadata, so GCS remains the SSOT; only objects whose
+generation is new or missing locally are downloaded again. A five-second in-memory list snapshot
+coalesces concurrent UI bootstrap requests, while a short-lived ADC token cache avoids resolving
+the same credential once per object. Saves and deletes invalidate the affected namespace cache,
+and a `401` forces one token refresh and retry.
+
+The browser's blocking bootstrap loads only configuration, authentication, Agents, Suites, and the
+lightweight storage descriptor. Run history, Suite Run history, and Sheet connections load after
+the first route is visible; routes that depend on one of those collections await only that
+collection. This prevents large GCS histories from holding the global loading overlay open.
+
 ## Authentication
 
 The local app uses Application Default Credentials:

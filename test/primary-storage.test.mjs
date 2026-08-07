@@ -176,3 +176,114 @@ test("GCS storage inspection counts metadata and downloads only bounded samples"
   assert.equal(calls.length, 2);
   assert.match(calls[1].url, /alt=media/);
 });
+
+test("GCS lists reuse generation-matched disk cache and a short-lived token", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-eval-gcs-cache-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  let now = 1_000;
+  let tokenCalls = 0;
+  const calls = [];
+  const items = [
+    { name: "shared/suites/suite_1.json", generation: "11" },
+    { name: "shared/suites/suite_2.json", generation: "12" }
+  ];
+  const fetchImpl = async (url) => {
+    const rawUrl = String(url);
+    calls.push(rawUrl);
+    if (!rawUrl.includes("alt=media")) {
+      return new Response(JSON.stringify({ items }), { status: 200 });
+    }
+    const id = rawUrl.includes("suite_1.json") ? "suite_1" : "suite_2";
+    const generation = items.find((item) => item.name.includes(`${id}.json`)).generation;
+    return new Response(JSON.stringify({ id, name: id }), {
+      status: 200,
+      headers: { "x-goog-generation": generation }
+    });
+  };
+  const dependencies = {
+    cacheDirectory: root,
+    fetchImpl,
+    now: () => now,
+    listCacheTtlMs: 10,
+    tokenCacheTtlMs: 1_000,
+    tokenProvider: async () => {
+      tokenCalls += 1;
+      return { token: `test-token-${tokenCalls}`, source: "test" };
+    }
+  };
+  const firstBackend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket", prefix: "shared/" },
+    dependencies
+  );
+
+  assert.deepEqual((await firstBackend.list("suites")).map((item) => item.id), ["suite_1", "suite_2"]);
+  assert.equal(calls.filter((url) => url.includes("alt=media")).length, 2);
+  assert.equal(tokenCalls, 1);
+
+  const requestCount = calls.length;
+  assert.equal((await firstBackend.list("suites")).length, 2);
+  assert.equal(calls.length, requestCount);
+
+  now += 20;
+  assert.equal((await firstBackend.list("suites")).length, 2);
+  assert.equal(calls.filter((url) => url.includes("alt=media")).length, 2);
+  assert.equal(tokenCalls, 1);
+
+  items[0].generation = "13";
+  now += 20;
+  assert.equal((await firstBackend.list("suites")).length, 2);
+  assert.equal(calls.filter((url) => url.includes("alt=media")).length, 3);
+
+  const secondBackend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket", prefix: "shared/" },
+    dependencies
+  );
+  assert.equal((await secondBackend.list("suites")).length, 2);
+  assert.equal(calls.filter((url) => url.includes("alt=media")).length, 3);
+});
+
+test("GCS retries once with a refreshed token after a 401", async () => {
+  let tokenCalls = 0;
+  const authorizationHeaders = [];
+  const backend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket", prefix: "shared/" },
+    {
+      tokenProvider: async () => {
+        tokenCalls += 1;
+        return { token: `test-token-${tokenCalls}`, source: "test" };
+      },
+      fetchImpl: async (_url, options = {}) => {
+        authorizationHeaders.push(options.headers.Authorization);
+        if (authorizationHeaders.length === 1) return new Response("expired", { status: 401 });
+        return new Response(JSON.stringify({ name: "portable-test-bucket" }), { status: 200 });
+      }
+    }
+  );
+
+  assert.equal((await backend.validate()).authSource, "test");
+  assert.equal(tokenCalls, 2);
+  assert.deepEqual(authorizationHeaders, ["Bearer test-token-1", "Bearer test-token-2"]);
+});
+
+test("GCS coalesces concurrent token refreshes after 401 responses", async () => {
+  let tokenCalls = 0;
+  const backend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket" },
+    {
+      tokenProvider: async () => ({ token: `token-${++tokenCalls}`, source: "test" }),
+      fetchImpl: async (_url, options = {}) => {
+        const token = options.headers.Authorization;
+        if (token === "Bearer token-1") return new Response("expired", { status: 401 });
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      }
+    }
+  );
+
+  await Promise.all([
+    backend.request("https://storage.googleapis.test/a"),
+    backend.request("https://storage.googleapis.test/b"),
+    backend.request("https://storage.googleapis.test/c")
+  ]);
+
+  assert.equal(tokenCalls, 2);
+});
