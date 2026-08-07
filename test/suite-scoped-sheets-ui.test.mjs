@@ -7,10 +7,19 @@ const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8")
 test("Suite detail owns the Google Sheets connection modal", () => {
   assert.match(app, /function suiteSheetConnectionDialog\(suite, connection\)/);
   assert.match(app, /id="suite-sheet-dialog"/);
+  assert.match(app, /data-close-suite-sheet/);
+  assert.match(app, /sheetDialog\?\.close\(\)/);
   assert.match(app, /data-open-suite-sheet/);
   assert.match(app, /name="spreadsheetUrl" required/);
   assert.match(app, /body: JSON\.stringify\(\{[\s\S]*suiteId: state\.selectedSuite\.id/);
   assert.doesNotMatch(app, /<select name="agentId" required/);
+});
+
+test("Sheets settings lists every Suite and offers Suite-scoped binding", () => {
+  assert.match(app, /const suiteBindings = state\.suites/);
+  assert.match(app, /テストスイート別のGシート紐付け/);
+  assert.match(app, /新規紐付け/);
+  assert.match(app, /suites\/\$\{encodeURIComponent\(suite\.id\)\}\/edit\/sheets/);
 });
 
 test("Suite editor resolves Sheets by Suite ID and supports mixed-Agent Suites", () => {
