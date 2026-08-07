@@ -14,6 +14,7 @@ import {
   reportToRows,
   rowsToSuiteInput,
   sampleReportTemplate,
+  sheetColumnLabel,
   SHEET_SCHEMA_VERSION,
   SUITE_DISPLAY_HEADERS,
   suitesCatalogToRows,
@@ -23,12 +24,21 @@ import {
   updateBordersRequest
 } from "../lib/google-sheets.mjs";
 
-test("current Sheets schema exports business criteria without accuracy-source columns", () => {
-  assert.equal(SHEET_SCHEMA_VERSION, "6");
+test("current Sheets schema exports business criteria and fixed improvement proposal columns", () => {
+  assert.equal(SHEET_SCHEMA_VERSION, "7");
   assert.equal(SUITE_DISPLAY_HEADERS.includes("精度検証ソースJSON"), false);
   assert.equal(REPORT_DISPLAY_HEADERS.includes("精度検証ソース状態"), false);
-  assert.equal(REPORT_DISPLAY_HEADERS.at(-2), "レスポンス受領");
-  assert.equal(REPORT_DISPLAY_HEADERS.at(-1), "HTTPステータス");
+  assert.equal(REPORT_DISPLAY_HEADERS[19], "レスポンス受領");
+  assert.equal(REPORT_DISPLAY_HEADERS[20], "HTTPステータス");
+  assert.deepEqual(REPORT_DISPLAY_HEADERS.slice(21), [
+    "改善提案状態",
+    "①システムプロンプト",
+    "②リファレンスクエリ",
+    "③元mart",
+    "④その他",
+    "提案モデル",
+    "提案生成日時"
+  ]);
 });
 
 test("selectSuiteCasesForRun narrows cases and rejects missing ids", () => {
@@ -67,6 +77,13 @@ test("updateBordersRequest draws outer and inner grid lines", () => {
   assert.equal(request.updateBorders.innerHorizontal.style, "SOLID");
   assert.equal(request.updateBorders.innerVertical.style, "SOLID");
   assert.equal(request.updateBorders.left.style, "SOLID_MEDIUM");
+});
+
+test("sheet column labels cover proposal columns beyond Z", () => {
+  assert.equal(sheetColumnLabel(1), "A");
+  assert.equal(sheetColumnLabel(26), "Z");
+  assert.equal(sheetColumnLabel(27), "AA");
+  assert.equal(sheetColumnLabel(28), "AB");
 });
 
 test("suite format round-trips through fixed rows", () => {
@@ -364,7 +381,7 @@ test("report format contains stable metadata and case rows", () => {
       }
     ]
   });
-  assert.match(rows[14][1], /紫色の列/);
+  assert.match(rows[14][1], /Gemini改善提案はV〜AB/);
   assert.equal(rows[12][1], 100);
   assert.equal(REPORT_DISPLAY_HEADERS[7], "ビジネス評価 (A/B/C/D)");
   assert.equal(REPORT_DISPLAY_HEADERS[12], "ビジネス要件の検証内容");
@@ -382,8 +399,9 @@ test("report format contains stable metadata and case rows", () => {
   assert.equal(rows[16][14], "gemini-2.5-flash-lite");
   assert.deepEqual(rows[9], ["システム要件 正解率", 90]);
   assert.deepEqual(rows[10], ["ビジネス要件 適合率", 100]);
-  assert.equal(rows[16].at(-2), "受領済み");
-  assert.equal(rows[16].at(-1), 200);
+  assert.equal(rows[16][19], "受領済み");
+  assert.equal(rows[16][20], 200);
+  assert.equal(rows[16][21], "不明");
 });
 
 test("report keeps response receipt independent and leaves legacy results unknown", () => {
@@ -399,8 +417,41 @@ test("report keeps response receipt independent and leaves legacy results unknow
       { caseId: "legacy" }
     ]
   });
-  assert.deepEqual(rows.slice(16).map((row) => row.at(-2)), ["受領済み", "未受領", "不明"]);
-  assert.deepEqual(rows.slice(16).map((row) => row.at(-1)), [200, 503, ""]);
+  assert.deepEqual(rows.slice(16).map((row) => row[19]), ["受領済み", "未受領", "不明"]);
+  assert.deepEqual(rows.slice(16).map((row) => row[20]), [200, 503, ""]);
+});
+
+test("report exports the same four-section improvement proposal contract", () => {
+  const rows = reportToRows({
+    id: "suite_run_improvement",
+    suiteId: "suite_1",
+    suiteName: "Improvement",
+    status: "failed",
+    summary: {},
+    caseRuns: [{
+      caseId: "case_b",
+      improvementProposal: {
+        status: "succeeded",
+        model: "gemini-2.5-flash",
+        generatedAt: "2026-08-07T01:02:03.000Z",
+        sections: {
+          systemPrompt: { summary: "指示を明確化", actions: [{ proposal: "期間を明記", rationale: "曖昧", expectedEffect: "月の誤認を防止" }] },
+          referenceQuery: { summary: "集計例を追加", actions: [] },
+          sourceMart: { summary: "対象月列を追加", actions: [] },
+          other: { summary: "回帰テストを追加", actions: [] }
+        }
+      }
+    }]
+  });
+  const row = rows[16];
+  assert.equal(row[21], "生成済み");
+  assert.match(row[22], /指示を明確化/);
+  assert.match(row[22], /期待効果: 月の誤認を防止/);
+  assert.equal(row[23], "集計例を追加");
+  assert.equal(row[24], "対象月列を追加");
+  assert.equal(row[25], "回帰テストを追加");
+  assert.equal(row[26], "gemini-2.5-flash");
+  assert.equal(row[27], "2026-08-07T01:02:03.000Z");
 });
 
 test("report marks business summaries as unset when no business evaluation ran", () => {

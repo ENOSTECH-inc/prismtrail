@@ -5,7 +5,7 @@
 - `DataAgent`: a local connection definition for an existing Google Cloud Data Agent. The app never creates, updates, or deletes the Google-side agent.
 - `TestSuite`: a reusable collection of prompts, selected agents, thinking modes, and deterministic expectations.
 - `Run`: the existing single-prompt execution capture, including normalized events and BigQuery job metadata.
-- `SuiteRun`: an immutable suite snapshot plus one evaluated result per case. Completed runs also persist a bounded Gemini-generated `aiSummary`; it is commentary only and never changes deterministic scores, grades, or pass/fail state.
+- `SuiteRun`: an immutable suite snapshot plus one evaluated result per case. Completed runs also persist a bounded Gemini-generated `aiSummary` and case-level `improvementProposal` records; both are commentary only and never change deterministic scores, grades, pass/fail state, Agent configuration, or mart data.
 - `SheetConnection`: metadata for one ADC-accessible Google Spreadsheet. `sheetName` is the PrismTrail-managed display name, while `title` records the current Google-side title. The spreadsheet is owned by exactly one registered `DataAgent` through `agentId`. Cell values and access tokens are not persisted.
 
 Domain JSON is persisted through a switchable primary-storage interface. Local storage uses
@@ -142,7 +142,7 @@ a sheet. Legacy unowned connections are auto-assigned only when exactly one regi
 unowned connection make the mapping unambiguous; otherwise they remain inactive until explicitly
 reconnected with an Agent.
 
-Exports use schema version 6; schema versions 1–5 remain import-compatible:
+Exports use schema version 7; schema versions 1–6 remain import-compatible:
 
 - `AgentEval_TestSuite`: editable suite metadata and case rows (including free-form case `memo`, which is not used for scoring)
 - `AgentEval_Report`: read-only exported suite-run results
@@ -150,6 +150,10 @@ Exports use schema version 6; schema versions 1–5 remain import-compatible:
 The report sheet includes independent response-receipt and HTTP-status columns. These operational
 signals are displayed alongside, but never folded into, deterministic or business grades. Missing
 fields in legacy Suite Runs are shown as unknown rather than inferred from their old pass/fail state.
+Schema v7 appends proposal status, the fixed four improvement sections (system prompt, reference
+query, source mart, and other), model, and generation time after those existing columns. Existing
+column positions are unchanged. Failed generation is represented explicitly instead of fabricating
+proposal text.
 
 Deterministic `systemRequirements` stay separate from checklist-style `businessRequirements`. Store business checks as `criteriaItems` (the Sheets column uses `;` separators). The Vertex AI judge scores each item as sun/cloud/rain (☀️/☁️/☔️) in one call, using the full Conversational Analytics `Message` stream JSON plus compact official schema notes—not final text alone. Each criterion must include any required values, periods, units, tolerances, or table expectations; there is no separate accuracy-source configuration or external URL/BigQuery ground-truth execution. The server derives A/B/C/D from mark weights (sun=1, cloud=0.5, rain=0: all sun→A, ratio≥0.9→B, ≥0.5→C, else D) and keeps per-item reasons. A/B pass by default; judge infrastructure failures become `review_required`, never a fabricated D grade. Legacy `accuracyCriteria` and `accuracyValidation` fields are read only where needed for migration and are omitted from new normalized records and Sheet exports. `requiredPhrases` matches final-response text only; `requiredSqlTables` matches identifiers in generated SQL, matched queries, and BigQuery job query text (not the answer prose).
 
@@ -171,7 +175,19 @@ usable HTTP 200 JSON response. `POST /api/suite-runs/:id/rerun-response-failures
 Suite Run from the original immutable suite snapshot and those server-stored IDs. The new run records
 `retryOfSuiteRunId` and `retryReason`; callers cannot substitute a different retry target list.
 
-Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate the one-spreadsheet/one-agent invariant. After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The automatic destination is the one ready connection whose `agentId` matches the Suite Run's immutable suite snapshot; recent activity never changes routing. Export failure is recorded on the Run without changing the completed evaluation result.
+After the evaluation result is finalized, the server derives improvement targets from persisted
+case results. Overall score 100 (grade A), skipped, and cancelled cases are excluded; B/C/D cases
+and actionable unevaluated `review_required` / `error` cases are included. The target list is never
+accepted from the browser. Gemini receives bounded evidence (prompt, requirements, failed checks,
+business reasons, final answer, SQL, small result samples, and a credential-filtered projection of
+the published Data Agent configuration) and returns exactly four sections: system prompt, reference
+query, source mart, and other. Missing evidence must be declared, and a no-response case may only
+receive operational retry/connectivity guidance under “other”. Generation uses concurrency 3 and
+persists partial failures per case. `POST /api/suite-runs/:id/improvement-proposals` regenerates from
+the immutable Suite snapshot and stored runs, then refreshes the bound report Sheet. Proposals are
+non-authoritative and are never applied automatically.
+
+Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate the one-spreadsheet/one-agent invariant. After the final case, the Run is finalized before external reporting begins. Suite summary and case improvement generation run in parallel; their persisted results are saved before the report Sheet export starts. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The automatic destination is the one ready connection whose `agentId` matches the Suite Run's immutable suite snapshot; recent activity never changes routing. Export or Gemini failure is recorded on the Run without changing the completed evaluation result.
 
 SQL evidence is normalized across three valid execution paths: a `data.generated_sql` event, a verified `data.matched_query` carrying `exampleQuery.sqlQuery`, or a BigQuery query job. This prevents the verified-query reuse path from failing `requireSql`. Run detail responses also resolve their originating Suite Run and case by stored context or reverse lookup, allowing old and new runs to render the same breadcrumb and back-navigation contract. Completed Suite Runs with the legacy false-negative SQL check are corrected in the API view without mutating the original trace.
 
@@ -179,7 +195,7 @@ SQL evidence is normalized across three valid execution paths: a `data.generated
 
 QA-oriented PDF downloads are generated server-side with pdfme (`@pdfme/generator`) and an embedded Noto Sans JP font (`assets/fonts/`, downloaded on first use or during Docker build). The print-safe report system follows a TestRail-style review flow: Gemini's non-authoritative AI comment, KPI cards, status and business-grade distributions, explicitly paginated test-result indexes, then case-level outcome, deterministic checks, business acceptance criteria, and evidence. Color is reserved for hierarchy and result state.
 
-After case evaluation finishes, the server sends a compact result-only projection to Vertex AI and stores a structured AI comment (`headline`, `comment`, strengths, concerns, and next actions). Raw message streams are excluded from this summary request. Summary generation and Google Sheets export run independently; a Gemini failure is recorded for retry through `POST /api/suite-runs/:id/ai-summary` and cannot change or block the completed evaluation result. The report UI and integrated PDF consume the same persisted comment.
+After case evaluation finishes, the server sends a compact result-only projection to Vertex AI and stores a structured AI comment (`headline`, `comment`, strengths, concerns, and next actions). Raw message streams are excluded from this summary request. A Gemini failure is recorded for retry through `POST /api/suite-runs/:id/ai-summary` and cannot change or block the completed evaluation result. The report UI and integrated PDF consume the same persisted comment. A succeeded case improvement proposal adds fixed, pre-paginated PDF cards for its four sections after the case evidence page. Grade-A and legacy cases add no proposal page; failed generation remains visible in the UI and Sheet. PDF export waits while proposal generation is pending so all three outputs reflect one persisted snapshot.
 
 PDF layouts do not rely on renderer-driven table pagination. Every logical report page is composed on a fixed A4 grid and large collections are chunked before rendering. The compact test index fits up to 14 cases per page without repeating cover-page summary metrics. Index rows carry internal PDF `GoTo` links to their case overview, while non-cover pages expose a header link back to the report summary (or the case overview for partial reports). This keeps headers, rows, footers, and navigation deterministic. `npm run report:samples` generates representative case-spec, single-case result, and full suite-run PDFs under `output/pdf/` for visual regression review; tests also assert that each logical input produces exactly one PDF page.
 

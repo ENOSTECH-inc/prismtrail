@@ -533,6 +533,34 @@ dialog footer { justify-content: end; gap: 8px; margin-top: 18px; }
 .ai-summary-groups ul { margin: 7px 0 0; padding-left: 16px; color: #5b6d86; font-size: 9px; line-height: 1.55; }
 .ai-summary-card.generating { align-items: center; }
 .ai-summary-card.failed { border-color: #f0d2d5; background: #fff7f7; }
+.improvement-proposal { margin-top: 18px; padding: 17px; border: 1px solid #cfdbf2; border-radius: 12px; background: linear-gradient(145deg,#f8faff,#f2f6ff); }
+.improvement-proposal > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.improvement-proposal > header > div { display: flex; align-items: center; gap: 10px; color: #315efb; }
+.improvement-proposal > header span small,.improvement-proposal > header span h3 { display: block; margin: 0; }
+.improvement-proposal > header span small { color: #687a96; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.improvement-proposal > header span h3 { margin-top: 3px; color: var(--navy); font-size: 15px; }
+.improvement-diagnosis { margin: 0 0 13px; padding: 11px 13px; border-left: 3px solid #315efb; color: #31445e; background: #fff; line-height: 1.65; white-space: pre-wrap; }
+.improvement-proposal-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.improvement-proposal-card { min-width: 0; padding: 13px; border: 1px solid #d9e2f2; border-radius: 10px; background: #fff; }
+.improvement-proposal-card > header { display: flex; align-items: center; gap: 7px; color: #315efb; }
+.improvement-proposal-card > header > span { display: grid; width: 22px; height: 22px; place-items: center; color: #fff; border-radius: 50%; background: #315efb; font: 700 9px "DM Mono",monospace; }
+.improvement-proposal-card h4 { margin: 0; color: var(--navy); font-size: 11px; }
+.improvement-proposal-card > p { margin: 9px 0 0; color: #53647a; font-size: 9px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.improvement-proposal-card ol { display: grid; gap: 9px; margin: 10px 0 0; padding-left: 18px; }
+.improvement-proposal-card li { color: #263b56; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.improvement-proposal-card li strong { display: block; }
+.improvement-proposal-card li p { margin: 3px 0 0; color: #64748b; }
+.improvement-proposal-card li small { display: block; margin-top: 3px; color: #315efb; }
+.improvement-evidence-gaps { margin-top: 10px; padding: 10px 12px; border-radius: 9px; color: #74531a; background: #fff8e7; font-size: 9px; }
+.improvement-evidence-gaps ul { margin: 5px 0 0; padding-left: 17px; }
+.improvement-proposal > footer { margin-top: 11px; color: #718096; font-size: 8px; }
+.improvement-proposal.generating,.improvement-proposal.failed { display: flex; align-items: center; gap: 12px; }
+.improvement-proposal.generating div strong,.improvement-proposal.failed div strong { display: block; color: var(--navy); }
+.improvement-proposal.generating div p,.improvement-proposal.failed div p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
+.improvement-proposal.failed { border-color: #efc8cd; background: #fff7f7; }
+.improvement-generation-status { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #cad8ff; border-radius: 10px; background: #f4f7ff; }
+.improvement-generation-status strong { display: block; color: var(--navy); font-size: 11px; }
+.improvement-generation-status p { margin: 3px 0 0; color: var(--muted); font-size: 9px; }
 .report-cases { max-width: 1100px; display: grid; gap: 10px; margin: 0 auto; }
 .report-case { padding: 16px; border: 1px solid var(--line); border-left: 4px solid #26b47e; border-radius: 10px; background: #fff; }
 .report-case.failed { border-left-color: var(--red); }
@@ -1417,6 +1445,11 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .mcp-command-terminal { align-items: stretch; flex-wrap: wrap; }
   .mcp-command-terminal code { flex: 1 1 calc(100% - 20px); }
   .mcp-command-terminal .mcp-copy-setup { margin-left: 20px; }
+}
+@media(max-width:960px) {
+  .improvement-proposal-grid { grid-template-columns: 1fr; }
+  .improvement-proposal>header,.improvement-proposal.failed { align-items: flex-start; flex-wrap: wrap; }
+  .case-filter { flex-wrap: wrap; }
 }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto!important; animation: none!important; } }
 @media print {
