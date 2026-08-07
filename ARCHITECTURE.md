@@ -41,8 +41,11 @@ download at most three representative JSON objects per namespace for display lab
 loading complete knowledge indexes merely to explain what will become visible after switching.
 
 GCS objects are written with generation preconditions. Reads cache the observed generation and
-subsequent writes use `ifGenerationMatch`; a concurrent modification returns a storage conflict
-instead of silently overwriting newer data.
+subsequent writes use `ifGenerationMatch`. Concurrent modifications (HTTP 412) and object mutation
+rate limits (HTTP 429) refresh or back off and retry a few times so suite-run progress writes do not
+crash the process. Create-if-absent writes (`ifGenerationMatch=0`) still surface conflicts
+immediately. Suite-run progress persistence is also coalesced in-process to reduce same-object PUT
+churn under high case concurrency.
 
 GCS list reads use a generation-aware local read-through cache under ignored runtime `data/`.
 Every list still asks GCS for object metadata, so GCS remains the SSOT; only objects whose

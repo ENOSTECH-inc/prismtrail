@@ -488,6 +488,19 @@ dialog footer { justify-content: end; gap: 8px; margin-top: 18px; }
 .app-confirm-shell { display: grid; gap: 14px; padding: 20px; }
 .app-confirm-shell > p { margin: 0; color: #40536c; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .app-confirm-shell > footer { margin-top: 4px; }
+.pdf-export-scope-dialog { width: min(460px,94vw); padding: 0; border: 0; border-radius: 14px; background: #fff; box-shadow: 0 26px 70px rgba(12,27,49,.3); }
+.pdf-export-scope-shell { display: grid; gap: 14px; padding: 20px 22px 18px; }
+.pdf-export-scope-shell > header .eyebrow { display: block; color: #c53b4d; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
+.pdf-export-scope-shell > header h2 { margin: 4px 0 0; color: var(--navy); font-size: 16px; }
+.pdf-export-scope-shell > header p { margin: 6px 0 0; color: #667b9c; font-size: 11px; line-height: 1.55; }
+.pdf-export-scope-options { display: grid; gap: 8px; }
+.pdf-export-scope-option { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 10px; align-items: start; margin: 0; padding: 12px 13px; border: 1px solid var(--line); border-radius: 10px; background: #f8fbff; cursor: pointer; }
+.pdf-export-scope-option:has(input:checked) { border-color: #315efb; background: #eef3ff; box-shadow: 0 0 0 1px rgba(49,94,251,.18); }
+.pdf-export-scope-option.is-disabled { opacity: .55; cursor: not-allowed; }
+.pdf-export-scope-option input { margin-top: 2px; }
+.pdf-export-scope-option strong { display: block; color: var(--navy); font-size: 12px; }
+.pdf-export-scope-option small { display: block; margin-top: 3px; color: #667b9c; font-size: 10px; line-height: 1.45; }
+.pdf-export-scope-shell > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 .quick-search-dialog { width: min(640px,92vw); padding: 0; overflow: hidden; border-radius: 14px; background: #fff; }
 .quick-search-dialog::backdrop { background: rgba(12,22,40,.55); backdrop-filter: blur(5px); }
 .quick-search-shell { display: grid; grid-template-rows: auto minmax(0,1fr) auto; max-height: min(72vh,620px); }

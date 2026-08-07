@@ -5,11 +5,21 @@ import test from "node:test";
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 
-test("evaluation report uses a master-detail case workbench", () => {
-  assert.match(app, /class="report-workbench"/);
-  assert.match(app, /data-report-case-id/);
-  assert.match(styles, /\.report-workbench\s*\{/);
-  assert.match(styles, /\.report-case-nav-item\.selected/);
+test("report PDF export opens a scope modal for all vs failed cases", () => {
+  assert.match(app, /function askPdfExportScope\(/);
+  assert.match(app, /pdf-export-scope-dialog/);
+  assert.match(app, /scope", "failed"/);
+  assert.match(app, /失敗のみ/);
+  assert.match(app, /clipPreviewText\(value, max = 8_000\)/);
+  assert.match(styles, /\.pdf-export-scope-dialog/);
+});
+
+test("report case workbench shows runnable cases only and ignores stale activeCases when finished", () => {
+  assert.match(app, /toLowerCase\(\) !== "draft"/);
+  assert.match(app, /liveActiveCases/);
+  assert.match(app, /staleActiveIds/);
+  assert.match(app, /interrupted:/);
+  assert.match(app, /tr\("中断", "Interrupted"\)/);
 });
 
 test("report separates response receipt and can rerun only missing responses", () => {

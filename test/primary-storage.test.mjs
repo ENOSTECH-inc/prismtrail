@@ -119,12 +119,71 @@ test("GCS writes use generation preconditions after a read", async () => {
   assert.equal(calls[1].options.headers.Authorization, "Bearer test-token");
 });
 
-test("GCS surfaces a generation race as a storage conflict", async () => {
+test("GCS retries after object mutation rate limits", async () => {
+  const calls = [];
+  const responses = [
+    new Response(JSON.stringify({ id: "suite_1" }), {
+      status: 200,
+      headers: { "x-goog-generation": "3" }
+    }),
+    new Response("rate limited", { status: 429 }),
+    new Response(JSON.stringify({ generation: "4" }), { status: 200 })
+  ];
+  const backend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket" },
+    {
+      tokenProvider: async () => ({ token: "test-token", source: "test" }),
+      fetchImpl: async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return responses.shift();
+      }
+    }
+  );
+  await backend.get("suites", "suite_1");
+  const started = Date.now();
+  await backend.save("suites", { id: "suite_1", name: "after rate limit" });
+  assert.ok(Date.now() - started >= 900);
+  assert.equal(calls.filter((item) => item.options.method === "POST").length, 2);
+});
+
+test("GCS retries a generation race and overwrites with the latest precondition", async () => {
+  const calls = [];
   const responses = [
     new Response(JSON.stringify({ id: "suite_1" }), {
       status: 200,
       headers: { "x-goog-generation": "7" }
     }),
+    new Response("generation mismatch", { status: 412 }),
+    new Response(JSON.stringify({ generation: "9" }), { status: 200 }),
+    new Response(JSON.stringify({ generation: "10" }), { status: 200 })
+  ];
+  const backend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket" },
+    {
+      tokenProvider: async () => ({ token: "test-token", source: "test" }),
+      fetchImpl: async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return responses.shift();
+      }
+    }
+  );
+  await backend.get("suites", "suite_1");
+  await backend.save("suites", { id: "suite_1", name: "recovered edit" });
+  assert.match(calls[1].url, /ifGenerationMatch=7/);
+  assert.match(calls[2].url, /storage\/v1\/b\/.*\/o\/.*suite_1\.json$/);
+  assert.match(calls[3].url, /ifGenerationMatch=9/);
+});
+
+test("GCS surfaces a generation race as a storage conflict after retries are exhausted", async () => {
+  const responses = [
+    new Response(JSON.stringify({ id: "suite_1" }), {
+      status: 200,
+      headers: { "x-goog-generation": "7" }
+    }),
+    new Response("generation mismatch", { status: 412 }),
+    new Response(JSON.stringify({ generation: "8" }), { status: 200 }),
+    new Response("generation mismatch", { status: 412 }),
+    new Response(JSON.stringify({ generation: "9" }), { status: 200 }),
     new Response("generation mismatch", { status: 412 })
   ];
   const backend = new GcsStorageBackend(
@@ -136,7 +195,7 @@ test("GCS surfaces a generation race as a storage conflict", async () => {
   );
   await backend.get("suites", "suite_1");
   await assert.rejects(
-    backend.save("suites", { id: "suite_1", name: "stale edit" }),
+    backend.save("suites", { id: "suite_1", name: "stale edit" }, { maxRetries: 3 }),
     { code: "EEXIST", status: 412 }
   );
 });
