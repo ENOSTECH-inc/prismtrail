@@ -97,6 +97,16 @@ test("single-case and full-suite runs navigate to an optimistic report before st
   assert.match(app, /if \(saveState\) saveState\.textContent/);
 });
 
+test("response-failure reruns reuse optimistic report navigation", () => {
+  const rerunSource = app.slice(
+    app.indexOf('document.querySelector("#rerun-response-failures")'),
+    app.indexOf('if (!launchPending && (isLive', app.indexOf('document.querySelector("#rerun-response-failures")'))
+  );
+  assert.ok(rerunSource.indexOf("beginSuiteRunNavigation") < rerunSource.indexOf("/rerun-response-failures"));
+  assert.match(rerunSource, /completeSuiteRunNavigation/);
+  assert.match(rerunSource, /report\.suiteSnapshot/);
+});
+
 test("suite cases keep acceptance criteria without a separate accuracy-validation editor", () => {
   assert.match(app, /data-criteria-editor/);
   assert.match(app, /Data Agentの回答・SQL・結果表・チャート/);

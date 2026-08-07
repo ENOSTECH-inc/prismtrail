@@ -24,9 +24,11 @@ import {
 } from "../lib/google-sheets.mjs";
 
 test("current Sheets schema exports business criteria without accuracy-source columns", () => {
-  assert.equal(SHEET_SCHEMA_VERSION, "5");
+  assert.equal(SHEET_SCHEMA_VERSION, "6");
   assert.equal(SUITE_DISPLAY_HEADERS.includes("精度検証ソースJSON"), false);
   assert.equal(REPORT_DISPLAY_HEADERS.includes("精度検証ソース状態"), false);
+  assert.equal(REPORT_DISPLAY_HEADERS.at(-2), "レスポンス受領");
+  assert.equal(REPORT_DISPLAY_HEADERS.at(-1), "HTTPステータス");
 });
 
 test("selectSuiteCasesForRun narrows cases and rejects missing ids", () => {
@@ -338,6 +340,7 @@ test("report format contains stable metadata and case rows", () => {
         status: "passed",
         runId: "run_1",
         runSummary: { durationMs: 800, totalBytesBilled: 1024 },
+        responseReceipt: { status: "received", httpStatus: 200 },
         evaluation: {
           score: 100,
           checks: [{ passed: true, label: "SQLを生成" }],
@@ -379,6 +382,25 @@ test("report format contains stable metadata and case rows", () => {
   assert.equal(rows[16][14], "gemini-2.5-flash-lite");
   assert.deepEqual(rows[9], ["システム要件 正解率", 90]);
   assert.deepEqual(rows[10], ["ビジネス要件 適合率", 100]);
+  assert.equal(rows[16].at(-2), "受領済み");
+  assert.equal(rows[16].at(-1), 200);
+});
+
+test("report keeps response receipt independent and leaves legacy results unknown", () => {
+  const rows = reportToRows({
+    id: "suite_run_receipt",
+    suiteId: "suite_1",
+    suiteName: "Receipt",
+    status: "failed",
+    summary: {},
+    caseRuns: [
+      { caseId: "received", responseReceipt: { status: "received", httpStatus: 200 } },
+      { caseId: "missing", responseReceipt: { status: "not_received", httpStatus: 503 } },
+      { caseId: "legacy" }
+    ]
+  });
+  assert.deepEqual(rows.slice(16).map((row) => row.at(-2)), ["受領済み", "未受領", "不明"]);
+  assert.deepEqual(rows.slice(16).map((row) => row.at(-1)), [200, 503, ""]);
 });
 
 test("report marks business summaries as unset when no business evaluation ran", () => {

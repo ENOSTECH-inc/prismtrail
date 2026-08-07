@@ -32,6 +32,38 @@ test("evaluates configured expectations", () => {
   assert.equal(result.score, 100);
 });
 
+test("response receipt is not an implicit system requirement", () => {
+  const result = evaluateRun({ events: [], summary: { errorCount: 4 } }, {});
+  assert.equal(result.status, "passed");
+  assert.equal(result.score, 100);
+  assert.deepEqual(result.checks, []);
+  assert.equal(result.checks.some((check) => ["final-response", "no-error"].includes(check.id)), false);
+});
+
+test("response failures are reported separately and excluded from grades", () => {
+  const summary = summarizeSuiteRun([
+    {
+      caseId: "ok",
+      status: "passed",
+      responseReceipt: { status: "received", httpStatus: 200 },
+      evaluation: { score: 100, system: { status: "passed", score: 100 } }
+    },
+    {
+      caseId: "retry",
+      status: "error",
+      error: "timeout",
+      responseReceipt: { status: "not_received", httpStatus: null },
+      evaluation: { status: "not_evaluated", score: null, system: { status: "not_evaluated", score: null } }
+    }
+  ]);
+  assert.equal(summary.systemScore, 100);
+  assert.equal(summary.passRate, 100);
+  assert.equal(summary.evaluated, 1);
+  assert.equal(summary.status, "failed");
+  assert.deepEqual(summary.responseReceipt.retryCaseIds, ["retry"]);
+  assert.equal(summary.responseReceipt.receiptRate, 50);
+});
+
 test("requiredSqlTables checks generated SQL identifiers, not answer text", () => {
   const run = {
     events: [

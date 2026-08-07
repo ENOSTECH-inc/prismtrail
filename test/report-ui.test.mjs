@@ -12,6 +12,17 @@ test("evaluation report uses a master-detail case workbench", () => {
   assert.match(styles, /\.report-case-nav-item\.selected/);
 });
 
+test("report separates response receipt and can rerun only missing responses", () => {
+  assert.match(app, /function responseReceiptBadge\(/);
+  assert.match(app, /data-report-filter="no_response"/);
+  assert.match(app, /responseReceipt\.retryCaseIds/);
+  assert.match(app, /id="rerun-response-failures"/);
+  assert.match(app, /\/rerun-response-failures/);
+  assert.match(app, /retryReason = "response_not_received"/);
+  assert.match(styles, /\.response-receipt-badge\.received/);
+  assert.match(styles, /\.response-receipt-badge\.not_received/);
+});
+
 test("run details separate the summary from raw response events", () => {
   assert.match(app, /data-run-tab="summary"/);
   assert.match(app, /data-run-tab="trace"/);
