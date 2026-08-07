@@ -66,7 +66,12 @@ test("suite editor separates run history from version history and groups actions
   assert.match(app, /case-export-menu/);
   assert.match(styles, /\.case-export-menu\s*\{/);
   assert.match(app, /id="export-latest-results-pdf"/);
-  assert.match(app, /function askLatestResultsPdfScope\(/);
+  assert.match(app, /id="export-latest-results-sheet"/);
+  assert.match(app, /function askLatestResultsScope\(/);
+  assert.match(app, /output: "pdf"/);
+  assert.match(app, /output: "sheet"/);
+  assert.match(app, /export-latest-results/);
+  assert.match(app, /AgentEval_Report/);
   assert.match(app, /latest_per_case/);
   assert.match(app, /latest_run/);
   assert.match(app, /case-nav-result-history/);
@@ -74,6 +79,7 @@ test("suite editor separates run history from version history and groups actions
   assert.match(app, /最終成功/);
   assert.match(app, /最終失敗/);
   assert.match(styles, /\.suite-result-rollup-summary\s*\{/);
+  assert.match(styles, /\.suite-action-sheet-note\s*\{/);
 });
 
 test("suite case workspace leads with the selected case and keeps actions in one row", () => {

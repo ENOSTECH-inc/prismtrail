@@ -26,3 +26,21 @@ test("REST and MCP report exports share the persisted export path", () => {
   assert.match(server, /await exportSuiteRunToSheetConnection\(connection, body\.suiteRunId\)/);
   assert.match(server, /const result = await exportSuiteRunToSheetConnection\(connection, reportId\)/);
 });
+
+test("latest-result Sheet export uses the shared corrected rollup without persisting a synthetic run", () => {
+  const source = server.slice(
+    server.indexOf("async function exportLatestSuiteResultsToSheetConnection"),
+    server.indexOf("async function createSuiteAiSummary")
+  );
+  assert.match(source, /suiteStore\.get\(String\(suiteId/);
+  assert.match(source, /assertConnectionSuiteScope\(connection, suite\.id/);
+  assert.match(source, /latestSuiteResultsReport\(suite, mode\)/);
+  assert.match(source, /withSpreadsheetLock\(connection\.spreadsheetId/);
+  assert.match(source, /writeReportSheet\(connection\.spreadsheetId, report\)/);
+  assert.match(source, /writeCatalogSheets\(connection\.spreadsheetId, catalog\)/);
+  assert.match(source, /latest-results-export:\$\{normalizedMode\}:\$\{suite\.id\}/);
+  assert.doesNotMatch(source, /suiteRunStore\.save/);
+  assert.match(server, /export-latest-results/);
+  assert.match(server, /body\.suiteId/);
+  assert.match(server, /body\.mode/);
+});

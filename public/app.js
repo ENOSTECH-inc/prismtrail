@@ -391,29 +391,31 @@ function askSuiteRunScope({ runnableCount = 0, withoutSuccessCount = 0 } = {}) {
   });
 }
 
-function askLatestResultsPdfScope(rollup = {}) {
+function askLatestResultsScope(rollup = {}, { output = "pdf" } = {}) {
   return new Promise((resolve) => {
-    document.querySelector("#suite-latest-pdf-dialog")?.remove();
+    document.querySelector("#suite-latest-results-dialog")?.remove();
     const hasLatestRun = Boolean(rollup.latestRun?.id);
     const resultCount = Number(rollup.summary?.resultCaseCount || 0);
     const totalCount = Number(rollup.summary?.totalCaseCount || 0);
+    const sheetOutput = output === "sheet";
     const dialog = document.createElement("dialog");
-    dialog.id = "suite-latest-pdf-dialog";
+    dialog.id = "suite-latest-results-dialog";
     dialog.className = "suite-action-scope-dialog";
     dialog.innerHTML = `
       <form method="dialog" class="suite-action-scope-shell">
-        <header><span class="eyebrow">LATEST RESULTS</span><h2>${tr("最新結果でPDF出力", "Export latest results PDF")}</h2><p>${tr("1回の実行結果、またはケースIDごとの最新結果を選べます。", "Choose one recent run or the latest stored result for each case ID.")}</p></header>
+        <header><span class="eyebrow">LATEST RESULTS</span><h2>${sheetOutput ? tr("最新結果をGシート出力", "Export latest results to Sheets") : tr("最新結果でPDF出力", "Export latest results PDF")}</h2><p>${tr("1回の実行結果、またはケースIDごとの最新結果を選べます。", "Choose one recent run or the latest stored result for each case ID.")}</p></header>
         <div class="suite-action-scope-options" role="radiogroup">
           <label class="suite-action-scope-option ${hasLatestRun ? "" : "is-disabled"}">
-            <input type="radio" name="suite-pdf-scope" value="latest_run" ${hasLatestRun && !resultCount ? "checked" : ""} ${hasLatestRun ? "" : "disabled"}>
+            <input type="radio" name="suite-latest-results-scope" value="latest_run" ${hasLatestRun && !resultCount ? "checked" : ""} ${hasLatestRun ? "" : "disabled"}>
             <span><strong>${tr("直近のテスト実行", "Latest test run")}</strong><small>${hasLatestRun ? tr("{date} の実行をそのまま出力", "Export the run from {date}", { date: fmtDate(rollup.latestRun.completedAt) }) : tr("実行履歴がありません", "No run history")}</small></span>
           </label>
           <label class="suite-action-scope-option ${resultCount ? "" : "is-disabled"}">
-            <input type="radio" name="suite-pdf-scope" value="latest_per_case" ${resultCount ? "checked" : "disabled"}>
+            <input type="radio" name="suite-latest-results-scope" value="latest_per_case" ${resultCount ? "checked" : "disabled"}>
             <span><strong>${tr("テストケースごとの最新結果", "Latest result per case")}</strong><small>${tr("現在の {total} ケースに、保存済み最新結果 {results} 件をロールアップ", "Roll up {results} stored results across the current {total} cases", { total: formatLocaleNumber(totalCount), results: formatLocaleNumber(resultCount) })}</small></span>
           </label>
         </div>
-        <footer><button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button><button value="confirm" class="button report-action-pdf" type="submit">${icon("file-down", 15)}${tr("PDFをダウンロード", "Download PDF")}</button></footer>
+        ${sheetOutput ? `<aside class="suite-action-sheet-note">${icon("sheet", 16)}<span>${tr("接続済みスプレッドシートの AgentEval_Report タブを、この内容で更新します。", "This replaces the AgentEval_Report tab in the connected spreadsheet.")}</span></aside>` : ""}
+        <footer><button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button><button value="confirm" class="button ${sheetOutput ? "sheet-link" : "report-action-pdf"}" type="submit">${icon(sheetOutput ? "sheet" : "file-down", 15)}${sheetOutput ? tr("Gシートへ出力", "Export to Sheets") : tr("PDFをダウンロード", "Download PDF")}</button></footer>
       </form>`;
     document.body.appendChild(dialog);
     const finish = (value) => {
@@ -423,7 +425,7 @@ function askLatestResultsPdfScope(rollup = {}) {
     };
     const onClose = () => finish(
       dialog.returnValue === "confirm"
-        ? dialog.querySelector('input[name="suite-pdf-scope"]:checked')?.value || null
+        ? dialog.querySelector('input[name="suite-latest-results-scope"]:checked')?.value || null
         : null
     );
     dialog.addEventListener("close", onClose);
@@ -1673,7 +1675,7 @@ function renderEditor() {
   const sheetReady = connectedSheet?.status === "ready";
   const resultRollup = state.suiteResultRollup?.suiteId === suite.id ? state.suiteResultRollup : null;
   const latestResultCount = Number(resultRollup?.summary?.resultCaseCount || 0);
-  const hasLatestPdfResult = Boolean(latestResultCount || resultRollup?.latestRun?.id);
+  const hasLatestResult = Boolean(latestResultCount || resultRollup?.latestRun?.id);
   const sheetShortcut = sheetReady
     ? `<button id="open-linked-sheet" class="button sheet-link" type="button">${icon("sheet", 15)}${tr("同期してGシートを開く", "Sync and open Sheets")}${icon("external-link", 13)}</button>`
     : `<button class="button secondary" type="button" data-open-suite-sheet>${icon(connectedSheet ? "triangle-alert" : "link", 15)}${connectedSheet ? tr("Sheets接続を確認", "Review Sheets connection") : tr("Google Sheetsを連携", "Connect Google Sheets")}</button>`;
@@ -1801,7 +1803,7 @@ function renderEditor() {
         subtitleHtml: `<em id="save-state">${tr("保存済み", "Saved")}</em> · ${tr("テストスイート", "Test suites")}`,
         backHref: "#/suites",
         backLabel: tr("テストスイート一覧に戻る", "Back to test suites"),
-        actions: `${localeSelector(true)}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="export-latest-results-pdf" class="button report-action-pdf" type="button" ${hasLatestPdfResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("file-down", 15)}${tr("最新結果でPDF出力", "Export latest results")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
+        actions: `${localeSelector(true)}<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="export-latest-results-sheet" class="button sheet-link" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("sheet", 15)}${tr("最新結果をGシート出力", "Export latest results to Sheets")}</button><button id="export-latest-results-pdf" class="button report-action-pdf" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("file-down", 15)}${tr("最新結果でPDF出力", "Export latest results")}</button><button id="run-current-suite" class="button bright" type="button">${icon("play", 15)}${tr("スイートを実行", "Run suite")}</button>`
       })}
       <div class="${columnClass}">
         ${showCaseNav ? caseNav(suite) : ""}
@@ -2981,7 +2983,7 @@ async function exportLatestSuiteResultsPdf() {
   try {
     if (document.querySelector("#suite-name")) await saveSuite({ silent: true });
     const rollup = await loadSuiteResultRollup(suite.id);
-    const mode = await askLatestResultsPdfScope(rollup);
+    const mode = await askLatestResultsScope(rollup, { output: "pdf" });
     if (!mode) return;
     setBusyOverlay(true, tr("最新結果PDFを生成中…", "Generating latest-results PDF…"));
     const filename = await downloadPdf(
@@ -2991,6 +2993,36 @@ async function exportLatestSuiteResultsPdf() {
         : `prismtrail-suite-${suite.id}-latest-run.pdf`
     );
     notify(tr("最新結果PDFをダウンロードしました: {name}", "Downloaded latest-results PDF: {name}", { name: filename }), "success");
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    setBusyOverlay(false);
+  }
+}
+
+async function exportLatestSuiteResultsSheet() {
+  const suite = state.selectedSuite;
+  if (!suite?.id) return notify(tr("スイートが見つかりません。", "Suite not found."));
+  try {
+    if (document.querySelector("#suite-name")) await saveSuite({ silent: true });
+    const connection = sheetConnectionForSuite(suite.id, { readyOnly: true });
+    if (!connection) {
+      notify(tr("先にこのテストスイートのGoogle Sheets接続を設定してください。", "Connect Google Sheets for this suite first."));
+      location.hash = `#/suites/${encodeURIComponent(suite.id)}/edit/sheets`;
+      return;
+    }
+    const rollup = await loadSuiteResultRollup(suite.id);
+    const mode = await askLatestResultsScope(rollup, { output: "sheet" });
+    if (!mode) return;
+    setBusyOverlay(true, tr("最新結果をGシートへ出力中…", "Exporting latest results to Sheets…"));
+    const exported = await json(`/api/sheets/connections/${encodeURIComponent(connection.id)}/export-latest-results`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ suiteId: suite.id, mode })
+    });
+    updateSheetConnection(exported.connection);
+    window.open(exported.connection.spreadsheetUrl || connection.spreadsheetUrl, "_blank", "noopener,noreferrer");
+    notify(tr("最新結果をGoogle Sheetsへ出力しました。", "Exported the latest results to Google Sheets."), "success");
   } catch (error) {
     notify(error.message);
   } finally {
@@ -5173,6 +5205,12 @@ app.addEventListener("click", async (event) => {
   if (latestResultsPdfButton) {
     event.preventDefault();
     exportLatestSuiteResultsPdf();
+    return;
+  }
+  const latestResultsSheetButton = event.target.closest("#export-latest-results-sheet");
+  if (latestResultsSheetButton) {
+    event.preventDefault();
+    exportLatestSuiteResultsSheet();
     return;
   }
   const quickSearchButton = event.target.closest("#open-quick-search");

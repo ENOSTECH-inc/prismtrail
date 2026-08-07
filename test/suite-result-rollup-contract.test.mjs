@@ -16,12 +16,12 @@ test("suite run scope is recomputed from persisted success history on the server
   assert.match(server, /scope: body\?\.scope/);
 });
 
-test("suite latest-result endpoints expose rollup metadata and both PDF modes", () => {
+test("suite latest-result endpoints expose rollup metadata and shared export modes", () => {
   assert.match(server, /result-rollup/);
   assert.match(server, /buildSuiteCaseResultRollup\(suite, await correctedSuiteRunsForRollup\(suite\.id\)\)/);
   assert.match(server, /latest-results-pdf/);
-  assert.match(server, /mode === "latest_run"/);
-  assert.match(server, /mode === "latest_per_case"/);
+  assert.match(server, /normalizedMode === "latest_run"/);
+  assert.match(server, /\["latest_run", "latest_per_case"\]/);
   assert.match(server, /buildLatestCaseResultReport/);
   assert.match(server, /correctedSuiteRunView/);
   assert.match(server, /pdfRunBodies\(report\)/);

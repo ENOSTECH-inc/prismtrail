@@ -1549,6 +1549,40 @@ async function exportSuiteRunToSheetConnection(connection, suiteRunId) {
   };
 }
 
+async function exportLatestSuiteResultsToSheetConnection(connection, suiteId, mode) {
+  const suite = await suiteStore.get(String(suiteId || ""));
+  assertConnectionSuiteScope(connection, suite.id, "評価レポートのテストスイート");
+  const { report, mode: normalizedMode } = await latestSuiteResultsReport(suite, mode);
+  const catalog = await scopedSheetCatalog(suite.id);
+  const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
+    const reportResult = await writeReportSheet(connection.spreadsheetId, report);
+    await writeCatalogSheets(connection.spreadsheetId, catalog);
+    return reportResult;
+  });
+  const now = new Date().toISOString();
+  const updatedConnection = await sheetConnectionStore.save({
+    ...connection,
+    title: result.spreadsheet.title,
+    spreadsheetUrl: result.spreadsheet.spreadsheetUrl,
+    authSource: result.spreadsheet.authSource,
+    status: "ready",
+    lastCheckedAt: now,
+    lastExportedAt: now,
+    lastOperation: `latest-results-export:${normalizedMode}:${suite.id}`,
+    updatedAt: now
+  });
+  return {
+    connection: sheetConnectionProjection(updatedConnection),
+    tabName: result.sheetTitle,
+    rowCount: result.rowCount,
+    suiteId: suite.id,
+    reportId: report.id,
+    mode: normalizedMode,
+    sourceSuiteRunIds: report.rollup?.sourceSuiteRunIds || [report.id],
+    exportedAt: now
+  };
+}
+
 async function createSuiteAiSummary(suiteRun) {
   if (!config.vertexProject) {
     return {
@@ -2349,9 +2383,9 @@ async function normalizeValidateAndSaveSuite(input, existing, context, method) {
   });
 }
 
-function assertPdfProposalReady(report) {
+function assertReportProposalReady(report) {
   if (["pending", "generating"].includes(report.improvementProposals?.status)) {
-    const error = new Error("改善提案の生成完了後にPDFを出力してください。");
+    const error = new Error("改善提案の生成完了後に結果を出力してください。");
     error.status = 409;
     throw error;
   }
@@ -2370,22 +2404,26 @@ async function pdfRunBodies(report) {
   return runsById;
 }
 
-async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
+async function latestSuiteResultsReport(suite, mode = "latest_per_case") {
+  const normalizedMode = String(mode || "latest_per_case").trim().toLowerCase();
+  if (!["latest_run", "latest_per_case"].includes(normalizedMode)) {
+    const error = new Error("結果の出力範囲が不正です。");
+    error.status = 400;
+    throw error;
+  }
   const suiteRuns = await correctedSuiteRunsForRollup(suite.id);
   const rollup = buildSuiteCaseResultRollup(suite, suiteRuns);
   if (!rollup.latestRun) {
-    const error = new Error("このスイートにはPDF出力できる実行結果がありません。");
+    const error = new Error("このスイートには出力できる実行結果がありません。");
     error.status = 404;
     throw error;
   }
 
   let report;
-  let filename;
-  if (mode === "latest_run") {
+  if (normalizedMode === "latest_run") {
     report = slimSuiteRun(suiteRuns.find((run) => run.id === rollup.latestRun.id));
-    assertPdfProposalReady(report);
-    filename = pdfFilename("latest-run", suite.id);
-  } else if (mode === "latest_per_case") {
+    assertReportProposalReady(report);
+  } else {
     if (!rollup.summary.resultCaseCount) {
       const error = new Error("現在のテストケースに対応する実行結果がありません。");
       error.status = 404;
@@ -2394,20 +2432,24 @@ async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
     report = buildLatestCaseResultReport(suite, suiteRuns);
     const sourceIds = new Set(report.rollup.sourceSuiteRunIds);
     for (const source of suiteRuns.filter((run) => sourceIds.has(run.id))) {
-      assertPdfProposalReady(source);
+      assertReportProposalReady(source);
     }
-    filename = pdfFilename("latest-case-results", suite.id);
-  } else {
-    const error = new Error("PDF出力範囲が不正です。");
-    error.status = 400;
-    throw error;
   }
+  return { report, mode: normalizedMode, rollup };
+}
 
+async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
+  const result = await latestSuiteResultsReport(suite, mode);
+  const { report } = result;
   const bytes = await renderSuiteRunPdf({
     report,
     agents: await agentStore.list(),
     runsById: await pdfRunBodies(report)
   });
+  const filename = pdfFilename(
+    result.mode === "latest_per_case" ? "latest-case-results" : "latest-run",
+    suite.id
+  );
   return { bytes, filename, report };
 }
 
@@ -3332,6 +3374,24 @@ const server = createServer(async (request, response) => {
         response,
         200,
         await exportSuiteRunToSheetConnection(connection, body.suiteRunId)
+      );
+      return;
+    }
+
+    const sheetExportLatestResultsMatch = url.pathname.match(
+      /^\/api\/sheets\/connections\/([a-zA-Z0-9_-]+)\/export-latest-results$/
+    );
+    if (request.method === "POST" && sheetExportLatestResultsMatch) {
+      const connection = await requireOwnedSheetConnection(sheetExportLatestResultsMatch[1]);
+      const body = await readJson(request);
+      sendJson(
+        response,
+        200,
+        await exportLatestSuiteResultsToSheetConnection(
+          connection,
+          body.suiteId,
+          body.mode
+        )
       );
       return;
     }
