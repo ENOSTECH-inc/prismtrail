@@ -89,10 +89,8 @@ policy, API enablement, and quota-project setup still apply.
 
 ## Execution
 
-Suite cases run sequentially to limit rate and cost surprises. Each case calls the same Data Agent execution path as the single test screen, then evaluates:
+Suite cases use bounded concurrency to limit rate and cost surprises. Each case calls the same Data Agent execution path as the single test screen. Whether the Conversational Analytics API returned a usable HTTP 200 JSON response is persisted separately as `responseReceipt`; it never contributes to the system, business, or overall grade. Cases without a received response remain unevaluated, are excluded from grade/pass-rate denominators, and are retained as explicit retry targets. Received responses are then evaluated against:
 
-- final response presence
-- absence of response errors
 - SQL generation when required
 - chart generation when required
 - duration ceiling
@@ -144,10 +142,14 @@ a sheet. Legacy unowned connections are auto-assigned only when exactly one regi
 unowned connection make the mapping unambiguous; otherwise they remain inactive until explicitly
 reconnected with an Agent.
 
-Exports use schema version 5; schema versions 1–4 remain import-compatible:
+Exports use schema version 6; schema versions 1–5 remain import-compatible:
 
 - `AgentEval_TestSuite`: editable suite metadata and case rows (including free-form case `memo`, which is not used for scoring)
 - `AgentEval_Report`: read-only exported suite-run results
+
+The report sheet includes independent response-receipt and HTTP-status columns. These operational
+signals are displayed alongside, but never folded into, deterministic or business grades. Missing
+fields in legacy Suite Runs are shown as unknown rather than inferred from their old pass/fail state.
 
 Deterministic `systemRequirements` stay separate from checklist-style `businessRequirements`. Store business checks as `criteriaItems` (the Sheets column uses `;` separators). The Vertex AI judge scores each item as sun/cloud/rain (☀️/☁️/☔️) in one call, using the full Conversational Analytics `Message` stream JSON plus compact official schema notes—not final text alone. Each criterion must include any required values, periods, units, tolerances, or table expectations; there is no separate accuracy-source configuration or external URL/BigQuery ground-truth execution. The server derives A/B/C/D from mark weights (sun=1, cloud=0.5, rain=0: all sun→A, ratio≥0.9→B, ≥0.5→C, else D) and keeps per-item reasons. A/B pass by default; judge infrastructure failures become `review_required`, never a fabricated D grade. Legacy `accuracyCriteria` and `accuracyValidation` fields are read only where needed for migration and are omitted from new normalized records and Sheet exports. `requiredPhrases` matches final-response text only; `requiredSqlTables` matches identifiers in generated SQL, matched queries, and BigQuery job query text (not the answer prose).
 
@@ -162,6 +164,12 @@ Imports accept both the legacy machine-oriented English labels and the Japanese 
 `POST /api/suites/:id/run` creates and persists a `running` Suite Run, returns `202 Accepted` immediately, and schedules Data Agent work in the local server process with bounded parallelism (default and max 30 concurrent cases via `SUITE_RUN_CONCURRENCY`). An optional JSON body `{ "caseIds": ["case_…"] }` runs only those cases (used by the editor’s single-case run); omitted `caseIds` runs the full suite. A second run of the same suite is rejected with `409` while status is `running` or `cancelling`. Progress is persisted through `activeCases` / `currentCase`, `caseRuns`, cumulative summary, and timestamps. `GET /api/suite-runs/:id` is therefore a durable polling boundary used by the live report UI; navigation or browser reload does not discard already persisted progress.
 
 `POST /api/suite-runs/:id/cancel` aborts the in-process controller for a live run (status becomes `cancelling`, then `cancelled`). Already finished case results are kept; in-flight Data Agent calls are aborted via `AbortSignal`; cases that never started are recorded as `cancelled`. If the process restarted and the in-memory controller is gone, cancel force-finalizes the persisted run as `cancelled` so the suite is not stuck behind a 409.
+
+Each Suite Run persists per-case `responseReceipt` records and a derived top-level receipt summary
+whose `retryCaseIds` contains only cases that attempted the Data Agent request but did not receive a
+usable HTTP 200 JSON response. `POST /api/suite-runs/:id/rerun-response-failures` starts a new partial
+Suite Run from the original immutable suite snapshot and those server-stored IDs. The new run records
+`retryOfSuiteRunId` and `retryReason`; callers cannot substitute a different retry target list.
 
 Google Sheets mutations (suite/report/catalog export-import and automatic report writeback) are serialized per spreadsheet ID so concurrent suite completions cannot interleave clear/rewrite of managed tabs. Connection binding changes are also serialized in-process so concurrent registrations cannot violate the one-spreadsheet/one-agent invariant. After the final case, the Run is finalized before external reporting begins. `sheetExport.status` then moves from `pending` to `exporting` and finally to `succeeded`, `failed`, or `skipped`. The automatic destination is the one ready connection whose `agentId` matches the Suite Run's immutable suite snapshot; recent activity never changes routing. Export failure is recorded on the Run without changing the completed evaluation result.
 

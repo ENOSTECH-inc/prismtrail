@@ -253,20 +253,24 @@ function isSuiteRunActive(run) {
   return run?.status === "running" || run?.status === "cancelling";
 }
 
-function isAbortError(error) {
-  return (
-    error?.name === "AbortError" ||
-    /aborted|AbortError/i.test(String(error?.message || ""))
-  );
-}
-
 function cancelledCaseResult(testCase) {
   return {
     caseId: testCase.id,
     title: testCase.title,
     status: "cancelled",
+    responseReceipt: { status: "not_run", httpStatus: null },
     skipReason: "実行が中止されたためスキップしました。",
     evaluation: { status: "cancelled", score: null, checks: [] }
+  };
+}
+
+function suiteResponseReceipt(summary, total) {
+  const receipt = summary?.responseReceipt || {};
+  const recorded = Number(receipt.total || 0);
+  return {
+    ...receipt,
+    total,
+    pending: Number(receipt.pending || 0) + Math.max(0, total - recorded)
   };
 }
 
@@ -1216,23 +1220,40 @@ async function executeRun(body) {
     thinkingMode,
     signal: body.signal
   });
-  const events = normalizeMessages(result.messages);
-  const jobs = await fetchJobDetails(events, result.token);
-  const summary = summarizeRun(events, jobs, result.durationMs);
-  return runStore.save({
-    schemaVersion: 1,
-    id,
-    createdAt,
-    question,
-    agent,
-    agentLabel,
-    context: body.context || null,
-    request: result.request,
-    rawMessages: result.messages,
-    events,
-    jobs,
-    summary
-  });
+  let events;
+  let jobs;
+  let summary;
+  try {
+    events = normalizeMessages(result.messages);
+    jobs = await fetchJobDetails(events, result.token);
+    summary = summarizeRun(events, jobs, result.durationMs);
+  } catch (error) {
+    error.responseReceived = true;
+    error.httpStatus = result.httpStatus ?? 200;
+    error.responseErrorKind = error.responseErrorKind || "post_processing_error";
+    throw error;
+  }
+  try {
+    return await runStore.save({
+      schemaVersion: 1,
+      id,
+      createdAt,
+      question,
+      agent,
+      agentLabel,
+      context: body.context || null,
+      request: result.request,
+      rawMessages: result.messages,
+      events,
+      jobs,
+      summary
+    });
+  } catch (error) {
+    error.responseReceived = true;
+    error.httpStatus = result.httpStatus ?? 200;
+    error.responseErrorKind = error.responseErrorKind || "persistence_error";
+    throw error;
+  }
 }
 
 /** Start a single-prompt run and return immediately; completion updates the stored run. */
@@ -1296,7 +1317,7 @@ async function createSuiteRun(suite) {
     throw new Error("実行可のテストケースがありません。ケースのステータスを「実行可」にしてください。");
   }
   const suiteRun = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: objectId("suite_run"),
     suiteId: suite.id,
     suiteName: suite.name,
@@ -1310,6 +1331,17 @@ async function createSuiteRun(suite) {
     sheetExport: { status: "pending" },
     aiSummary: { status: "pending" },
     caseRuns: [],
+    responseReceipt: {
+      total: suite.cases.length,
+      attempted: 0,
+      received: 0,
+      notReceived: 0,
+      notRun: 0,
+      pending: suite.cases.length,
+      unknown: 0,
+      receiptRate: null,
+      retryCaseIds: []
+    },
     summary: {
       status: "running",
       total: suite.cases.length,
@@ -1317,7 +1349,18 @@ async function createSuiteRun(suite) {
       skipped: suite.cases.length - runnableCount,
       completed: 0,
       running: 0,
-      concurrency: suiteRunConcurrency()
+      concurrency: suiteRunConcurrency(),
+      responseReceipt: {
+        total: suite.cases.length,
+        attempted: 0,
+        received: 0,
+        notReceived: 0,
+        notRun: 0,
+        pending: suite.cases.length,
+        unknown: 0,
+        receiptRate: null,
+        retryCaseIds: []
+      }
     }
   };
   await suiteRunStore.save(suiteRun);
@@ -1456,6 +1499,8 @@ async function processSuiteRun(suite, suiteRun, abortController) {
       suiteRun.currentCase = active[0] || null;
       suiteRun.caseRuns = orderedCaseRuns();
       suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
+      suiteRun.responseReceipt = suiteResponseReceipt(suiteRun.summary, suite.cases.length);
+      suiteRun.summary.responseReceipt = suiteRun.responseReceipt;
       suiteRun.summary.total = suite.cases.length;
       suiteRun.summary.completed = suiteRun.caseRuns.length;
       suiteRun.summary.running = active.length;
@@ -1486,6 +1531,7 @@ async function processSuiteRun(suite, suiteRun, abortController) {
           caseId: testCase.id,
           title: testCase.title,
           status: "skipped",
+          responseReceipt: { status: "not_run", httpStatus: null },
           skipReason: "ケースのステータスが実行可ではないためスキップしました。",
           evaluation: { status: "skipped", score: null, checks: [] }
         });
@@ -1498,19 +1544,33 @@ async function processSuiteRun(suite, suiteRun, abortController) {
         await recordCaseResult({
           caseId: testCase.id,
           title: testCase.title,
-          status: "failed",
+          status: "error",
+          responseReceipt: {
+            status: "not_run",
+            httpStatus: null,
+            errorKind: "agent_not_found",
+            message: "選択されたData Agentが登録されていません。"
+          },
           error: "選択されたData Agentが登録されていません。",
-          evaluation: { status: "failed", score: 0, checks: [] }
+          evaluation: {
+            status: "not_evaluated",
+            score: null,
+            checks: [],
+            system: { status: "not_evaluated", score: null, passedCount: 0, checkCount: 0, checks: [] },
+            business: { status: "not_evaluated", grade: null, score: null, passed: null }
+          }
         });
         return;
       }
 
+      let responseAttempted = false;
       try {
         if (signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
         const selectedKnowledgeSourceIds = testCase.knowledgeSourceIds?.length
           ? testCase.knowledgeSourceIds
           : suite.knowledgeSourceIds || [];
         const retrieved = await retrieveKnowledge(testCase.prompt, selectedKnowledgeSourceIds);
+        responseAttempted = true;
         const run = await executeRun({
           question: testCase.prompt,
           agent: agent.resourceName,
@@ -1599,6 +1659,11 @@ async function processSuiteRun(suite, suiteRun, abortController) {
           status: evaluation.status,
           runId: run.id,
           runSummary: run.summary,
+          responseReceipt: {
+            status: "received",
+            httpStatus: run.request?.httpStatus ?? 200,
+            receivedAt: new Date().toISOString()
+          },
           knowledge: {
             sourceIds: selectedKnowledgeSourceIds,
             retrievedChunks: retrieved.matches.map((chunk) => ({
@@ -1611,7 +1676,7 @@ async function processSuiteRun(suite, suiteRun, abortController) {
           evaluation
         });
       } catch (error) {
-        if (signal.aborted || isAbortError(error)) {
+        if (signal.aborted) {
           await recordCaseResult(cancelledCaseResult(testCase));
           return;
         }
@@ -1619,9 +1684,22 @@ async function processSuiteRun(suite, suiteRun, abortController) {
           caseId: testCase.id,
           title: testCase.title,
           agentId: agent.id,
-          status: "failed",
+          status: "error",
           error: error.message,
-          evaluation: { status: "failed", score: 0, checks: [] }
+          responseReceipt: {
+            status: error.responseReceived ? "received" : responseAttempted ? "not_received" : "not_run",
+            httpStatus: Number.isFinite(Number(error.httpStatus)) ? Number(error.httpStatus) : null,
+            errorKind: error.responseErrorKind || (error.name === "AbortError" ? "aborted" : "request_error"),
+            message: error.message,
+            ...(error.responseReceived ? { receivedAt: new Date().toISOString() } : {})
+          },
+          evaluation: {
+            status: "not_evaluated",
+            score: null,
+            checks: [],
+            system: { status: "not_evaluated", score: null, passedCount: 0, checkCount: 0, checks: [] },
+            business: { status: "not_evaluated", grade: null, score: null, passed: null }
+          }
         });
       }
     },
@@ -1641,6 +1719,8 @@ async function processSuiteRun(suite, suiteRun, abortController) {
   suiteRun.currentCase = null;
   suiteRun.activeCases = [];
   suiteRun.summary = summarizeSuiteRun(suiteRun.caseRuns);
+  suiteRun.responseReceipt = suiteResponseReceipt(suiteRun.summary, suite.cases.length);
+  suiteRun.summary.responseReceipt = suiteRun.responseReceipt;
   suiteRun.summary.completed = suiteRun.caseRuns.length;
   suiteRun.summary.running = 0;
   suiteRun.summary.concurrency = concurrency;
@@ -1665,7 +1745,7 @@ async function processSuiteRun(suite, suiteRun, abortController) {
   return suiteRun;
 }
 
-async function startSuiteRun(suite, { caseIds } = {}) {
+async function startSuiteRun(suite, { caseIds, retryOfSuiteRunId = null, retryReason = null } = {}) {
   const activeRun = (await suiteRunStore.list()).find(
     (run) => run.suiteId === suite.id && isSuiteRunActive(run)
   );
@@ -1681,8 +1761,10 @@ async function startSuiteRun(suite, { caseIds } = {}) {
   if (Array.isArray(caseIds) && caseIds.length) {
     suiteRun.selectedCaseIds = runSuite.cases.map((item) => item.id);
     suiteRun.partialRun = true;
-    await suiteRunStore.save(suiteRun);
   }
+  if (retryOfSuiteRunId) suiteRun.retryOfSuiteRunId = retryOfSuiteRunId;
+  if (retryReason) suiteRun.retryReason = retryReason;
+  await suiteRunStore.save(suiteRun);
   const abortController = new AbortController();
   suiteRunControllers.set(suiteRun.id, abortController);
   setImmediate(() => {
@@ -1709,6 +1791,33 @@ async function startSuiteRun(suite, { caseIds } = {}) {
       });
   });
   return suiteRun;
+}
+
+async function rerunResponseFailures(suiteRunId) {
+  const source = await suiteRunStore.get(suiteRunId);
+  if (isSuiteRunActive(source)) {
+    const error = new Error("実行中のテスト実行結果からは再実行できません。");
+    error.status = 409;
+    throw error;
+  }
+  const caseIds = Array.isArray(source.responseReceipt?.retryCaseIds)
+    ? [...new Set(source.responseReceipt.retryCaseIds.map(String).filter(Boolean))]
+    : [];
+  if (!caseIds.length) {
+    const error = new Error("レスポンス未受領の再実行対象がありません。");
+    error.status = 409;
+    throw error;
+  }
+  if (!source.suiteSnapshot?.cases?.length) {
+    const error = new Error("元のテストスイートスナップショットがないため再実行できません。");
+    error.status = 409;
+    throw error;
+  }
+  return startSuiteRun(source.suiteSnapshot, {
+    caseIds,
+    retryOfSuiteRunId: source.id,
+    retryReason: "response_not_received"
+  });
 }
 
 async function cancelSuiteRun(suiteRunId) {
@@ -3037,6 +3146,13 @@ const server = createServer(async (request, response) => {
     const aiSummaryMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/ai-summary$/);
     if (request.method === "POST" && aiSummaryMatch) {
       sendJson(response, 200, slimSuiteRun(await regenerateSuiteAiSummary(aiSummaryMatch[1])));
+      return;
+    }
+    const rerunResponseFailuresMatch = url.pathname.match(
+      /^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/rerun-response-failures$/
+    );
+    if (request.method === "POST" && rerunResponseFailuresMatch) {
+      sendJson(response, 202, slimSuiteRun(await rerunResponseFailures(rerunResponseFailuresMatch[1])));
       return;
     }
     const cancelMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/cancel$/);

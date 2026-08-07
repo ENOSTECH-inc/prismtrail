@@ -1905,12 +1905,27 @@ function reportSectionHeading(iconName, label, meta = "") {
   return `<div class="report-section-heading">${icon(iconName, 20)}<div><h3>${esc(label)}</h3>${meta ? `<small>${esc(meta)}</small>` : ""}</div></div>`;
 }
 
+function responseReceiptLabel(receipt = {}) {
+  return {
+    received: tr("受領済み", "Received"),
+    not_received: tr("未受領", "Not received"),
+    not_run: tr("未実行", "Not run"),
+    pending: tr("待機中", "Pending")
+  }[receipt.status] || tr("不明", "Unknown");
+}
+
+function responseReceiptBadge(receipt = {}) {
+  const httpStatus = receipt.httpStatus ? `HTTP ${receipt.httpStatus}` : "HTTP —";
+  return `<span class="response-receipt-badge ${esc(receipt.status || "unknown")}">${icon(receipt.status === "received" ? "circle-check" : receipt.status === "not_received" ? "circle-x" : "circle-help", 14)}<span><small>${tr("レスポンス受領", "Response receipt")}</small><b>${responseReceiptLabel(receipt)}</b><em>${esc(httpStatus)}</em></span></span>`;
+}
+
 function reportCaseCardHtml(item, { evidence = null, showRunLink = true } = {}) {
   if (!item) return "";
   if (item.status === "skipped" || item.status === "cancelled") {
     return `<article class="report-case ${item.status}">
       <header><span>${statusPill(item.status)}</span><div><strong>${esc(item.title)}</strong><small>${esc(item.caseId)}</small></div></header>
       <p class="muted-copy">${esc(translateApiMessage(item.skipReason || (item.status === "cancelled" ? "実行が中止されたためスキップしました。" : "ケースのステータスが実行可ではないためスキップしました。")))}</p>
+      <div class="case-scoreboard compact">${responseReceiptBadge(item.responseReceipt)}</div>
     </article>`;
   }
   const system = item.evaluation?.system || item.evaluation || {};
@@ -1935,6 +1950,7 @@ function reportCaseCardHtml(item, { evidence = null, showRunLink = true } = {}) 
     <header class="case-detail-header"><div><span>${statusPill(item.status)}</span><small>${esc(item.caseId)}</small><h2 tabindex="-1">${esc(item.title)}</h2></div>${showRunLink && item.runId ? `<a class="case-detail-link" href="#/runs/${item.runId}">${icon("list-tree", 17)}<span>${tr("実行詳細を見る", "View run details")}</span>${icon("arrow-up-right", 15)}</a>` : ""}</header>
     ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
     <div class="case-scoreboard">
+      ${responseReceiptBadge(item.responseReceipt)}
       ${scoreGradeBadge(item.evaluation?.score)}
       ${scoreGradeBadge(system.score, { label: tr("システム等級", "System grade") })}
       ${businessConfigured ? `<span class="score-grade grade-${esc((business.grade || "d").toLowerCase())}"><small>${tr("ビジネス等級", "Business grade")}</small><b>${esc(business.grade || "—")}</b><em>${formatLocaleNumber(business.score ?? 0)}${tr("点", " pts")}</em></span>` : ""}
@@ -4002,8 +4018,11 @@ async function migrateStorage(mode) {
 }
 
 function renderReports() {
-  const rows = state.suiteRuns.map((run) => `<tr><td><a href="#/reports/${run.id}"><strong>${esc(suiteRunLabel(run))}</strong><small>${esc(run.id)}</small></a></td><td>${statusPill(run.status)}</td><td><strong>${run.summary?.passRate || 0}%</strong></td><td>${run.summary?.passed || 0} / ${run.summary?.total || 0}</td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td>${fmtBytes(run.summary?.totalBytesBilled)}</td></tr>`).join("");
-  app.innerHTML = shell(`${pageHead("テスト実行結果", "スイートの品質、速度、BigQuery利用量を実行単位で確認します。")}<section class="table-panel"><table><thead><tr><th>実行ログ</th><th>結果</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("実行結果がありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
+  const rows = state.suiteRuns.map((run) => {
+    const receipt = run.summary?.responseReceipt || {};
+    return `<tr><td><a href="#/reports/${run.id}"><strong>${esc(suiteRunLabel(run))}</strong><small>${esc(run.id)}</small></a></td><td>${statusPill(run.status)}</td><td><strong>${receipt.receiptRate == null ? "—" : `${formatLocaleNumber(receipt.receiptRate)}%`}</strong><small>${formatLocaleNumber(receipt.received || 0)} / ${formatLocaleNumber(receipt.attempted || 0)}</small></td><td><strong>${run.summary?.passRate || 0}%</strong></td><td>${run.summary?.passed || 0} / ${run.summary?.evaluated || 0}</td><td>${fmtDuration(run.summary?.totalDurationMs)}</td><td>${fmtBytes(run.summary?.totalBytesBilled)}</td></tr>`;
+  }).join("");
+  app.innerHTML = shell(`${pageHead("テスト実行結果", "スイートの品質、レスポンス受領、速度、BigQuery利用量を実行単位で確認します。")}<section class="table-panel"><table><thead><tr><th>実行ログ</th><th>結果</th><th>レスポンス受領</th><th>合格率</th><th>合格ケース</th><th>所要時間</th><th>課金量</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : empty("実行結果がありません", "テストスイートを実行するとここに表示されます。")}</section>`, "reports");
 }
 
 function suiteAiSummaryHtml(report, { isLive = false } = {}) {
@@ -4041,7 +4060,7 @@ function reportCaseNavItemHtml(entry, selectedCaseId) {
   return `<button type="button" class="report-case-nav-item ${status} ${caseId === selectedCaseId ? "selected" : ""}" data-report-case-id="${esc(caseId)}" aria-current="${caseId === selectedCaseId ? "true" : "false"}">
     <span class="case-nav-index">${String(index + 1).padStart(2, "0")}</span>
     <span class="case-nav-copy"><strong>${esc(item?.title || testCase.title || caseId)}</strong><small>${esc(caseId)}</small></span>
-    <span class="case-nav-result"><b>${grade || "—"}</b><small>${item ? fmtDuration(item.runSummary?.durationMs || 0) : active ? tr("実行中", "Running") : tr("待機", "Pending")}</small></span>
+    <span class="case-nav-result"><b>${grade || "—"}</b><small>${item ? responseReceiptLabel(item.responseReceipt) : active ? tr("実行中", "Running") : tr("待機", "Pending")}</small></span>
   </button>`;
 }
 
@@ -4062,6 +4081,8 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   const isCancelling = report.status === "cancelling";
   const isLive = isRunning || isCancelling;
   const isCancelled = report.status === "cancelled";
+  const responseReceipt = report.responseReceipt || report.summary?.responseReceipt || {};
+  const responseRetryCaseIds = Array.isArray(responseReceipt.retryCaseIds) ? responseReceipt.retryCaseIds : [];
   const isPartial = Boolean(report.partialRun || (report.selectedCaseIds || []).length);
   const completed = report.summary?.completed ?? report.caseRuns?.length ?? 0;
   const total = report.summary?.total ?? report.suiteSnapshot?.cases?.length ?? completed;
@@ -4094,7 +4115,9 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   state.selectedReportCaseId = selectedReportCaseId;
   const filteredEntries = state.reportCaseFilter === "issues"
     ? caseEntries.filter((entry) => ["failed", "review_required", "error"].includes(entry.item?.status))
-    : caseEntries;
+    : state.reportCaseFilter === "no_response"
+      ? caseEntries.filter((entry) => entry.item?.responseReceipt?.status === "not_received")
+      : caseEntries;
   const caseNav = filteredEntries.map((entry) => reportCaseNavItemHtml(entry, selectedReportCaseId)).join("");
   const selectedCaseDetail = selectedEntry?.item
     ? reportCaseCardHtml({ ...selectedEntry.item, prompt: selectedEntry.item.prompt || selectedEntry.testCase.prompt }, { evidence: evidenceByCaseId?.[selectedEntry.item.caseId] || null })
@@ -4156,7 +4179,10 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
     : isCancelling
       ? `<button class="button danger" type="button" disabled>${icon("square", 15)}${tr("中止中…", "Stopping…")}</button>`
       : "";
-  const actions = launchPending ? "" : `${cancelAction}${reportToolbarActions(report)}`;
+  const rerunResponseAction = !isLive && responseRetryCaseIds.length
+    ? `<button id="rerun-response-failures" class="button primary" type="button">${icon("refresh-cw", 15)}${tr("未受領 {count}件を再実行", "Rerun {count} without response", { count: formatLocaleNumber(responseRetryCaseIds.length) })}</button>`
+    : "";
+  const actions = launchPending ? "" : `${cancelAction}${rerunResponseAction}${reportToolbarActions(report)}`;
   const backHref =
     isPartial && report.suiteId && focusCaseId
       ? `#/suites/${report.suiteId}/edit/${encodeURIComponent(focusCaseId)}`
@@ -4189,14 +4215,14 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       <div class="hero-copy">${statusPill(report.status)}${isPartial ? `<span class="partial-run-badge">${tr("個別実行", "Single-case")}</span>` : ""}<h2>${isLive ? runningHeadline : finishedHeadline}</h2><p>${isLive ? (isCancelling ? tr("進行中のケースを打ち切り、未着手のケースは中止として記録します。", "In-flight cases are aborted and remaining cases are marked cancelled.") : isPartial ? tr("完了するまでこの画面で待機します。システム要件とビジネス要件の判定が順に表示されます。", "Stay on this screen until the run finishes. System and business checks appear as they complete.") : tr("ケースが完了するたびに、このテスト実行結果へ結果が追加されます。最大{limit}件まで同時実行します。", "Results appear here as each case completes. Up to {limit} cases run at once.", { limit: formatLocaleNumber(concurrency) })) : finishedCopy}</p></div>
       ${isLive ? `<div class="live-progress"><span style="width:${progress}%"></span></div>` : ""}
     </section>
-    <section class="report-metrics"><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(completed) })}</small></div><div><span>${tr("ビジネス要件 適合率", "Business requirement fulfillment")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("受入条件未設定", "No acceptance criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
+    <section class="report-metrics"><div class="response-receipt-metric"><span>${tr("レスポンス受領", "Response receipt")}</span><strong>${responseReceipt.receiptRate == null ? "—" : `${formatLocaleNumber(responseReceipt.receiptRate)}%`}</strong><small>${tr("受領 {received} / 試行 {attempted} · 未受領 {failed}", "{received} received / {attempted} attempted · {failed} not received", { received: formatLocaleNumber(responseReceipt.received || 0), attempted: formatLocaleNumber(responseReceipt.attempted || 0), failed: formatLocaleNumber(responseReceipt.notReceived || 0) })}</small></div><div><span>${tr("システム要件 正解率", "System requirement pass rate")}</span><strong>${scoreText(systemScore)}</strong><small>${tr("{passed} / {total} ケース合格", "{passed} / {total} cases passed", { passed: formatLocaleNumber(report.summary?.systemPassed ?? report.summary?.passed ?? 0), total: formatLocaleNumber(report.summary?.evaluated ?? completed) })}</small></div><div><span>${tr("ビジネス要件 適合率", "Business requirement fulfillment")}</span><strong>${scoreText(businessScore)}</strong><small>${businessConfigured ? tr("{evaluated} / {total} ケース採点済み", "{evaluated} / {total} cases evaluated", { evaluated: formatLocaleNumber(report.summary?.businessEvaluated || 0), total: formatLocaleNumber(businessConfigured) }) : tr("受入条件未設定", "No acceptance criteria")}</small></div><div class="grade-metric"><span>${tr("システム等級分布", "System grade distribution")}</span>${systemGradeDistributionHtml(systemGrades)}<small>${tr("評価済み {count} ケース", "{count} evaluated cases", { count: formatLocaleNumber(Object.values(systemGrades).reduce((sum, value) => sum + value, 0)) })}</small></div><div><span>${tr("所要時間", "Duration")}</span><strong>${fmtDuration(report.summary?.totalDurationMs)}</strong><small>${tr("{completed} / {total} ケース完了", "{completed} / {total} cases completed", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) })}</small></div></section>
     ${launchError ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("実行開始処理に失敗しました", "Failed to start the run")}</strong><p>${esc(launchError)}</p></div><a class="button secondary" href="${esc(launchBackHref)}">${tr("編集画面に戻る", "Back to editor")}</a></section>` : suiteAiSummaryHtml(report, { isLive })}
     ${report.evaluationCorrection?.applied ? `<section class="evaluation-correction">${icon("shield-check", 18)}<div><strong>${tr("SQL実行証跡を再評価しました", "Re-evaluated SQL execution evidence")}</strong><p>${esc(translateApiMessage(report.evaluationCorrection.reason))}</p></div></section>` : ""}
     ${sheetPanel}
     <div class="section-row report-workbench-title"><div><h2>${isPartial ? tr("ケース評価", "Case evaluation") : tr("ケース別評価", "Case evaluations")}</h2><p>${tr("左の一覧からケースを選択すると、評価・入力・実行結果を同じ順序で確認できます。", "Select a case to review its evaluation, input, and result in a consistent order.")}</p></div><b class="live-updated">${launchError ? tr("実行開始失敗", "Start failed") : launchPending ? tr("実行開始中", "Starting run") : isLive ? tr("{completed}/{total} 完了 · 自動更新中", "{completed}/{total} complete · auto-refreshing", { completed: formatLocaleNumber(completed), total: formatLocaleNumber(total) }) : tr("完了 {date}", "Completed {date}", { date: fmtDate(report.completedAt) })}</b></div>
     <section class="report-workbench">
       <aside class="report-case-nav" aria-label="${tr("テストケース一覧", "Test case list")}">
-        <div class="report-case-nav-head"><div><strong>${tr("テストケース", "Test cases")}</strong><small>${formatLocaleNumber(caseEntries.length)} ${tr("件", "cases")}</small></div><div class="case-filter" role="group" aria-label="${tr("ケース絞り込み", "Case filter")}"><button type="button" data-report-filter="all" class="${state.reportCaseFilter === "all" ? "active" : ""}">${tr("すべて", "All")}</button><button type="button" data-report-filter="issues" class="${state.reportCaseFilter === "issues" ? "active" : ""}">${tr("要対応", "Issues")}</button></div></div>
+        <div class="report-case-nav-head"><div><strong>${tr("テストケース", "Test cases")}</strong><small>${formatLocaleNumber(caseEntries.length)} ${tr("件", "cases")}</small></div><div class="case-filter" role="group" aria-label="${tr("ケース絞り込み", "Case filter")}"><button type="button" data-report-filter="all" class="${state.reportCaseFilter === "all" ? "active" : ""}">${tr("すべて", "All")}</button><button type="button" data-report-filter="issues" class="${state.reportCaseFilter === "issues" ? "active" : ""}">${tr("要対応", "Issues")}</button><button type="button" data-report-filter="no_response" class="${state.reportCaseFilter === "no_response" ? "active" : ""}">${tr("未受領", "No response")}</button></div></div>
         <div class="report-case-nav-list">${caseNav || `<p class="muted-copy">${tr("該当ケースはありません。", "No matching cases.")}</p>`}</div>
       </aside>
       <div class="report-case-detail-pane" tabindex="-1">${selectedCaseDetail}</div>
@@ -4311,6 +4337,18 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       notify(error.message);
       if (button) button.disabled = false;
     }
+  });
+  document.querySelector("#rerun-response-failures")?.addEventListener("click", async () => {
+    if (!(await askConfirm(
+      tr("レスポンス未受領の {count} ケースだけを再実行しますか？", "Rerun only the {count} cases without a response?", { count: formatLocaleNumber(responseRetryCaseIds.length) }),
+      { confirmLabel: tr("未受領のみ再実行", "Rerun without response") }
+    ))) return;
+    const pendingReport = beginSuiteRunNavigation(report.suiteSnapshot, { caseIds: responseRetryCaseIds });
+    pendingReport.retryOfSuiteRunId = report.id;
+    pendingReport.retryReason = "response_not_received";
+    void completeSuiteRunNavigation(pendingReport, () =>
+      json(`/api/suite-runs/${report.id}/rerun-response-failures`, { method: "POST" })
+    );
   });
   if (!launchPending && (isLive || sheetExport.status === "exporting" || report.aiSummary?.status === "generating")) {
     state.reportPollTimer = setTimeout(async () => {
