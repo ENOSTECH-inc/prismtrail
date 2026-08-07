@@ -60,7 +60,10 @@ test("report actions have distinct Sheets, PDF, and raw JSON treatments", () => 
 test("completed full and single-case reports can export through a newly registered Sheet connection", () => {
   assert.match(app, /sheetConnectionForSuite\(report\.suiteId, \{ readyOnly: true \}\)/);
   assert.match(app, /sheetButtonId = "export-report-sheet"/);
-  assert.match(app, /Gシートへ出力/);
+  assert.match(app, /結果を出力してシートを開く/);
+  assert.match(app, /openAfterExport = false/);
+  assert.match(app, /if \(openAfterExport\)/);
+  assert.match(app, /window\.open\(exported\.connection\.spreadsheetUrl/);
   assert.match(app, /\/export-report/);
   assert.match(app, /body: JSON\.stringify\(\{ suiteRunId: report\.id \}\)/);
   assert.match(app, /exported\.report \|\| \{ \.\.\.report, sheetExport: exported\.sheetExport \}/);
