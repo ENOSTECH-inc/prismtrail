@@ -37,6 +37,12 @@ test("Sheets Settings only exposes Suite-scoped binding status and delegates own
   assert.doesNotMatch(app, /スイートを作成・編集/);
 });
 
+test("Sheets tab keeps breathing room below the Settings tabs", async () => {
+  const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+  assert.match(app, /settings-tab-panel sheets-tab-panel/);
+  assert.match(styles, /\.settings-tab-panel\.sheets-tab-panel\s*\{\s*margin-top:\s*14px/);
+});
+
 test("Cursor is available as an MCP client with project config guidance", () => {
   assert.match(app, /cursor:\s*\{/);
   assert.match(app, /cursor-agent mcp list-tools prismtrail/);

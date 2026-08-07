@@ -1093,6 +1093,7 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
 .settings-tab small { margin-top: 3px; color: #8a99ac; font-size: 7px; font-weight: 400; }
 .settings-tab-panel[hidden] { display: none; }
 .settings-tab-panel.active { display: block; }
+.settings-tab-panel.sheets-tab-panel { margin-top: 14px; }
 .auth-readiness-panel { width: 100%; max-width: 1180px; margin: 15px auto 0; }
 .auth-readiness-loading { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 10px; }
 .auth-readiness-loading svg { animation: spin .9s linear infinite; }
