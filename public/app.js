@@ -1142,10 +1142,10 @@ function reportToolbarActions(report, {
   const proposalsGenerating = ["pending", "generating"].includes(report.improvementProposals?.status);
   const connection = sheetConnectionForSuite(report.suiteId, { readyOnly: true });
   const spreadsheetUrl = report.sheetExport?.spreadsheetUrl || connection?.spreadsheetUrl || "";
-  const sheet = report.sheetExport?.status === "succeeded" && spreadsheetUrl
-    ? `<a class="button report-action-sheet" href="${esc(spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>`
-    : !isLive && !proposalsGenerating && connection
-      ? `<button id="${esc(sheetButtonId)}" class="button report-action-sheet" type="button">${icon("sheet", 15)}${tr("Gシートへ出力", "Export to Sheets")}</button>`
+  const sheet = !isLive && !proposalsGenerating && connection
+    ? `<button id="${esc(sheetButtonId)}" class="button report-action-sheet" type="button">${icon("sheet", 15)}${tr("結果を出力してシートを開く", "Export result and open Sheet")}</button>`
+    : report.sheetExport?.status === "succeeded" && spreadsheetUrl
+      ? `<a class="button report-action-sheet" href="${esc(spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>`
       : "";
   const pdfDisabledReason = proposalsGenerating
     ? tr("改善提案の生成完了後にPDFを出力できます", "PDF export is available after proposal generation finishes")
@@ -1157,7 +1157,8 @@ function reportToolbarActions(report, {
 
 function bindReportSheetExport(report, {
   buttonId = "export-report-sheet",
-  onSuccess = () => {}
+  onSuccess = () => {},
+  openAfterExport = false
 } = {}) {
   document.querySelector(`#${buttonId}`)?.addEventListener("click", async () => {
     const connection = sheetConnectionForSuite(report.suiteId, { readyOnly: true });
@@ -1178,6 +1179,9 @@ function bindReportSheetExport(report, {
         state.suiteRuns = [updatedReport, ...state.suiteRuns.filter((item) => item.id !== updatedReport.id)];
         state.activeReport = updatedReport;
         onSuccess(updatedReport);
+        if (openAfterExport) {
+          window.open(exported.connection.spreadsheetUrl || connection.spreadsheetUrl, "_blank", "noopener,noreferrer");
+        }
         notify(tr("テスト実行結果をGoogle Sheetsへ出力しました。", "Exported the test result to Google Sheets."), "success");
       } catch (error) {
         notify(error.message);
@@ -4347,6 +4351,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
     });
   });
   bindReportSheetExport(report, {
+    openAfterExport: true,
     onSuccess: (updatedReport) => {
       renderReport(updatedReport, { evidenceByCaseId, selectedCaseId: state.selectedReportCaseId });
       refreshIcons();
@@ -4592,6 +4597,7 @@ function renderRunDetail(run) {
   if (suiteRun) {
     bindReportSheetExport(suiteRun, {
       buttonId: "export-context-report-sheet",
+      openAfterExport: true,
       onSuccess: () => {
         renderRunDetail(run);
         refreshIcons();
