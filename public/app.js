@@ -1486,7 +1486,7 @@ function suiteSheetConnectionDialog(suite, connection) {
     <form method="dialog" id="suite-sheet-form" class="suite-sheet-dialog-shell">
       <header>
         <div><span class="eyebrow">GOOGLE SHEETS</span><h2 id="suite-sheet-dialog-title">${tr("このテストスイートをGoogle Sheetsに連携", "Connect this test suite to Google Sheets")}</h2><p id="suite-sheet-dialog-description">${tr("テストケースと実行結果の出力先を、このスイート専用に設定します。", "Set a dedicated destination for this suite's test cases and run results.")}</p></div>
-        <button class="icon-button" value="cancel" aria-label="${tr("閉じる", "Close")}">${icon("x", 17)}</button>
+        <button class="icon-button" type="button" data-close-suite-sheet aria-label="${tr("閉じる", "Close")}">${icon("x", 17)}</button>
       </header>
       <div class="suite-sheet-target"><span>${icon("layers-3", 17)}</span><div><small>${tr("対象テストスイート", "Target test suite")}</small><strong>${esc(suite.name)}</strong><code>${esc(suite.id)}</code></div><b class="suite-sheet-state ${esc(connection?.status || "unconnected")}">${esc(statusCopy)}</b></div>
       <label>${tr("GoogleスプレッドシートURL / Spreadsheet ID", "Google spreadsheet URL / Spreadsheet ID")}
@@ -1496,7 +1496,7 @@ function suiteSheetConnectionDialog(suite, connection) {
       <div id="suite-sheet-form-error" class="suite-sheet-form-error" role="alert" hidden></div>
       ${connected ? `<div class="suite-sheet-current"><span>${icon("sheet", 16)}</span><div><small>${tr("現在の接続先", "Current destination")}</small><strong>${esc(connection.sheetName || connection.title || suite.name)}</strong><code>${esc(connection.spreadsheetId)}</code></div>${connection.spreadsheetUrl ? `<a class="text-link" href="${esc(connection.spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${tr("開く", "Open")}${icon("external-link", 13)}</a>` : ""}</div>` : ""}
       <footer>
-        <button class="button secondary" value="cancel">${tr("キャンセル", "Cancel")}</button>
+        <button class="button secondary" type="button" data-close-suite-sheet>${tr("キャンセル", "Cancel")}</button>
         <button id="save-suite-sheet" class="button primary" type="submit">${icon("link", 15)}${connected ? tr("接続先を保存", "Save destination") : tr("接続して保存", "Connect and save")}</button>
       </footer>
     </form>
@@ -2425,6 +2425,9 @@ function bindEditor() {
     document.querySelector("#suite-sheet-dialog")?.showModal();
   }));
   const sheetDialog = document.querySelector("#suite-sheet-dialog");
+  document.querySelectorAll("[data-close-suite-sheet]").forEach((button) => button.addEventListener("click", () => {
+    sheetDialog?.close();
+  }));
   sheetDialog?.addEventListener("close", () => {
     state.suiteSheetModalOpen = false;
     if (location.hash === `#/suites/${state.selectedSuite?.id}/edit/sheets`) {
@@ -2432,7 +2435,6 @@ function bindEditor() {
     }
   });
   document.querySelector("#suite-sheet-form")?.addEventListener("submit", async (event) => {
-    if (event.submitter?.value === "cancel") return;
     event.preventDefault();
     const form = event.currentTarget;
     const button = form.querySelector("#save-suite-sheet");
@@ -3489,6 +3491,18 @@ function renderAgentDetail(agent, activeTab = "overview") {
 }
 
 function renderSheetsSettings() {
+  const suiteBindings = state.suites
+    .map((suite) => {
+      const connection = sheetConnectionForSuite(suite.id);
+      const ready = connection?.status === "ready";
+      const editHref = `#/suites/${encodeURIComponent(suite.id)}/edit/sheets`;
+      return `<article class="suite-sheet-binding-card ${ready ? "is-connected" : connection ? "needs-attention" : "is-empty"}">
+        <div class="suite-sheet-binding-main"><span class="suite-sheet-binding-icon">${icon("layers-3", 18)}</span><div><small>TEST SUITE</small><h3>${esc(suite.name || suite.id)}</h3><code>${esc(suite.id)}</code></div></div>
+        <div class="suite-sheet-binding-destination"><span class="suite-sheet-binding-status ${esc(connection?.status || "unconnected")}">${ready ? tr("連携済み", "Connected") : connection ? tr("要確認", "Needs attention") : tr("未連携", "Not connected")}</span><strong>${esc(connection?.sheetName || connection?.title || tr("Google Sheets未設定", "No Google Sheet configured"))}</strong><small>${ready ? tr("テストケースと実行結果の出力先", "Case and result destination") : tr("Suite詳細から専用シートを設定できます", "Configure a dedicated sheet from suite details")}</small></div>
+        <div class="suite-sheet-binding-actions"><a class="button ${ready ? "secondary" : "primary"}" href="${editHref}">${icon(ready ? "settings-2" : "link", 15)}${ready ? tr("接続設定", "Connection settings") : tr("新規紐付け", "Connect sheet")}</a>${ready && connection.spreadsheetUrl ? `<a class="text-link" href="${esc(connection.spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${tr("Gシートを開く", "Open Sheet")}${icon("external-link", 13)}</a>` : ""}</div>
+      </article>`;
+    })
+    .join("");
   const connections = state.sheetConnections
     .map((connection) => {
       const suite = state.suites.find((item) => item.id === connection.suiteId);
@@ -3522,6 +3536,10 @@ function renderSheetsSettings() {
       <div class="settings-section-head">
         <div><h2>${tr("Google Sheets接続の診断", "Google Sheets connection diagnostics")}</h2><p>${tr("接続先の追加・変更は各テストスイートの詳細画面で行います。ここでは認証状態と登録済み接続を確認できます。", "Add or change destinations from each test suite. Use this page to review authentication and existing connections.")}</p></div>
       </div>
+    </section>
+    <section class="settings-panel suite-sheet-binding-panel">
+      <div class="settings-section-head"><div><h2>${tr("テストスイート別のGシート紐付け", "Google Sheets bindings by test suite")}</h2><p>${tr("Gシートの主体はData Agentではなくテストスイートです。各Suiteの現在の紐付け状況を確認し、新規紐付けや接続先変更を行えます。", "Test suites own their Google Sheets destinations. Review each Suite's binding and connect or change it here.")}</p></div></div>
+      <div class="suite-sheet-binding-list">${suiteBindings || empty(tr("テストスイートがありません", "No test suites"), tr("先にテストスイートを作成してください。", "Create a test suite first."))}</div>
     </section>
     ${authNotice}
     <section class="sheet-connect-panel sheet-diagnostics-panel">

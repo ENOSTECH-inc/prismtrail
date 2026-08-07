@@ -342,6 +342,24 @@ input:focus,textarea:focus,select:focus { border-color: #7c99ff; box-shadow: 0 0
 .suite-sheet-form-error { padding: 10px 12px; color: #9e2d3d; border: 1px solid #efc5cc; border-radius: 8px; background: #fff1f3; font-size: 9px; line-height: 1.55; }
 .suite-sheet-form-error[hidden] { display: none; }
 .suite-sheet-dialog-shell > footer { margin-top: 0; padding-top: 2px; }
+.suite-sheet-binding-panel { max-width: 1480px; margin: 0 auto 16px; }
+.suite-sheet-binding-list { display: grid; gap: 10px; }
+.suite-sheet-binding-card { display: grid; grid-template-columns: minmax(230px,1.1fr) minmax(220px,1fr) auto; align-items: center; gap: 15px; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.suite-sheet-binding-card.is-connected { border-color: #bce2d5; background: #f7fcfa; }
+.suite-sheet-binding-card.needs-attention { border-color: #eed49b; background: #fffaf0; }
+.suite-sheet-binding-main,.suite-sheet-binding-destination { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; min-width: 0; }
+.suite-sheet-binding-main small,.suite-sheet-binding-main h3,.suite-sheet-binding-main code,.suite-sheet-binding-destination strong,.suite-sheet-binding-destination small { display: block; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suite-sheet-binding-main small { color: #7c8b9e; font-size: 7px; font-weight: 800; letter-spacing: .12em; }
+.suite-sheet-binding-main h3 { margin-top: 3px; color: #263a52; font-size: 11px; }
+.suite-sheet-binding-main code { margin-top: 3px; color: #8a98aa; font-size: 7px; }
+.suite-sheet-binding-icon { width: 34px; height: 34px; display: grid; place-items: center; color: #315efb; border-radius: 8px; background: #eaf0ff; }
+.suite-sheet-binding-destination strong { color: #35506c; font-size: 9px; }
+.suite-sheet-binding-destination small { grid-column: 2; margin-top: 3px; color: #7b8998; font-size: 8px; }
+.suite-sheet-binding-status { padding: 5px 7px; border-radius: 999px; color: #65768b; background: #e9eef4; font-size: 8px; white-space: nowrap; }
+.suite-sheet-binding-status.ready { color: #126b50; background: #dff4eb; }
+.suite-sheet-binding-status.failed { color: #9d3040; background: #fdecef; }
+.suite-sheet-binding-actions { display: grid; justify-items: end; gap: 5px; }
+.suite-sheet-binding-actions .button { white-space: nowrap; }
 .suite-paste-dialog { width: min(960px,calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; overflow: hidden; color: var(--ink); border: 0; border-radius: 14px; box-shadow: 0 26px 70px rgba(12,27,49,.3); }
 .suite-paste-dialog::backdrop { background: rgba(11,24,44,.62); backdrop-filter: blur(2px); }
 .paste-dialog-shell { max-height: calc(100vh - 32px); display: grid; gap: 14px; padding: 22px; overflow: auto; }
@@ -1464,6 +1482,9 @@ button.text-link { margin: 8px 10px 0 0; padding: 0; border: 0; background: none
   .suite-sheet-current { grid-template-columns: auto minmax(0,1fr); }
   .suite-sheet-current .text-link { grid-column: 1/-1; }
   .suite-sheet-dialog-shell > footer { align-items: stretch; flex-direction: column-reverse; }
+  .suite-sheet-binding-card { grid-template-columns: 1fr; }
+  .suite-sheet-binding-actions { justify-items: stretch; }
+  .suite-sheet-binding-actions .button { width: 100%; justify-content: center; }
   .section-row { align-items: stretch; flex-direction: column; gap: 10px; }
   .section-actions { align-items: stretch; flex-direction: column; }
   .paste-target { grid-template-columns: auto minmax(0,1fr); }
