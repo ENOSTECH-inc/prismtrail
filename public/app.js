@@ -1141,12 +1141,9 @@ function reportToolbarActions(report, {
   const isLive = ["running", "cancelling"].includes(report.status);
   const proposalsGenerating = ["pending", "generating"].includes(report.improvementProposals?.status);
   const connection = sheetConnectionForSuite(report.suiteId, { readyOnly: true });
-  const spreadsheetUrl = report.sheetExport?.spreadsheetUrl || connection?.spreadsheetUrl || "";
-  const sheet = !isLive && !proposalsGenerating && connection
+  const sheet = !isLive && !proposalsGenerating
     ? `<button id="${esc(sheetButtonId)}" class="button report-action-sheet" type="button">${icon("sheet", 15)}${tr("結果を出力してシートを開く", "Export result and open Sheet")}</button>`
-    : report.sheetExport?.status === "succeeded" && spreadsheetUrl
-      ? `<a class="button report-action-sheet" href="${esc(spreadsheetUrl)}" target="_blank" rel="noopener noreferrer">${icon("sheet", 15)}${tr("シートを開く", "Open sheet")}</a>`
-      : "";
+    : "";
   const pdfDisabledReason = proposalsGenerating
     ? tr("改善提案の生成完了後にPDFを出力できます", "PDF export is available after proposal generation finishes")
     : isLive
@@ -1163,7 +1160,7 @@ function bindReportSheetExport(report, {
   document.querySelector(`#${buttonId}`)?.addEventListener("click", async () => {
     const connection = sheetConnectionForSuite(report.suiteId, { readyOnly: true });
     if (!connection) {
-      notify(tr("このテストスイートのGoogle Sheets接続がありません。", "No Google Sheets connection is registered for this test suite."));
+      location.hash = `#/suites/${encodeURIComponent(report.suiteId)}/edit/sheets`;
       return;
     }
     const button = document.querySelector(`#${buttonId}`);
