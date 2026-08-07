@@ -1553,6 +1553,16 @@ async function exportLatestSuiteResultsToSheetConnection(connection, suiteId, mo
   const suite = await suiteStore.get(String(suiteId || ""));
   assertConnectionSuiteScope(connection, suite.id, "評価レポートのテストスイート");
   const { report, mode: normalizedMode } = await latestSuiteResultsReport(suite, mode);
+  if (normalizedMode === "latest_run") {
+    const exported = await exportSuiteRunToSheetConnection(connection, report.id);
+    return {
+      ...exported,
+      suiteId: suite.id,
+      reportId: exported.suiteRunId,
+      mode: normalizedMode,
+      sourceSuiteRunIds: [exported.suiteRunId]
+    };
+  }
   const catalog = await scopedSheetCatalog(suite.id);
   const result = await withSpreadsheetLock(connection.spreadsheetId, async () => {
     const reportResult = await writeReportSheet(connection.spreadsheetId, report);

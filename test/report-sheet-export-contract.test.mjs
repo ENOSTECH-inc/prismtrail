@@ -35,6 +35,8 @@ test("latest-result Sheet export uses the shared corrected rollup without persis
   assert.match(source, /suiteStore\.get\(String\(suiteId/);
   assert.match(source, /assertConnectionSuiteScope\(connection, suite\.id/);
   assert.match(source, /latestSuiteResultsReport\(suite, mode\)/);
+  assert.match(source, /normalizedMode === "latest_run"/);
+  assert.match(source, /exportSuiteRunToSheetConnection\(connection, report\.id\)/);
   assert.match(source, /withSpreadsheetLock\(connection\.spreadsheetId/);
   assert.match(source, /writeReportSheet\(connection\.spreadsheetId, report\)/);
   assert.match(source, /writeCatalogSheets\(connection\.spreadsheetId, catalog\)/);
