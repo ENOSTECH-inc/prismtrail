@@ -25,16 +25,20 @@ import {
 } from "../lib/google-sheets.mjs";
 
 test("current Sheets schema exports business criteria and fixed improvement proposal columns", () => {
-  assert.equal(SHEET_SCHEMA_VERSION, "7");
+  assert.equal(SHEET_SCHEMA_VERSION, "8");
   assert.equal(SUITE_DISPLAY_HEADERS.includes("精度検証ソースJSON"), false);
   assert.equal(REPORT_DISPLAY_HEADERS.includes("精度検証ソース状態"), false);
   assert.equal(REPORT_DISPLAY_HEADERS[19], "レスポンス受領");
   assert.equal(REPORT_DISPLAY_HEADERS[20], "HTTPステータス");
   assert.deepEqual(REPORT_DISPLAY_HEADERS.slice(21), [
     "改善提案状態",
+    "①判定",
     "①システムプロンプト",
+    "②判定",
     "②リファレンスクエリ",
+    "③判定",
     "③元mart",
+    "④判定",
     "④その他",
     "提案モデル",
     "提案生成日時"
@@ -84,6 +88,7 @@ test("sheet column labels cover proposal columns beyond Z", () => {
   assert.equal(sheetColumnLabel(26), "Z");
   assert.equal(sheetColumnLabel(27), "AA");
   assert.equal(sheetColumnLabel(28), "AB");
+  assert.equal(sheetColumnLabel(32), "AF");
 });
 
 test("suite format round-trips through fixed rows", () => {
@@ -381,7 +386,7 @@ test("report format contains stable metadata and case rows", () => {
       }
     ]
   });
-  assert.match(rows[14][1], /Gemini改善提案はV〜AB/);
+  assert.match(rows[14][1], /Gemini改善提案はV〜AF/);
   assert.equal(rows[12][1], 100);
   assert.equal(REPORT_DISPLAY_HEADERS[7], "ビジネス評価 (A/B/C/D)");
   assert.equal(REPORT_DISPLAY_HEADERS[12], "ビジネス要件の検証内容");
@@ -435,23 +440,27 @@ test("report exports the same four-section improvement proposal contract", () =>
         model: "gemini-2.5-flash",
         generatedAt: "2026-08-07T01:02:03.000Z",
         sections: {
-          systemPrompt: { summary: "指示を明確化", actions: [{ proposal: "期間を明記", rationale: "曖昧", expectedEffect: "月の誤認を防止" }] },
-          referenceQuery: { summary: "集計例を追加", actions: [] },
-          sourceMart: { summary: "対象月列を追加", actions: [] },
-          other: { summary: "回帰テストを追加", actions: [] }
+          systemPrompt: { status: "needs_action", summary: "指示を明確化", actions: [{ proposal: "期間を明記", rationale: "曖昧", expectedEffect: "月の誤認を防止" }] },
+          referenceQuery: { status: "needs_action", summary: "集計例を追加", actions: [] },
+          sourceMart: { status: "no_issue", summary: "出力しないコメント", actions: [] },
+          other: { status: "needs_action", summary: "回帰テストを追加", actions: [] }
         }
       }
     }]
   });
   const row = rows[16];
   assert.equal(row[21], "生成済み");
-  assert.match(row[22], /指示を明確化/);
-  assert.match(row[22], /期待効果: 月の誤認を防止/);
-  assert.equal(row[23], "集計例を追加");
-  assert.equal(row[24], "対象月列を追加");
-  assert.equal(row[25], "回帰テストを追加");
-  assert.equal(row[26], "gemini-2.5-flash");
-  assert.equal(row[27], "2026-08-07T01:02:03.000Z");
+  assert.equal(row[22], "要対応");
+  assert.match(row[23], /指示を明確化/);
+  assert.match(row[23], /期待効果: 月の誤認を防止/);
+  assert.equal(row[24], "要対応");
+  assert.equal(row[25], "集計例を追加");
+  assert.equal(row[26], "問題なし");
+  assert.equal(row[27], "");
+  assert.equal(row[28], "要対応");
+  assert.equal(row[29], "回帰テストを追加");
+  assert.equal(row[30], "gemini-2.5-flash");
+  assert.equal(row[31], "2026-08-07T01:02:03.000Z");
 });
 
 test("report marks business summaries as unset when no business evaluation ran", () => {

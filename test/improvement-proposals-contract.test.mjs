@@ -40,6 +40,9 @@ test("proposal API regenerates from persisted run data and refreshes Sheets", ()
 test("Gemini response schema requires the fixed four sections", () => {
   assert.match(googleCloud, /required: \["diagnosis", "sections", "evidenceGaps"\]/);
   assert.match(googleCloud, /required: \["systemPrompt", "referenceQuery", "sourceMart", "other"\]/);
+  assert.match(googleCloud, /required: \["status", "summary", "actions"\]/);
+  assert.match(googleCloud, /enum: \["needs_action", "no_issue"\]/);
+  assert.match(googleCloud, /no_issueの分類はsummaryを空文字、actionsを空配列/);
   assert.match(googleCloud, /評価結果、点数、等級、合否は変更・再判定せず/);
   assert.match(googleCloud, /思考過程は出力しない/);
 });

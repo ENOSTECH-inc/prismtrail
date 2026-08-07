@@ -1574,7 +1574,7 @@ function prepareImprovementGeneration(suiteRun) {
       return {
         ...caseRun,
         improvementProposal: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           status: "not_applicable",
           eligible: false,
           eligibilityReason: eligibility.reason,
@@ -1588,7 +1588,7 @@ function prepareImprovementGeneration(suiteRun) {
     return {
       ...caseRun,
       improvementProposal: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         status: "generating",
         eligible: true,
         eligibilityReason: eligibility.reason,
@@ -1693,7 +1693,7 @@ async function createSuiteImprovementProposals(suiteRun, targetCaseIds) {
       completedAt: new Date().toISOString(),
       provider: "vertex-ai",
       model: config.vertexModel,
-      promptTemplateVersion: "case-improvement-v1"
+      promptTemplateVersion: "case-improvement-v2"
     };
   } catch (error) {
     const message = `改善提案の準備に失敗しました: ${error.message}`;
@@ -1707,7 +1707,7 @@ async function createSuiteImprovementProposals(suiteRun, targetCaseIds) {
       completedAt: new Date().toISOString(),
       provider: "vertex-ai",
       model: config.vertexModel,
-      promptTemplateVersion: "case-improvement-v1"
+      promptTemplateVersion: "case-improvement-v2"
     };
   }
 }

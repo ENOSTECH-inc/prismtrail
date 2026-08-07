@@ -92,10 +92,10 @@ const report = {
         model: "gemini-2.5-flash",
         generatedAt: "2026-08-07T01:02:03.000Z",
         sections: {
-          systemPrompt: { summary: "期間指定を明確化する", actions: [{ proposal: "対象月の解釈規則を追加", rationale: "月の曖昧さ", expectedEffect: "誤集計を防ぐ" }] },
-          referenceQuery: { summary: "月次集計SQLの例を追加", actions: [] },
-          sourceMart: { summary: "対象月キーを追加", actions: [] },
-          other: { summary: "回帰テストを追加", actions: [] }
+          systemPrompt: { status: "needs_action", summary: "期間指定を明確化する", actions: [{ proposal: "対象月の解釈規則を追加", rationale: "月の曖昧さ", expectedEffect: "誤集計を防ぐ" }] },
+          referenceQuery: { status: "needs_action", summary: "月次集計SQLの例を追加", actions: [] },
+          sourceMart: { status: "no_issue", summary: "このコメントは表示しない", actions: [] },
+          other: { status: "needs_action", summary: "回帰テストを追加", actions: [] }
         }
       },
       evaluation: {
@@ -201,8 +201,10 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.equal(batch[4]._pageKind, "case-detail");
   assert.equal(batch[5]._pageKind, "case-evidence");
   assert.equal(batch[6]._pageKind, "case-improvement");
-  assert.equal(batch[6].improvementLabel0, "① システムプロンプト");
+  assert.match(batch[6].improvementLabel0, /① システムプロンプト.+要対応/);
   assert.match(batch[6].improvementBody0, /対象月の解釈規則を追加/);
+  assert.match(batch[6].improvementLabel2, /③ 元mart.+問題なし/);
+  assert.equal(batch[6].improvementBody2, "");
   assert.match(batch[6].improvementDisclaimer, /評価・合否にも影響しません/);
   assert.equal(batch[6].referenceLabel0, "データエージェント");
   assert.deepEqual(batch[6]._referenceLinks, [
