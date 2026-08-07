@@ -54,6 +54,7 @@ test("initial UI render does not block on heavy GCS-backed history collections",
   assert.doesNotMatch(blockingBootstrap, /\/api\/sheets\/connections/);
   assert.ok(initializeSource.indexOf("await route()") < initializeSource.indexOf("preloadSecondaryData()"));
   assert.match(app, /async function ensureRouteData\(parts\)/);
+  assert.match(app, /suiteRuns: async \(\) => \{[\s\S]*?state\.suiteRuns = payload\.suiteRuns \|\| \[\];[\s\S]*?renderSuites\(\);/);
 });
 
 test("suite editor separates run history from version history and groups actions", () => {

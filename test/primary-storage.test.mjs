@@ -264,3 +264,26 @@ test("GCS retries once with a refreshed token after a 401", async () => {
   assert.equal(tokenCalls, 2);
   assert.deepEqual(authorizationHeaders, ["Bearer test-token-1", "Bearer test-token-2"]);
 });
+
+test("GCS coalesces concurrent token refreshes after 401 responses", async () => {
+  let tokenCalls = 0;
+  const backend = new GcsStorageBackend(
+    { bucket: "portable-test-bucket" },
+    {
+      tokenProvider: async () => ({ token: `token-${++tokenCalls}`, source: "test" }),
+      fetchImpl: async (_url, options = {}) => {
+        const token = options.headers.Authorization;
+        if (token === "Bearer token-1") return new Response("expired", { status: 401 });
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      }
+    }
+  );
+
+  await Promise.all([
+    backend.request("https://storage.googleapis.test/a"),
+    backend.request("https://storage.googleapis.test/b"),
+    backend.request("https://storage.googleapis.test/c")
+  ]);
+
+  assert.equal(tokenCalls, 2);
+});

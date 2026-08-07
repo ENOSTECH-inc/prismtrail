@@ -4454,6 +4454,11 @@ async function loadSecondaryData(name) {
     suiteRuns: async () => {
       const payload = await json("/api/suite-runs");
       state.suiteRuns = payload.suiteRuns || [];
+      const parts = location.hash.replace(/^#\//, "").split("/").filter(Boolean);
+      if (parts[0] === "suites" && !parts[1]) {
+        renderSuites();
+        refreshIcons();
+      }
     },
     runs: async () => {
       const payload = await json("/api/runs").catch(() => ({ runs: [] }));
