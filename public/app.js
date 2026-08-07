@@ -11,6 +11,7 @@ import Fuse from "/vendor/fuse.min.mjs";
 
 const QUICK_SEARCH_RECENT_KEY = "prismtrail-quick-search-recent";
 const QUICK_SEARCH_RECENT_LIMIT = 8;
+const SUITE_RUN_ALIAS_PREFIX = "prismtrail-suite-run-alias:";
 const MCP_CLIENTS = Object.freeze({
   codex: {
     label: "Codex CLI / Desktop",
@@ -84,6 +85,26 @@ const state = {
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
+
+function rememberSuiteRunAlias(launchId, runId) {
+  try {
+    sessionStorage.setItem(`${SUITE_RUN_ALIAS_PREFIX}${launchId}`, runId);
+  } catch {}
+}
+
+function resolveSuiteRunAlias(launchId) {
+  try {
+    return sessionStorage.getItem(`${SUITE_RUN_ALIAS_PREFIX}${launchId}`) || launchId;
+  } catch {
+    return launchId;
+  }
+}
+
+function forgetSuiteRunAlias(launchId) {
+  try {
+    sessionStorage.removeItem(`${SUITE_RUN_ALIAS_PREFIX}${launchId}`);
+  } catch {}
+}
 
 const esc = (value) =>
   String(value ?? "")
@@ -1970,10 +1991,12 @@ function beginSuiteRunNavigation(suite, { caseIds = null } = {}) {
 async function completeSuiteRunNavigation(pendingReport, startRun) {
   try {
     const run = await startRun();
+    rememberSuiteRunAlias(pendingReport.id, run.id);
     state.pendingSuiteRuns.delete(pendingReport.id);
     state.suiteRuns = [run, ...state.suiteRuns.filter((item) => item.id !== run.id)];
     if (location.hash.startsWith(`#/reports/${pendingReport.id}`)) {
       history.replaceState(null, "", `#/reports/${run.id}`);
+      forgetSuiteRunAlias(pendingReport.id);
       renderReport(run);
       refreshIcons();
     }
@@ -4529,7 +4552,13 @@ async function route() {
       }
       else if (parts[0] === "reports" && parts[1]) {
         const selectedCaseId = parts[2] === "cases" && parts[3] ? decodeURIComponent(parts[3]) : null;
-        const report = state.pendingSuiteRuns.get(parts[1]) || await json(`/api/suite-runs/${parts[1]}`);
+        const resolvedReportId = resolveSuiteRunAlias(parts[1]);
+        const report = state.pendingSuiteRuns.get(parts[1]) || await json(`/api/suite-runs/${resolvedReportId}`);
+        if (resolvedReportId !== parts[1]) {
+          const suffix = parts.length > 2 ? `/${parts.slice(2).join("/")}` : "";
+          history.replaceState(null, "", `#/reports/${resolvedReportId}${suffix}`);
+          forgetSuiteRunAlias(parts[1]);
+        }
         state.activeReport = report;
         renderReport(report, { selectedCaseId });
       }

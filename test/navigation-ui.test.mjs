@@ -76,6 +76,9 @@ test("single-case and full-suite runs navigate to an optimistic report before st
   assert.match(selectedCaseSource, /void completeSuiteRunNavigation/);
   assert.match(suiteRunSource, /void completeSuiteRunNavigation/);
   assert.match(app, /state\.pendingSuiteRuns\.get\(parts\[1\]\) \|\| await json/);
+  assert.match(app, /rememberSuiteRunAlias\(pendingReport\.id, run\.id\)/);
+  assert.match(app, /resolveSuiteRunAlias\(parts\[1\]\)/);
+  assert.match(app, /history\.replaceState\(null, "", `#\/reports\/\$\{resolvedReportId\}\$\{suffix\}`\)/);
   assert.match(app, /if \(!launchPending && \(isLive \|\| sheetExport\.status/);
   assert.match(app, /const saveState = document\.querySelector\("#save-state"\)/);
   assert.match(app, /if \(saveState\) saveState\.textContent/);
