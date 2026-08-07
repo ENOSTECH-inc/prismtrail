@@ -77,4 +77,13 @@ test("single-case and full-suite runs navigate to an optimistic report before st
   assert.match(suiteRunSource, /void completeSuiteRunNavigation/);
   assert.match(app, /state\.pendingSuiteRuns\.get\(parts\[1\]\) \|\| await json/);
   assert.match(app, /if \(!launchPending && \(isLive \|\| sheetExport\.status/);
+  assert.match(app, /const saveState = document\.querySelector\("#save-state"\)/);
+  assert.match(app, /if \(saveState\) saveState\.textContent/);
+});
+
+test("suite cases keep acceptance criteria without a separate accuracy-validation editor", () => {
+  assert.match(app, /data-criteria-editor/);
+  assert.match(app, /Data Agentの回答・SQL・結果表・チャート/);
+  assert.doesNotMatch(app, /data-accuracy-enabled|data-add-accuracy-source|accuracy-validation|精度検証/);
+  assert.doesNotMatch(styles, /accuracy-source/);
 });

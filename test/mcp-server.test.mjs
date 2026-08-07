@@ -78,9 +78,9 @@ test("PrismTrail MCP exposes the complete non-destructive operation surface", ()
   assert.equal(tools.every((tool) => typeof tool.scope === "string" && tool.scope.length > 0), true);
   const createCase = tools.find((tool) => tool.name === "create_test_case");
   assert.equal(createCase.inputSchema.properties.testCase.properties.relatedUrls.maxItems, 20);
-  const accuracy = createCase.inputSchema.properties.testCase.properties.expectations.properties.accuracyValidation;
-  assert.deepEqual(accuracy.properties.sources.items.properties.type.enum, ["text", "url", "bigquery_sql"]);
-  assert.equal(accuracy.properties.sources.maxItems, 20);
+  const expectationProperties = createCase.inputSchema.properties.testCase.properties.expectations.properties;
+  assert.equal(expectationProperties.accuracyValidation, undefined);
+  assert.equal(expectationProperties.businessRequirements.properties.criteriaItems.maxItems, 20);
   assert.equal(createCase.inputSchema.properties.testCase.properties.relatedUrls.items.format, "uri");
   const connectSheet = tools.find((tool) => tool.name === "connect_google_sheet");
   assert.deepEqual(connectSheet.inputSchema.required, ["spreadsheetUrl", "sheetName", "agentId"]);

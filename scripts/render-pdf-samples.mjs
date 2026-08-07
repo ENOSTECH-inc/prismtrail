@@ -179,7 +179,7 @@ const report = {
     total: 5,
     totalDurationMs: 272000,
     totalBytesBilled: 4138270720,
-    accuracyGrades: { A: 1, B: 1, C: 1, D: 0 }
+    businessGrades: { A: 1, B: 1, C: 1, D: 0 }
   },
   suiteSnapshot: { ...suite },
   caseRuns: [

@@ -13,12 +13,12 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](https://nodejs.org/)
 
 <p align="center">
-  <img src="./docs/prismtrail-concept.png" alt="PrismTrail concept: test inputs flow through a data-agent adapter into system, accuracy, evidence, cost, and latency evaluation, producing live reports and confident decisions." width="1200">
+  <img src="./docs/prismtrail-concept.png" alt="PrismTrail concept: test inputs flow through a data-agent adapter into system and business requirement evaluation, evidence, cost, and latency reporting." width="1200">
 </p>
 
 PrismTrail turns repeatable business questions into test suites. Its first adapter executes them
 against an existing BigQuery Data Agent, captures response traces and BigQuery job metadata,
-evaluates deterministic behavior and business accuracy separately, and produces team-friendly
+evaluates deterministic behavior and business acceptance conditions separately, and produces team-friendly
 reports in the web UI and Google Sheets.
 
 The project is designed for local workstations and coding agents. It uses Google Cloud
@@ -47,16 +47,15 @@ This project models those concerns explicitly:
 |---|---|---|
 | System requirements | final response, errors, SQL evidence, chart evidence, duration, billed bytes, required phrases | pass/fail checks and score |
 | Business requirements | qualitative and quantitative acceptance conditions | Gemini judge grade A/B/C/D |
-| Accuracy sources | manual text, a public evidence URL, or a read-only BigQuery SQL result | Ground truth supplied to the Gemini judge |
 | Reporting | suite progress, trace, cost, scores, evidence, and errors | web report and managed Google Sheet |
 
 ## Features
 
 - Single-prompt test runs with normalized response traces
 - Reusable test suites with live progress and resumable report URLs
-- Separate system and business-accuracy scores
+- Separate system and business-requirement scores
 - A/B/C/D business grading with evidence and review-required judge failures
-- Separate business acceptance conditions and structured text / URL / BigQuery SQL accuracy sources
+- Checklist-style business acceptance conditions judged against the full Data Agent response
 - BigQuery SQL evidence from generated SQL, matched verified queries, and query jobs
 - BigQuery duration and billed-byte reporting
 - Existing Data Agent registry using full Google Cloud resource names
@@ -210,7 +209,7 @@ sheet name, then link one registered Data Agent. Three agents therefore use thre
 writeback, automatic export, and catalog synchronization run only when the resource's effective
 agent matches the connection owner. The app owns only:
 
-- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including business acceptance conditions, structured accuracy-source JSON, and newline-separated provenance URLs
+- `AgentEval_TestSuite` — editable suite metadata and up to 120 test cases, including business acceptance conditions and newline-separated provenance URLs
 - `AgentEval_Report` — read-only suite-run summary and case results
 - `AgentEval_DataAgents` — the single Data Agent that owns the spreadsheet
 - `AgentEval_Suites` — suites that use only that owning Data Agent
@@ -219,14 +218,6 @@ The app clears and rewrites those fixed tabs while preserving their sheet IDs. M
 and imports or exports targeting a different agent are rejected server-side. It does not modify
 user-created tabs. Imported values are validated server-side; hidden columns and pasted data are
 not trusted.
-
-Accuracy-source URLs are different from provenance `relatedUrls`: they are fetched for scoring.
-Only public HTTP(S) pages on standard ports are allowed; DNS answers and every redirect are checked
-against private, loopback, link-local, metadata, and reserved IP ranges, and text responses are size-
-and time-bounded. Accuracy-source BigQuery SQL uses ADC, accepts only one `SELECT`/`WITH` statement,
-runs a dry run first, and defaults to a 100 MiB billed-byte cap, 100 returned rows, and 30 seconds.
-The limits can be lowered with `ACCURACY_BQ_MAX_BYTES_BILLED`, `ACCURACY_BQ_MAX_ROWS`, and
-`ACCURACY_BQ_TIMEOUT_MS`; use `ACCURACY_BQ_LOCATION` when the referenced datasets require a location.
 
 ## Storage
 
