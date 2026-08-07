@@ -3713,7 +3713,7 @@ function renderSettings() {
     <div class="settings-tab-panel ${state.settingsTab === "auth" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "auth" ? "hidden" : ""}>
     ${renderGoogleAuthSettings()}
     </div>
-    <div class="settings-tab-panel ${state.settingsTab === "sheets" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "sheets" ? "hidden" : ""}>
+    <div class="settings-tab-panel sheets-tab-panel ${state.settingsTab === "sheets" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "sheets" ? "hidden" : ""}>
     ${renderSheetsSettings()}
     </div>
     <div class="settings-tab-panel ${state.settingsTab === "storage" ? "active" : ""}" role="tabpanel" ${state.settingsTab !== "storage" ? "hidden" : ""}>
