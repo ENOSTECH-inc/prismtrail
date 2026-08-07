@@ -35,9 +35,12 @@ test("report separates response receipt and can rerun only missing responses", (
 
 test("report renders and regenerates persisted four-section improvement proposals", () => {
   assert.match(app, /function improvementProposalHtml\(/);
+  assert.match(app, /function improvementSectionStatus\(/);
+  assert.match(app, /function improvementProposalNeedsAction\(/);
   assert.match(app, /\["systemPrompt", "referenceQuery", "sourceMart", "other"\]/);
   assert.match(app, /data-report-filter="improvements"/);
-  assert.match(app, /improvementProposal\?\.eligible === true/);
+  assert.match(app, /tr\("要対応", "Needs action"\)/);
+  assert.match(app, /tr\("問題なし", "No issue"\)/);
   assert.match(app, /id="regenerate-improvement-proposals"/);
   assert.match(app, /\/improvement-proposals/);
   assert.match(app, /評価・合否にも影響しません/);
@@ -47,6 +50,8 @@ test("report renders and regenerates persisted four-section improvement proposal
   assert.match(app, /対象全件を再生成/);
   assert.match(styles, /\.improvement-proposal-grid\s*\{/);
   assert.match(styles, /\.improvement-proposal-card\s*\{/);
+  assert.match(styles, /\.improvement-proposal-card\.no_issue/);
+  assert.match(styles, /\.improvement-section-status\.needs_action/);
 });
 
 test("run details separate the summary from raw response events", () => {

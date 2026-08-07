@@ -99,19 +99,22 @@ test("normalizes the fixed four sections and bounds actions", () => {
     diagnosis: "期間解釈にずれがあります",
     sections: {
       systemPrompt: { summary: "指示改善", actions },
-      referenceQuery: { summary: "SQL改善", actions: [] },
-      sourceMart: { summary: "mart改善", actions: [] }
+      referenceQuery: { status: "needs_action", summary: "SQL改善", actions: [] },
+      sourceMart: { status: "no_issue", summary: "このコメントは破棄される", actions }
     },
     evidenceGaps: ["現在の前処理仕様"]
   }, { caseRun, audit: { model: "gemini-test", completedAt: "2026-08-07T00:00:00.000Z" } });
   assert.deepEqual(Object.keys(proposal.sections), ["systemPrompt", "referenceQuery", "sourceMart", "other"]);
+  assert.equal(proposal.sections.systemPrompt.status, "needs_action");
   assert.equal(proposal.sections.systemPrompt.actions.length, 3);
-  assert.deepEqual(proposal.sections.other, { summary: "", actions: [] });
+  assert.deepEqual(proposal.sections.sourceMart, { status: "no_issue", summary: "", actions: [] });
+  assert.deepEqual(proposal.sections.other, { status: "no_issue", summary: "", actions: [] });
+  assert.equal(proposal.schemaVersion, 2);
   assert.equal(proposal.model, "gemini-test");
   assert.equal(proposal.sourceOverallGrade, "C");
 });
 
-test("keeps no-response guidance out of configuration and mart sections", () => {
+test("keeps no-response commentary out of configuration and mart sections", () => {
   const proposal = normalizeCaseImprovementProposal({
     sections: Object.fromEntries(IMPROVEMENT_SECTION_KEYS.map((key) => [key, {
       summary: `${key}を変更`,
@@ -126,8 +129,8 @@ test("keeps no-response guidance out of configuration and mart sections", () => 
     }
   });
   for (const key of ["systemPrompt", "referenceQuery", "sourceMart"]) {
-    assert.match(proposal.sections[key].summary, /判断できません/);
-    assert.deepEqual(proposal.sections[key].actions, []);
+    assert.deepEqual(proposal.sections[key], { status: "no_issue", summary: "", actions: [] });
   }
+  assert.equal(proposal.sections.other.status, "needs_action");
   assert.equal(proposal.sections.other.summary, "otherを変更");
 });

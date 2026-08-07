@@ -2039,6 +2039,16 @@ function responseReceiptBadge(receipt = {}) {
   return `<span class="response-receipt-badge ${esc(receipt.status || "unknown")}">${icon(receipt.status === "received" ? "circle-check" : receipt.status === "not_received" ? "circle-x" : "circle-help", 14)}<span><small>${tr("レスポンス受領", "Response receipt")}</small><b>${responseReceiptLabel(receipt)}</b><em>${esc(httpStatus)}</em></span></span>`;
 }
 
+function improvementSectionStatus(section = {}) {
+  if (["needs_action", "no_issue"].includes(section.status)) return section.status;
+  return section.summary || (section.actions || []).length ? "needs_action" : "no_issue";
+}
+
+function improvementProposalNeedsAction(proposal = {}) {
+  return proposal.status === "succeeded" && Object.values(proposal.sections || {})
+    .some((section) => improvementSectionStatus(section) === "needs_action");
+}
+
 function improvementProposalSectionHtml(key, section = {}) {
   const labels = {
     systemPrompt: ["①", tr("システムプロンプト", "System prompt"), "message-square-code"],
@@ -2047,8 +2057,12 @@ function improvementProposalSectionHtml(key, section = {}) {
     other: ["④", tr("その他", "Other"), "sparkles"]
   };
   const [number, label, iconName] = labels[key];
+  const sectionStatus = improvementSectionStatus(section);
+  const statusLabel = sectionStatus === "needs_action"
+    ? tr("要対応", "Needs action")
+    : tr("問題なし", "No issue");
   const actions = (section.actions || []).map((action) => `<li><strong>${esc(action.proposal)}</strong>${action.rationale ? `<p>${esc(action.rationale)}</p>` : ""}${action.expectedEffect ? `<small>${tr("期待効果", "Expected effect")}: ${esc(action.expectedEffect)}</small>` : ""}</li>`).join("");
-  return `<article class="improvement-proposal-card ${esc(key)}"><header><span>${number}</span>${icon(iconName, 18)}<h4>${label}</h4></header>${section.summary ? `<p>${esc(section.summary)}</p>` : ""}${actions ? `<ol>${actions}</ol>` : `<p class="muted-copy">${tr("この分類の具体提案はありません。", "No concrete proposal in this category.")}</p>`}</article>`;
+  return `<article class="improvement-proposal-card ${esc(key)} ${sectionStatus}"><header><span>${number}</span>${icon(iconName, 18)}<h4>${label}</h4><b class="improvement-section-status ${sectionStatus}">${statusLabel}</b></header>${sectionStatus === "needs_action" && section.summary ? `<p>${esc(section.summary)}</p>` : ""}${sectionStatus === "needs_action" && actions ? `<ol>${actions}</ol>` : ""}</article>`;
 }
 
 function improvementProposalHtml(item) {
@@ -4257,7 +4271,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
     : state.reportCaseFilter === "no_response"
       ? caseEntries.filter((entry) => entry.item?.responseReceipt?.status === "not_received")
       : state.reportCaseFilter === "improvements"
-        ? caseEntries.filter((entry) => entry.item?.improvementProposal?.eligible === true)
+        ? caseEntries.filter((entry) => improvementProposalNeedsAction(entry.item?.improvementProposal))
       : caseEntries;
   const requestedCaseId = selectedCaseId || state.selectedReportCaseId;
   const fallbackEntry = filteredEntries.find((entry) => ["failed", "review_required", "error"].includes(entry.item?.status)) || filteredEntries[0];
