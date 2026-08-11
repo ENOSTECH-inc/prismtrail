@@ -72,6 +72,7 @@ import {
 } from "./lib/knowledge.mjs";
 import { ensureNotoSansJpFont } from "./lib/pdf-font.mjs";
 import { pdfFilename, renderCaseSpecPdf, renderSuiteRunPdf, isPartialSuiteRun, resolveSuiteRunPdfCaseIds } from "./lib/pdf-reports.mjs";
+import { createZipArchive, reportBundleFilenames } from "./lib/zip.mjs";
 import {
   AGENTS_SHEET,
   bootstrapManagedSheets,
@@ -353,6 +354,17 @@ function sendPdf(response, bytes, filename) {
   const body = Buffer.from(bytes);
   response.writeHead(200, {
     ...securityHeaders("application/pdf"),
+    "Cache-Control": "no-store",
+    "Content-Length": String(body.length),
+    "Content-Disposition": `attachment; filename="${filename}"`
+  });
+  response.end(body);
+}
+
+function sendZip(response, bytes, filename) {
+  const body = Buffer.from(bytes);
+  response.writeHead(200, {
+    ...securityHeaders("application/zip"),
     "Cache-Control": "no-store",
     "Content-Length": String(body.length),
     "Content-Disposition": `attachment; filename="${filename}"`
@@ -2463,6 +2475,38 @@ async function renderLatestSuiteResultsPdf(suite, mode = "latest_per_case") {
   return { bytes, filename, report };
 }
 
+async function renderSuiteRunPdfBundle({ report, caseIds = null, agents = [], runsById = {}, baseFilename }) {
+  const [summary, details] = await Promise.all([
+    renderSuiteRunPdf({ report, caseIds, agents, runsById, variant: "summary" }),
+    renderSuiteRunPdf({ report, caseIds, agents, runsById, variant: "detail" })
+  ]);
+  const filenames = reportBundleFilenames(baseFilename);
+  return {
+    bytes: createZipArchive([
+      { name: filenames.summary, bytes: summary },
+      { name: filenames.details, bytes: details }
+    ]),
+    filename: filenames.archive,
+    filenames
+  };
+}
+
+async function renderLatestSuiteResultsBundle(suite, mode = "latest_per_case") {
+  const result = await latestSuiteResultsReport(suite, mode);
+  const { report } = result;
+  const baseFilename = pdfFilename(
+    result.mode === "latest_per_case" ? "latest-case-results" : "latest-run",
+    suite.id
+  );
+  const bundle = await renderSuiteRunPdfBundle({
+    report,
+    agents: await agentStore.list(),
+    runsById: await pdfRunBodies(report),
+    baseFilename
+  });
+  return { ...bundle, report };
+}
+
 async function renderReportPdfResource({ reportId, caseId, scope = "all" }) {
   const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportId)));
   if (isSuiteRunActive(report)) throw Object.assign(new Error("実行中のレポートはPDF出力できません。"), { status: 409 });
@@ -3604,6 +3648,17 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const suiteLatestResultsZipMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/latest-results-zip$/
+    );
+    if (request.method === "GET" && suiteLatestResultsZipMatch) {
+      const suite = await suiteStore.get(suiteLatestResultsZipMatch[1]);
+      const mode = String(url.searchParams.get("mode") || "latest_per_case").trim().toLowerCase();
+      const result = await renderLatestSuiteResultsBundle(suite, mode);
+      sendZip(response, result.bytes, result.filename);
+      return;
+    }
+
     const suiteCasePdfMatch = url.pathname.match(/^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/case-pdf$/);
     if (request.method === "GET" && suiteCasePdfMatch) {
       const suite = await suiteStore.get(suiteCasePdfMatch[1]);
@@ -3642,6 +3697,44 @@ const server = createServer(async (request, response) => {
       });
       return;
     }
+    const reportZipMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/export\/zip$/);
+    if (request.method === "GET" && reportZipMatch) {
+      const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportZipMatch[1])));
+      if (["pending", "generating"].includes(report.improvementProposals?.status)) {
+        const error = new Error("改善提案の生成完了後にPDFを出力してください。");
+        error.status = 409;
+        throw error;
+      }
+      const caseId = String(url.searchParams.get("caseId") || "").trim();
+      const scope = String(url.searchParams.get("scope") || "all").trim().toLowerCase();
+      const caseIds = resolveSuiteRunPdfCaseIds(report, { caseId, scope });
+      if (scope === "failed" && !caseId && !(caseIds || []).length) {
+        const error = new Error("不合格のケースがないため、失敗のみのPDFを出力できません。");
+        error.status = 404;
+        throw error;
+      }
+      const targetCaseIds = caseIds?.length ? new Set(caseIds) : null;
+      const runsById = {};
+      for (const item of report.caseRuns || []) {
+        if (!item.runId || (targetCaseIds && !targetCaseIds.has(item.caseId))) continue;
+        try { runsById[item.runId] = await runStore.get(item.runId); } catch { /* best effort */ }
+      }
+      const baseFilename = caseIds?.length === 1
+        ? pdfFilename("run-case", caseIds[0])
+        : scope === "failed"
+          ? pdfFilename("run-failed", report.id)
+          : pdfFilename("run", report.id);
+      const bundle = await renderSuiteRunPdfBundle({
+        report,
+        caseIds,
+        agents: await agentStore.list(),
+        runsById,
+        baseFilename
+      });
+      sendZip(response, bundle.bytes, bundle.filename);
+      return;
+    }
+
     const reportPdfMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/export\/pdf$/);
     if (request.method === "GET" && reportPdfMatch) {
       const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportPdfMatch[1])));
