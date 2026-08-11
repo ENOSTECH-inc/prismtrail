@@ -100,13 +100,14 @@ npm start
   added or changed. The links round-trip through the UI, MCP, Sheets, history, and case-spec PDFs.
 - Prefer suite evaluation over ad-hoc `/api/runs` when the user cares about pass/fail criteria.
 - From the suite editor, **このケースを実行** runs one case via `POST /api/suites/:id/run` with `{ "caseIds": [...] }`, then opens the evaluation detail (`#/reports/:id`) with a live skeleton until results appear. **スイートを実行** opens a scope modal for all runnable cases or only runnable cases with no historical success; the server recomputes the latter from stored Suite Runs immediately before launch.
-- The Suite editor shows latest pass/failure timestamps by stable case ID. **最新結果でPDF出力** and **最新結果をGシート出力** can export the newest Suite Run or a read-only rollup containing each current case's latest stored result. Never-run cases stay visible as unevaluated. The Sheet action replaces only the connected Suite's managed `AgentEval_Report` tab; a stored latest run records the successful Sheet destination, while a synthetic rollup is not persisted as a Suite Run.
+- The Suite editor shows latest pass/failure timestamps by stable case ID. **PDF出力** and **最新結果をGシート出力** can export the newest Suite Run or a read-only rollup containing each current case's latest stored result. Never-run cases stay visible as unevaluated. The Sheet action replaces only the connected Suite's managed `AgentEval_Report` tab; a stored latest run records the successful Sheet destination, while a synthetic rollup is not persisted as a Suite Run.
 - For stakeholder handoff, prefer PDF export over screenshots:
   - Suite editor → **このケースをPDF** / **全ケースをPDF** (case specification, TestRail case-print style)
-  - Evaluation report → **PDF出力** (full run: Runs Summary cover with status pie + case index, then case details)
-  - Suite editor → **最新結果でPDF出力** (latest one-run report or latest-result-per-case rollup)
-  - Single-case / partial runs export **case detail only** (no suite cover page)
-  - Endpoints live under `/api/suites/:id/export/*-pdf` and `/api/suite-runs/:id/export/pdf`
+  - Evaluation report → **PDF出力** (downloads a ZIP containing a summary PDF and a detailed PDF)
+  - Suite editor → **PDF出力** (latest one-run report or latest-result-per-case rollup, also as a summary/details ZIP)
+  - The summary PDF keeps the Runs Summary cover/index plus one page per case with scores, submitted prompt, system results, and business results
+  - Single-case / partial runs omit the suite cover/index; their summary PDF is one page
+  - UI endpoints are `/api/suites/:id/export/latest-results-zip` and `/api/suite-runs/:id/export/zip`; the direct detailed-PDF endpoints remain available for integrations
   - Generation uses pdfme on the server with Noto Sans JP; SVG pie/bar charts are embedded for at-a-glance status
   - PDFs include a clickable link to open the case editor or run/report page (`http://127.0.0.1:4318` by default)
 

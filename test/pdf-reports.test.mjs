@@ -304,6 +304,43 @@ test("builds suite-run cover plus case pages, or a single case page", () => {
   assert.equal(partial[4]._pageKind, "case-improvement");
 });
 
+test("builds a one-page-per-case summary variant with prompt and requirement outcomes", async () => {
+  const summary = buildSuiteRunInputs({
+    report,
+    agents,
+    runsById: { run_1: runFixture },
+    variant: "summary"
+  });
+  assert.equal(summary.length, 3); // cover + index + one case summary
+  assert.deepEqual(summary.map((input) => input._pageKind), ["cover", "index", "case-overview"]);
+  assert.equal(summary[2].summaryPrompt, "6月の売上を教えて");
+  assert.equal(summary[2].summarySystemStatus0, "適合");
+  assert.equal(summary[2].summarySystemItem0, "SQLを生成");
+  assert.equal(summary[2].summaryBusinessStatus0, "適合");
+  assert.equal(summary[2].summaryBusinessItem0, "売上が数値");
+  assert.equal(summary[2].summaryBusinessStatus1, "一部適合");
+  assert.equal(summary[2].summaryBusinessItem1, "期間が6月");
+
+  const singleCase = buildSuiteRunInputs({
+    report,
+    caseIds: ["case_1"],
+    agents,
+    runsById: { run_1: runFixture },
+    variant: "summary"
+  });
+  assert.equal(singleCase.length, 1);
+  assert.equal(singleCase[0]._pageKind, "case-overview");
+
+  const pdf = await renderSuiteRunPdf({
+    report,
+    agents,
+    runsById: { run_1: runFixture },
+    variant: "summary"
+  });
+  const document = await PDFDocument.load(pdf);
+  assert.equal(document.getPageCount(), 3);
+});
+
 test("latest-per-case rollup PDF identifies the rollup and links case pages to source runs", () => {
   const rollupReport = structuredClone(report);
   rollupReport.id = "latest_results_suite_demo";

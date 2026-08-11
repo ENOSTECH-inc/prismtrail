@@ -10,8 +10,35 @@ test("report PDF export opens a scope modal for all vs failed cases", () => {
   assert.match(app, /pdf-export-scope-dialog/);
   assert.match(app, /scope", "failed"/);
   assert.match(app, /失敗のみ/);
+  assert.match(app, /サマリー版と詳細版のPDFをZIPでまとめて/);
+  assert.match(app, /PDFセットをダウンロード/);
+  assert.match(app, /latest-results-zip/);
+  assert.match(app, /\/export\/zip/);
   assert.match(app, /clipPreviewText\(value, max = 8_000\)/);
   assert.match(styles, /\.pdf-export-scope-dialog/);
+});
+
+test("PDF export paints feedback before save or backend generation starts", () => {
+  assert.match(app, /function waitForUiPaint\(\)/);
+  assert.match(app, /if \(overlay\) await waitForUiPaint\(\)/);
+  const latestExport = app.slice(
+    app.indexOf("async function exportLatestSuiteResultsPdf"),
+    app.indexOf("async function exportLatestSuiteResultsSheet")
+  );
+  assert.ok(latestExport.indexOf("askLatestResultsScope") < latestExport.indexOf("saveSuite"));
+  assert.ok(latestExport.indexOf("setBusyOverlay(true") < latestExport.indexOf("saveSuite"));
+  assert.ok(latestExport.indexOf("waitForUiPaint") < latestExport.indexOf("saveSuite"));
+  assert.doesNotMatch(latestExport, /await loadSuiteResultRollup/);
+});
+
+test("latest-result export modal uses a clean stacked Japanese heading", () => {
+  const latestScope = app.slice(
+    app.indexOf("function askLatestResultsScope"),
+    app.indexOf("async function json")
+  );
+  assert.doesNotMatch(latestScope, /LATEST RESULTS/);
+  assert.match(styles, /\.suite-action-scope-shell > header \{ display: block;/);
+  assert.match(styles, /\.suite-action-scope-shell > header h2 \{ margin: 0;/);
 });
 
 test("report case workbench shows runnable cases only and ignores stale activeCases when finished", () => {
