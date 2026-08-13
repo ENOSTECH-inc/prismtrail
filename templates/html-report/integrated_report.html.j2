@@ -31,7 +31,6 @@
 .iframe-shell.loaded .iframe-skeleton { display: none; }
 .report-card .card-body.collapsed { display: none; }
 .report-card.is-collapsed .chevron { transform: rotate(-90deg); }
-.toc-acc .toc-body[hidden] { display: none; }
 .toc-acc.active .toc-head { background: var(--sompo-red-50); }
 #main { padding: 20px 24px 48px; }
 </style>
@@ -86,19 +85,6 @@
                   <span class="toc-link"><span class="toc-label">{{ item.title }}</span></span>
                   <span class="toc-status" id="dot-{{ item.index }}" role="status" aria-label="未読込"></span>
                 </button>
-                <button type="button" class="toc-expand" data-expand-idx="{{ item.index }}"
-                        aria-expanded="false" aria-controls="tocbody-{{ item.index }}">
-                  <i class="toc-chev" aria-hidden="true">▾</i>
-                </button>
-              </div>
-              <div class="toc-body" id="tocbody-{{ item.index }}" hidden>
-                <ul class="summary-list">
-                  {% for row in item.headline %}
-                  <li class="summary-line">
-                    <span class="summary-text">{{ row.text }}</span>
-                  </li>
-                  {% endfor %}
-                </ul>
               </div>
             </li>
             {% endfor %}
@@ -246,19 +232,6 @@
   document.querySelectorAll('[data-jump]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       jumpToCard(btn.getAttribute('data-jump'));
-    });
-  });
-
-  document.querySelectorAll('[data-expand-idx]').forEach(function (btn) {
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var idx = btn.getAttribute('data-expand-idx');
-      var body = document.getElementById('tocbody-' + idx);
-      if (!body) return;
-      var open = body.hasAttribute('hidden');
-      if (open) body.removeAttribute('hidden');
-      else body.setAttribute('hidden', '');
-      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
   });
 

@@ -37,9 +37,6 @@ html{overflow-y:auto;height:auto;}
 .btn-drill svg,.btn-copy svg{width:12px;height:12px;fill:currentColor;flex-shrink:0;}
 .btn-copy{background:var(--bg);color:var(--text-mute);padding:8px 10px;}
 .btn-copy.copied{color:var(--green);border-color:var(--green);}
-.headline-summary{display:none;}
-.headline-summary .hl-row{display:none;}
-.hl-tag,.hl-text{display:none;}
 .page-body{padding:24px 28px 0;}
 .section{margin-bottom:28px;}
 .section:first-child{margin-top:8px;}
@@ -68,12 +65,6 @@ html{overflow-y:auto;height:auto;}
 .data-table td{padding:8px 10px;border-bottom:1px solid var(--rule-light);color:var(--text);vertical-align:top;}
 .data-table tr:last-child td{border-bottom:none;}
 .data-table tr:hover td{background:rgba(246,247,249,.7);}
-.insight-list{display:flex;flex-direction:column;gap:8px;}
-.insight-card{display:flex;align-items:flex-start;border:1px solid var(--rule-light);border-left:3px solid var(--tableau-blue);background:var(--bg);}
-.insight-num{display:flex;align-items:flex-start;justify-content:center;padding:12px 0 12px 12px;font-size:14px;font-weight:600;color:var(--text-mute);line-height:1.45;min-width:36px;flex-shrink:0;font-variant-numeric:tabular-nums;}
-.insight-body{flex:1;padding:10px 14px 10px 6px;}
-.insight-text{margin:0;font-size:13px;color:var(--text);line-height:1.6;}
-.headline-summary{display:none;}
 .chart-wrap{margin-bottom:18px;}
 .chart-title{font-size:12px;font-weight:600;color:var(--text-sub);margin-bottom:6px;}
 .chart-box{min-height:280px;width:100%;}

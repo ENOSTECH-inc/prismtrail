@@ -31,14 +31,14 @@
 .table-block-title{font-size:13px;font-weight:600;color:var(--text);margin:0 0 8px;line-height:1.45;}
 .table-frame{border:1px solid var(--rule-light);border-radius:8px;overflow:auto;background:#fff;}
 .chart-box img{display:block;width:100%;height:auto;max-height:460px;object-fit:contain;}
-.insight-label{display:inline-block;margin:0 0 4px;color:var(--tableau-blue-dark);font-size:10px;font-weight:600;letter-spacing:.04em;}
 .analysis-event{margin:0 0 10px;border:1px solid var(--rule-light);border-radius:6px;overflow:hidden;background:#fff;}
 .analysis-event:last-child{margin-bottom:0;}
 .analysis-event-label{padding:7px 10px;border-bottom:1px solid var(--rule-light);background:var(--bg-subtle);color:var(--text-sub);font-size:11px;font-weight:600;}
 .analysis-event pre{margin:0;padding:10px 12px;border:0;border-radius:0;background:#fafbfc;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;}
-.followup-list{margin:0;padding-left:1.25rem;}
-.followup-list li{margin:0 0 8px;line-height:1.6;color:var(--text);}
-.followup-list li:last-child{margin-bottom:0;}
+.followup-list{display:grid;gap:10px;margin:0;padding:0;list-style:none;}
+.followup-list li{display:flex;align-items:flex-start;gap:10px;margin:0;padding:12px 14px;border:1px solid #D7E3EF;border-radius:10px;background:#F6F9FC;color:var(--text);line-height:1.6;box-shadow:0 1px 2px rgba(11,31,51,.04);transition:background .15s,border-color .15s,transform .15s;}
+.followup-list li::before{content:"?";display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:0 0 22px;margin-top:1px;border-radius:50%;background:var(--tableau-blue);color:#fff;font-size:12px;font-weight:700;line-height:1;}
+.followup-list li:hover{border-color:#B8CCDF;background:#F0F6FB;transform:translateY(-1px);}
 .response-json{margin:0;padding:14px;border:1px solid var(--rule-light);border-radius:6px;background:#fafbfc;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55;max-height:720px;overflow:auto;}
 </style>
 </head>
@@ -74,42 +74,39 @@
 
 <!-- Page nav -->
 <nav class="page-nav" id="page-nav">
-  {% if insights|length %}<a class="nav-tab" href="#sec-insights">分析コメント</a>{% endif %}
+  {% if sql_list|length %}<a class="nav-tab" href="#sec-sql">実行SQL</a>{% endif %}
   {% if tables|length %}<a class="nav-tab" href="#sec-datatable">データテーブル</a>{% endif %}
   {% if charts|length %}<a class="nav-tab" href="#sec-charts">チャート</a>{% endif %}
   {% if analysis_details|length %}<a class="nav-tab" href="#sec-analysis">分析プロセス</a>{% endif %}
   {% if answer %}<a class="nav-tab" href="#sec-answer">出力全体</a>{% endif %}
   {% if followups|length %}<a class="nav-tab" href="#sec-followups">フォローアップ</a>{% endif %}
-  {% if sql_list|length %}<a class="nav-tab" href="#sec-appendix">付録</a>{% endif %}
   {% if response_json %}<a class="nav-tab" href="#sec-response-json">応答JSON</a>{% endif %}
 </nav>
 
 <div class="page-body">
 
-{% if insights|length %}
-<div class="section" id="sec-insights">
+{% if sql_list|length %}
+<div class="section" id="sec-sql">
   <div class="section-header">
-    <span class="section-num">01</span>
-    <span class="section-title">分析コメント</span>
+    <span class="section-num">{{ section_numbers.sql }}</span>
+    <span class="section-title">実行SQL</span>
   </div>
-  <div class="insight-list">
-    {% for item in insights %}
-    <div class="insight-card">
-      <div class="insight-num">{{ item.num }}</div>
-      <div class="insight-body">
-        {% if item.label %}<div class="insight-label">{{ item.label }}</div>{% endif %}
-        <p class="insight-text">{{ item.text }}</p>
-      </div>
+  {% for sql in sql_list %}
+  <div class="query-block">
+    <div class="query-toolbar">
+      <span class="query-label">SQL{% if sql_list|length > 1 %} #{{ loop.index }}{% endif %}</span>
+      <button class="btn-query-copy" type="button" onclick="(function(b){var pre=b.closest('.query-block').querySelector('pre');navigator.clipboard.writeText(pre.textContent).then(function(){b.textContent='コピー済み';setTimeout(function(){b.textContent='コピー';},1200);});})(this)">コピー</button>
     </div>
-    {% endfor %}
+    <pre>{{ sql }}</pre>
   </div>
+  {% endfor %}
 </div>
 {% endif %}
 
 {% if tables|length %}
 <div class="section" id="sec-datatable">
   <div class="section-header">
-    <span class="section-num">02</span>
+    <span class="section-num">{{ section_numbers.table }}</span>
     <span class="section-title">データテーブル</span>
   </div>
   {% for table in tables %}
@@ -164,7 +161,7 @@
 {% if charts|length %}
 <div class="section" id="sec-charts">
   <div class="section-header">
-    <span class="section-num">03</span>
+    <span class="section-num">{{ section_numbers.chart }}</span>
     <span class="section-title">チャート</span>
   </div>
   {% for chart in charts %}
@@ -179,7 +176,7 @@
 {% if analysis_details|length %}
 <div class="section" id="sec-analysis">
   <div class="section-header">
-    <span class="section-num">04</span>
+    <span class="section-num">{{ section_numbers.analysis }}</span>
     <span class="section-title">分析プロセス</span>
   </div>
   {% for item in analysis_details %}
@@ -194,7 +191,7 @@
 {% if answer %}
 <div class="section" id="sec-answer">
   <div class="section-header">
-    <span class="section-num">05</span>
+    <span class="section-num">{{ section_numbers.answer }}</span>
     <span class="section-title">出力全体</span>
   </div>
   {% if question %}
@@ -213,7 +210,7 @@
 {% if followups|length %}
 <div class="section" id="sec-followups">
   <div class="section-header">
-    <span class="section-num">06</span>
+    <span class="section-num">{{ section_numbers.followups }}</span>
     <span class="section-title">フォローアップ候補</span>
   </div>
   <ul class="followup-list">
@@ -222,28 +219,10 @@
 </div>
 {% endif %}
 
-{% if sql_list|length %}
-<div class="section" id="sec-appendix">
-  <div class="section-header">
-    <span class="section-num">07</span>
-    <span class="section-title">付録（実行クエリ）</span>
-  </div>
-  {% for sql in sql_list %}
-  <div class="query-block">
-    <div class="query-toolbar">
-      <span class="query-label">SQL{% if sql_list|length > 1 %} #{{ loop.index }}{% endif %}</span>
-      <button class="btn-query-copy" type="button" onclick="(function(b){var pre=b.closest('.query-block').querySelector('pre');navigator.clipboard.writeText(pre.textContent).then(function(){b.textContent='コピー済み';setTimeout(function(){b.textContent='コピー';},1200);});})(this)">コピー</button>
-    </div>
-    <pre>{{ sql }}</pre>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-
 {% if response_json %}
 <div class="section" id="sec-response-json">
   <div class="section-header">
-    <span class="section-num">08</span>
+    <span class="section-num">{{ section_numbers.responseJson }}</span>
     <span class="section-title">Data Agent 応答JSON</span>
   </div>
   <p class="muted">上の可視化に使用した保存レスポンスです。表の表示上限を超える行・列を含む完全なイベント内容を確認できます。</p>
