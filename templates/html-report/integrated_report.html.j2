@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<style>
+{% include 'integrated_shell.css' %}
+
+.iframe-shell iframe {
+  width: 100%;
+  min-height: 78vh;
+  border: 0;
+  background: #fff;
+  border-radius: var(--radius);
+}
+.iframe-skeleton {
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  color: var(--gray-500);
+  background: linear-gradient(90deg, #f3f5f7, #fff, #f3f5f7);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite linear;
+  border-radius: var(--radius);
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.iframe-shell.loaded .iframe-skeleton { display: none; }
+.report-card .card-body.collapsed { display: none; }
+.report-card.is-collapsed .chevron { transform: rotate(-90deg); }
+.toc-acc .toc-body[hidden] { display: none; }
+.toc-acc.active .toc-head { background: var(--sompo-red-50); }
+#main { padding: 20px 24px 48px; }
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main">メインコンテンツへスキップ</a>
+
+<header id="topbar" role="banner">
+  <button id="sidebar-toggle-top" class="sidebar-toggle" aria-label="サイドバーを開く" aria-expanded="false" aria-controls="sidebar" type="button" title="サイドバーの表示切替">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div class="logo">
+    <span class="logo-title">{{ title }}</span>
+    <span class="logo-sub">{{ subtitle }}</span>
+  </div>
+
+  {% if generated_at %}
+  <span class="header-time-badge" aria-label="実行時刻">{{ generated_at }}</span>
+  {% endif %}
+</header>
+
+<div id="layout">
+  <nav id="sidebar" aria-label="レポート目次">
+    <div class="sidebar-inner">
+      <div class="sidebar-header">
+        <div class="sidebar-title-row">
+          <button id="sidebar-toggle" class="sidebar-toggle" aria-label="サイドバーを閉じる" aria-expanded="true" aria-controls="sidebar" type="button" title="サイドバーの表示切替">
+            <span></span><span></span><span></span>
+          </button>
+          <p class="sidebar-title">レポート一覧 <span class="sidebar-title-count">{{ count }}件</span></p>
+        </div>
+      </div>
+
+      <ul id="toc-list">
+        {% for group in groups %}
+        <li class="toc-group" data-group="{{ group.name }}">
+          <button class="toc-group-head" type="button" aria-expanded="true">
+            <span>{{ group.name }}</span>
+            <span class="toc-group-count">{{ group.entries|length }}</span>
+          </button>
+          <ul class="toc-group-items">
+            {% for item in group.entries %}
+            <li class="toc-acc{% if loop.first %} active{% endif %}"
+                data-idx="{{ item.index }}"
+                data-kinds="{{ item.kinds }}"
+                data-search="{{ item.search_blob }}">
+              <div class="toc-head-row">
+                <button type="button" class="toc-head" data-jump-idx="{{ item.index }}" title="{{ item.title }}">
+                  <span class="toc-num" aria-hidden="true">{{ item.num }}</span>
+                  <span class="toc-link"><span class="toc-label">{{ item.title }}</span></span>
+                  <span class="toc-status" id="dot-{{ item.index }}" role="status" aria-label="未読込"></span>
+                </button>
+                <button type="button" class="toc-expand" data-expand-idx="{{ item.index }}"
+                        aria-expanded="false" aria-controls="tocbody-{{ item.index }}">
+                  <i class="toc-chev" aria-hidden="true">▾</i>
+                </button>
+              </div>
+              <div class="toc-body" id="tocbody-{{ item.index }}" hidden>
+                <ul class="summary-list">
+                  {% for row in item.headline %}
+                  <li class="summary-line">
+                    <span class="summary-text">{{ row.text }}</span>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main">
+    {% for item in items %}
+    <article class="report-card{% if not loop.first %} is-collapsed{% endif %}"
+             id="r-{{ item.index }}"
+             data-cat="{{ item.category }}"
+             data-key="{{ item.key }}"
+             data-title="{{ item.title }}">
+      <div class="card-head" role="button" tabindex="0"
+           aria-expanded="{{ 'true' if loop.first else 'false' }}"
+           aria-controls="body-{{ item.index }}"
+           data-idx="{{ item.index }}">
+        <span class="card-num" aria-hidden="true">{{ item.num }}</span>
+        <div class="card-title-area">
+          <div class="card-title">{{ item.title }}</div>
+          <div class="card-meta">
+            <span class="meta-cat">{{ item.category }}</span>
+            {% if item.updated_at %}<span class="meta-date">生成: {{ item.updated_at }}</span>{% endif %}
+          </div>
+        </div>
+        <span class="chevron" id="chev-{{ item.index }}" aria-hidden="true">▾</span>
+      </div>
+
+      <div class="card-body{% if not loop.first %} collapsed{% endif %}" id="body-{{ item.index }}">
+        <div class="iframe-nav" role="navigation" aria-label="レポート間ナビゲーション">
+          {% if not loop.first %}
+          <button class="nav-btn" type="button" data-jump="{{ item.index - 1 }}">← 前</button>
+          {% else %}
+          <button class="nav-btn" type="button" disabled aria-disabled="true">← 前</button>
+          {% endif %}
+          <div class="nav-pos"><strong>{{ item.num }} / {{ count }}</strong></div>
+          <div class="nav-title">
+            {% if not loop.last %}
+            <span>{{ items[loop.index].title }} →</span>
+            {% endif %}
+          </div>
+          {% if not loop.last %}
+          <button class="nav-btn" type="button" data-jump="{{ item.index + 1 }}">次 →</button>
+          {% else %}
+          <button class="nav-btn" type="button" disabled aria-disabled="true">次 →</button>
+          {% endif %}
+        </div>
+
+        <div class="iframe-shell" id="shell-{{ item.index }}">
+          <div class="iframe-skeleton" aria-hidden="true">レポートを読み込み中…</div>
+          <iframe id="frame-{{ item.index }}"
+                  title="{{ item.title }}"
+                  data-b64="{{ item.html_b64 }}"
+                  sandbox="allow-scripts allow-downloads"
+                  loading="lazy"></iframe>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+
+    <p style="margin-top:20px;font-size:12px;color:var(--gray-500);">
+      生成: {{ generated_at }} · {{ report_id }} · session {{ session_id }}
+    </p>
+  </main>
+</div>
+
+<script>
+(function () {
+  function decodeB64Utf8(b64) {
+    var bin = atob(b64 || '');
+    var bytes = Uint8Array.from(bin, function (c) { return c.charCodeAt(0); });
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  function loadFrame(idx) {
+    var frame = document.getElementById('frame-' + idx);
+    var shell = document.getElementById('shell-' + idx);
+    var dot = document.getElementById('dot-' + idx);
+    if (!frame || frame.dataset.loaded === '1') return;
+    try {
+      var html = decodeB64Utf8(frame.getAttribute('data-b64') || '');
+      // 親プレビューも sandbox iframe のため、opaque origin でも確実に動く srcdoc を使う。
+      frame.srcdoc = html;
+      frame.dataset.loaded = '1';
+      frame.addEventListener('load', function () {
+        // integrated_shell.css は iframe を opacity:0 にし、.ready で表示する
+        frame.classList.add('ready');
+        if (shell) shell.classList.add('loaded');
+        if (dot) { dot.classList.add('loaded'); dot.setAttribute('aria-label', '読込済'); }
+      }, { once: true });
+      // load が発火しない環境向けフォールバック
+      setTimeout(function () {
+        if (!frame.classList.contains('ready')) {
+          frame.classList.add('ready');
+          if (shell) shell.classList.add('loaded');
+        }
+      }, 1200);
+    } catch (err) {
+      if (shell) {
+        shell.innerHTML = '<div class="iframe-skeleton">読込に失敗しました</div>';
+      }
+      if (dot) { dot.classList.add('error'); dot.setAttribute('aria-label', 'エラー'); }
+    }
+  }
+
+  function setCardCollapsed(idx, collapsed) {
+    var card = document.getElementById('r-' + idx);
+    var body = document.getElementById('body-' + idx);
+    var head = card ? card.querySelector('.card-head') : null;
+    if (!card || !body) return;
+    card.classList.toggle('is-collapsed', collapsed);
+    body.classList.toggle('collapsed', collapsed);
+    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    if (!collapsed) loadFrame(idx);
+  }
+
+  function jumpToCard(idx) {
+    document.querySelectorAll('.toc-acc').forEach(function (el) {
+      el.classList.toggle('active', String(el.getAttribute('data-idx')) === String(idx));
+    });
+    setCardCollapsed(idx, false);
+    var card = document.getElementById('r-' + idx);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  document.querySelectorAll('.card-head').forEach(function (head) {
+    head.addEventListener('click', function () {
+      var idx = head.getAttribute('data-idx');
+      var body = document.getElementById('body-' + idx);
+      var collapsed = !body.classList.contains('collapsed');
+      setCardCollapsed(idx, collapsed);
+    });
+  });
+
+  document.querySelectorAll('[data-jump-idx]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      jumpToCard(btn.getAttribute('data-jump-idx'));
+    });
+  });
+
+  document.querySelectorAll('[data-jump]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      jumpToCard(btn.getAttribute('data-jump'));
+    });
+  });
+
+  document.querySelectorAll('[data-expand-idx]').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var idx = btn.getAttribute('data-expand-idx');
+      var body = document.getElementById('tocbody-' + idx);
+      if (!body) return;
+      var open = body.hasAttribute('hidden');
+      if (open) body.removeAttribute('hidden');
+      else body.setAttribute('hidden', '');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
+
+  var items = Array.prototype.slice.call(document.querySelectorAll('.toc-acc'));
+
+  var toggles = Array.prototype.slice.call(document.querySelectorAll('.sidebar-toggle'));
+  var sidebar = document.getElementById('sidebar');
+  function isMobileLayout() {
+    return window.matchMedia('(max-width: 768px)').matches;
+  }
+  function syncHamburgerState() {
+    if (!sidebar || !toggles.length) return;
+    var expanded;
+    if (isMobileLayout()) {
+      expanded = sidebar.classList.contains('open');
+    } else {
+      expanded = !document.body.classList.contains('sidebar-collapsed');
+    }
+    toggles.forEach(function (btn) {
+      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      btn.setAttribute('aria-label', expanded ? 'サイドバーを閉じる' : 'サイドバーを開く');
+    });
+  }
+  if (toggles.length && sidebar) {
+    toggles.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (isMobileLayout()) {
+          sidebar.classList.toggle('open');
+        } else {
+          document.body.classList.toggle('sidebar-collapsed');
+        }
+        syncHamburgerState();
+      });
+    });
+    window.addEventListener('resize', syncHamburgerState);
+    syncHamburgerState();
+  }
+
+  // 先頭カードを即時ロード + 可視領域の遅延ロード
+  if (items.length) loadFrame(0);
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        var idx = entry.target.id.replace('r-', '');
+        if (!entry.target.classList.contains('is-collapsed')) loadFrame(idx);
+      });
+    }, { rootMargin: '300px 0px' });
+    document.querySelectorAll('.report-card').forEach(function (card) { io.observe(card); });
+  }
+})();
+</script>
+</body>
+</html>

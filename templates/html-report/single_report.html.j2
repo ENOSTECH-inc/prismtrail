@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<style>
+{% include 'base.css' %}
+.answer-body p{margin:0 0 8px;line-height:1.65;}
+.answer-body h1,.answer-body h2,.answer-body h3{margin:12px 0 6px;font-weight:600;letter-spacing:0.01em;color:var(--text);}
+.answer-body h1{font-size:16px;}
+.answer-body h2{font-size:14px;}
+.answer-body h3{font-size:13px;}
+.answer-body ul,.answer-body ol{margin:0 0 8px;padding-left:1.25rem;}
+.answer-body li{margin:3px 0;line-height:1.6;}
+.answer-body code{font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--bg-subtle);padding:1px 4px;border-radius:3px;}
+.answer-body .md-fence{margin:0 0 10px;padding:10px 12px;border-radius:6px;background:#f8fafc;color:#334155;border:1px solid var(--rule-light);overflow:auto;font-size:11px;line-height:1.55;}
+.answer-body .md-fence code{background:transparent;padding:0;color:inherit;font-size:inherit;}
+.answer-body .md-table-wrap{margin:0 0 10px;overflow-x:auto;border:1px solid var(--rule-light);border-radius:6px;}
+.answer-body .md-table{width:100%;border-collapse:collapse;font-size:12px;}
+.answer-body .md-table th,.answer-body .md-table td{padding:7px 9px;border-bottom:1px solid var(--rule-light);text-align:left;}
+.answer-body .md-table th{background:var(--bg-subtle);color:var(--text-mute);font-size:11px;font-weight:500;}
+.muted{color:var(--text-mute);}
+.table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
+.table-meta{font-size:11px;color:var(--text-mute);}
+.btn-more-rows{appearance:none;border:1px solid var(--rule);background:#fff;color:var(--text);border-radius:999px;padding:5px 11px;font-size:11px;font-weight:500;cursor:pointer;}
+.btn-more-rows:hover{background:var(--bg-subtle);}
+.btn-more-rows[hidden]{display:none;}
+.table-block{margin-bottom:18px;}
+.table-block:last-child{margin-bottom:0;}
+.table-block-title{font-size:13px;font-weight:600;color:var(--text);margin:0 0 8px;line-height:1.45;}
+.table-frame{border:1px solid var(--rule-light);border-radius:8px;overflow:auto;background:#fff;}
+.chart-box img{display:block;width:100%;height:auto;max-height:460px;object-fit:contain;}
+.insight-label{display:inline-block;margin:0 0 4px;color:var(--tableau-blue-dark);font-size:10px;font-weight:600;letter-spacing:.04em;}
+.analysis-event{margin:0 0 10px;border:1px solid var(--rule-light);border-radius:6px;overflow:hidden;background:#fff;}
+.analysis-event:last-child{margin-bottom:0;}
+.analysis-event-label{padding:7px 10px;border-bottom:1px solid var(--rule-light);background:var(--bg-subtle);color:var(--text-sub);font-size:11px;font-weight:600;}
+.analysis-event pre{margin:0;padding:10px 12px;border:0;border-radius:0;background:#fafbfc;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;}
+.followup-list{margin:0;padding-left:1.25rem;}
+.followup-list li{margin:0 0 8px;line-height:1.6;color:var(--text);}
+.followup-list li:last-child{margin-bottom:0;}
+.response-json{margin:0;padding:14px;border:1px solid var(--rule-light);border-radius:6px;background:#fafbfc;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55;max-height:720px;overflow:auto;}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- C-01: Report Header -->
+<div class="report-header">
+  <div class="eyebrow">{{ eyebrow }}</div>
+  <h1>{{ title }}</h1>
+  <div class="subtitle">{{ subtitle }}</div>
+  <div class="meta-row">
+    {% for item in meta_items %}
+    <div class="meta-item">
+      <span class="meta-label">{{ item.label }}</span>
+      <span class="meta-value">{{ item.value }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if kpi_target %}
+  <div class="kpi-target-block">
+    <span class="kpi-target-label">{{ kpi_target.label or 'KPI目標値' }}</span>
+    <span class="kpi-target-value">{{ kpi_target.value }}</span>
+  </div>
+  {% endif %}
+  <div class="header-actions">
+    {% if csv_rows|length %}
+    <a class="btn btn-primary" id="btn-download-csv" href="#">データをダウンロード</a>
+    {% endif %}
+    <a class="btn btn-drill" href="{{ home_url or '/analysis' }}" target="_top" rel="noopener">深掘り</a>
+  </div>
+</div>
+
+<!-- Page nav -->
+<nav class="page-nav" id="page-nav">
+  {% if insights|length %}<a class="nav-tab" href="#sec-insights">分析コメント</a>{% endif %}
+  {% if tables|length %}<a class="nav-tab" href="#sec-datatable">データテーブル</a>{% endif %}
+  {% if charts|length %}<a class="nav-tab" href="#sec-charts">チャート</a>{% endif %}
+  {% if analysis_details|length %}<a class="nav-tab" href="#sec-analysis">分析プロセス</a>{% endif %}
+  {% if answer %}<a class="nav-tab" href="#sec-answer">出力全体</a>{% endif %}
+  {% if followups|length %}<a class="nav-tab" href="#sec-followups">フォローアップ</a>{% endif %}
+  {% if sql_list|length %}<a class="nav-tab" href="#sec-appendix">付録</a>{% endif %}
+  {% if response_json %}<a class="nav-tab" href="#sec-response-json">応答JSON</a>{% endif %}
+</nav>
+
+<div class="page-body">
+
+{% if insights|length %}
+<div class="section" id="sec-insights">
+  <div class="section-header">
+    <span class="section-num">01</span>
+    <span class="section-title">分析コメント</span>
+  </div>
+  <div class="insight-list">
+    {% for item in insights %}
+    <div class="insight-card">
+      <div class="insight-num">{{ item.num }}</div>
+      <div class="insight-body">
+        {% if item.label %}<div class="insight-label">{{ item.label }}</div>{% endif %}
+        <p class="insight-text">{{ item.text }}</p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if tables|length %}
+<div class="section" id="sec-datatable">
+  <div class="section-header">
+    <span class="section-num">02</span>
+    <span class="section-title">データテーブル</span>
+  </div>
+  {% for table in tables %}
+  <div class="table-block" data-table-index="{{ loop.index0 }}">
+    {% if tables|length > 1 and table.title and not table.is_generic_title %}
+    <h3 class="table-block-title">{{ table.title }}</h3>
+    {% endif %}
+    <div class="table-toolbar">
+      <p class="table-meta">
+        {% if table.display_total > table.initial_rows %}
+        表示中 <span class="table-visible-count">{{ table.visible_count }}</span> / {{ table.display_total }} 行
+        {% else %}
+        {{ table.display_total }} 行
+        {% endif %}
+        {% if table.row_truncated %}
+        <span>（全体 {{ table.total_rows }} 行中・先頭 {{ table.display_total }} 行まで）</span>
+        {% endif %}
+        {% if table.column_truncated %}
+        <span>（全体 {{ table.total_columns }} 列中・先頭 {{ table.columns|length }} 列まで）</span>
+        {% endif %}
+      </p>
+      {% if table.display_total > table.initial_rows %}
+      <button class="btn-more-rows" type="button"
+        data-page-size="{{ table.page_size }}"
+        data-total="{{ table.display_total }}"
+        data-table-id="{{ table.dom_id }}">
+        + さらに表示
+      </button>
+      {% endif %}
+    </div>
+    <div class="table-frame">
+      <table class="data-table" id="{{ table.dom_id }}">
+        <thead>
+          <tr>
+            {% for col in table.columns %}
+            <th style="text-align:{{ col.align }};">{{ col.label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row_html in table.body_rows_html %}
+          <tr class="data-row"{% if loop.index0 >= table.initial_rows %} hidden{% endif %}>{{ row_html | safe }}</tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if charts|length %}
+<div class="section" id="sec-charts">
+  <div class="section-header">
+    <span class="section-num">03</span>
+    <span class="section-title">チャート</span>
+  </div>
+  {% for chart in charts %}
+  <div class="chart-wrap">
+    <div class="chart-title">{{ chart.title }}</div>
+    <div class="chart-box" id="{{ chart.id }}"><img src="{{ chart.data_url }}" alt="{{ chart.title }}"></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if analysis_details|length %}
+<div class="section" id="sec-analysis">
+  <div class="section-header">
+    <span class="section-num">04</span>
+    <span class="section-title">分析プロセス</span>
+  </div>
+  {% for item in analysis_details %}
+  <div class="analysis-event">
+    <div class="analysis-event-label">{{ item.label }}</div>
+    <pre>{{ item.text }}</pre>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if answer %}
+<div class="section" id="sec-answer">
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <span class="section-title">出力全体</span>
+  </div>
+  {% if question %}
+  <div class="qa-panel qa-panel-question">
+    <div class="sub-heading">質問</div>
+    <p>{{ question }}</p>
+  </div>
+  {% endif %}
+  <div class="qa-panel qa-panel-answer">
+    <div class="sub-heading">回答</div>
+    <div class="answer-body">{{ answer_html | safe }}</div>
+  </div>
+</div>
+{% endif %}
+
+{% if followups|length %}
+<div class="section" id="sec-followups">
+  <div class="section-header">
+    <span class="section-num">06</span>
+    <span class="section-title">フォローアップ候補</span>
+  </div>
+  <ul class="followup-list">
+    {% for item in followups %}<li>{{ item }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if sql_list|length %}
+<div class="section" id="sec-appendix">
+  <div class="section-header">
+    <span class="section-num">07</span>
+    <span class="section-title">付録（実行クエリ）</span>
+  </div>
+  {% for sql in sql_list %}
+  <div class="query-block">
+    <div class="query-toolbar">
+      <span class="query-label">SQL{% if sql_list|length > 1 %} #{{ loop.index }}{% endif %}</span>
+      <button class="btn-query-copy" type="button" onclick="(function(b){var pre=b.closest('.query-block').querySelector('pre');navigator.clipboard.writeText(pre.textContent).then(function(){b.textContent='コピー済み';setTimeout(function(){b.textContent='コピー';},1200);});})(this)">コピー</button>
+    </div>
+    <pre>{{ sql }}</pre>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if response_json %}
+<div class="section" id="sec-response-json">
+  <div class="section-header">
+    <span class="section-num">08</span>
+    <span class="section-title">Data Agent 応答JSON</span>
+  </div>
+  <p class="muted">上の可視化に使用した保存レスポンスです。表の表示上限を超える行・列を含む完全なイベント内容を確認できます。</p>
+  <pre class="response-json">{{ response_json }}</pre>
+</div>
+{% endif %}
+
+</div>
+
+<footer>
+  <div class="footer-brand">{{ footer_brand or 'PrismTrail' }}</div>
+  <div class="footer-meta">{{ generated_at }} · {{ report_id }}</div>
+</footer>
+
+</div>
+
+<button class="btn-top" id="btn-top" type="button" aria-label="ページ上部へ">↑</button>
+
+<script>
+(function(){
+  var BOM = '\uFEFF';
+  var rows = {{ csv_rows | tojson }};
+  var filename = {{ csv_filename | tojson }};
+  if (!rows || !rows.length) return;
+  var headers = Object.keys(rows[0]);
+  function csvCell(value) {
+    var v = value == null ? '' : String(value);
+    if (/^[\t\r ]*[=+\-@]/.test(v)) v = "'" + v;
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  var lines = [headers.map(csvCell).join(',')];
+  rows.forEach(function(r){
+    lines.push(headers.map(function(h){ return csvCell(r[h]); }).join(','));
+  });
+  var blob = new Blob([BOM + lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+  var url = URL.createObjectURL(blob);
+  var btn = document.getElementById('btn-download-csv');
+  if (btn) { btn.href = url; btn.download = filename || 'report.csv'; }
+})();
+
+(function(){
+  document.querySelectorAll('.btn-more-rows').forEach(function(btn){
+    var tableId = btn.getAttribute('data-table-id');
+    var table = tableId ? document.getElementById(tableId) : null;
+    var block = btn.closest('.table-block');
+    var countEl = block ? block.querySelector('.table-visible-count') : null;
+    if (!table) return;
+    var pageSize = Number(btn.getAttribute('data-page-size') || 20);
+    var total = Number(btn.getAttribute('data-total') || 0);
+    btn.addEventListener('click', function(){
+      var hidden = table.querySelectorAll('tbody tr.data-row[hidden]');
+      var show = Array.prototype.slice.call(hidden, 0, pageSize);
+      show.forEach(function(row){ row.hidden = false; });
+      var visible = table.querySelectorAll('tbody tr.data-row:not([hidden])').length;
+      if (countEl) countEl.textContent = String(visible);
+      if (visible >= total || !table.querySelector('tbody tr.data-row[hidden]')) {
+        btn.hidden = true;
+      }
+    });
+  });
+})();
+
+(function(){
+  var nav = document.getElementById('page-nav');
+  var tabs = nav ? Array.prototype.slice.call(nav.querySelectorAll('.nav-tab')) : [];
+  var btnTop = document.getElementById('btn-top');
+  var sections = tabs.map(function(tab){
+    return document.querySelector(tab.getAttribute('href'));
+  }).filter(Boolean);
+
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(e){
+      e.preventDefault();
+      var target = document.querySelector(tab.getAttribute('href'));
+      if (!target) return;
+      // 統合レポート iframe 内では親をスクロール
+      if (window.frameElement) {
+        try {
+          var top = target.getBoundingClientRect().top + window.pageYOffset - 56;
+          window.scrollTo({top: top, behavior: 'smooth'});
+        } catch (err) {}
+      } else {
+        target.scrollIntoView({behavior:'smooth', block:'start'});
+      }
+    });
+  });
+
+  if ('IntersectionObserver' in window && sections.length) {
+    var observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (!entry.isIntersecting) return;
+        var id = '#' + entry.target.id;
+        tabs.forEach(function(tab){
+          tab.classList.toggle('active', tab.getAttribute('href') === id);
+        });
+      });
+    }, {rootMargin:'-20% 0px -60% 0px', threshold:0});
+    sections.forEach(function(sec){ observer.observe(sec); });
+  }
+
+  function onScroll(){
+    if (!btnTop) return;
+    btnTop.classList.toggle('visible', window.scrollY > 320);
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+  if (btnTop) {
+    btnTop.addEventListener('click', function(){
+      window.scrollTo({top:0, behavior:'smooth'});
+    });
+  }
+})();
+</script>
+</body>
+</html>
