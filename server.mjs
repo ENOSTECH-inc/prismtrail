@@ -72,6 +72,7 @@ import {
 } from "./lib/knowledge.mjs";
 import { ensureNotoSansJpFont } from "./lib/pdf-font.mjs";
 import { pdfFilename, renderCaseSpecPdf, renderSuiteRunPdf, isPartialSuiteRun, resolveSuiteRunPdfCaseIds } from "./lib/pdf-reports.mjs";
+import { htmlReportFilename, renderHtmlReport } from "./lib/html-reports.mjs";
 import { createZipArchive, reportBundleFilenames } from "./lib/zip.mjs";
 import {
   AGENTS_SHEET,
@@ -368,6 +369,34 @@ function sendZip(response, bytes, filename) {
     "Cache-Control": "no-store",
     "Content-Length": String(body.length),
     "Content-Disposition": `attachment; filename="${filename}"`
+  });
+  response.end(body);
+}
+
+function sendHtmlReport(response, html, filename, { download = false } = {}) {
+  const body = Buffer.from(String(html || ""), "utf8");
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy": [
+      "default-src 'none'",
+      "script-src 'unsafe-inline' blob:",
+      "style-src 'unsafe-inline'",
+      "img-src data: blob:",
+      "font-src 'none'",
+      "connect-src 'none'",
+      "frame-src blob:",
+      "frame-ancestors 'self'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'"
+    ].join("; "),
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Cache-Control": "no-store",
+    "Content-Length": String(body.length),
+    "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${filename}"`
   });
   response.end(body);
 }
@@ -2426,7 +2455,7 @@ async function pdfRunBodies(report) {
   return runsById;
 }
 
-async function latestSuiteResultsReport(suite, mode = "latest_per_case") {
+async function latestSuiteResultsReport(suite, mode = "latest_per_case", { requireProposalReady = true } = {}) {
   const normalizedMode = String(mode || "latest_per_case").trim().toLowerCase();
   if (!["latest_run", "latest_per_case"].includes(normalizedMode)) {
     const error = new Error("結果の出力範囲が不正です。");
@@ -2444,7 +2473,7 @@ async function latestSuiteResultsReport(suite, mode = "latest_per_case") {
   let report;
   if (normalizedMode === "latest_run") {
     report = slimSuiteRun(suiteRuns.find((run) => run.id === rollup.latestRun.id));
-    assertReportProposalReady(report);
+    if (requireProposalReady) assertReportProposalReady(report);
   } else {
     if (!rollup.summary.resultCaseCount) {
       const error = new Error("現在のテストケースに対応する実行結果がありません。");
@@ -2453,8 +2482,10 @@ async function latestSuiteResultsReport(suite, mode = "latest_per_case") {
     }
     report = buildLatestCaseResultReport(suite, suiteRuns);
     const sourceIds = new Set(report.rollup.sourceSuiteRunIds);
-    for (const source of suiteRuns.filter((run) => sourceIds.has(run.id))) {
-      assertReportProposalReady(source);
+    if (requireProposalReady) {
+      for (const source of suiteRuns.filter((run) => sourceIds.has(run.id))) {
+        assertReportProposalReady(source);
+      }
     }
   }
   return { report, mode: normalizedMode, rollup };
@@ -2505,6 +2536,52 @@ async function renderLatestSuiteResultsBundle(suite, mode = "latest_per_case") {
     baseFilename
   });
   return { ...bundle, report };
+}
+
+async function renderLatestSuiteResultsHtml(suite, mode = "latest_per_case") {
+  const result = await latestSuiteResultsReport(suite, mode, { requireProposalReady: false });
+  if (isSuiteRunActive(result.report)) {
+    throw Object.assign(new Error("実行中のレポートはHTML出力できません。"), { status: 409 });
+  }
+  const rendered = await renderHtmlReport({
+    report: result.report,
+    runsById: await pdfRunBodies(result.report)
+  });
+  return {
+    ...rendered,
+    filename: htmlReportFilename(
+      result.mode === "latest_per_case" ? "latest-case-results" : "latest-run",
+      suite.id
+    )
+  };
+}
+
+async function renderSuiteRunHtml(reportId, { caseId = "", scope = "all" } = {}) {
+  const normalizedScope = String(scope || "all").trim().toLowerCase();
+  if (!["all", "failed"].includes(normalizedScope)) {
+    throw Object.assign(new Error("HTMLレポートの出力範囲が不正です。"), { status: 400 });
+  }
+  const report = slimSuiteRun(await correctedSuiteRunView(await suiteRunStore.get(reportId)));
+  if (isSuiteRunActive(report)) {
+    throw Object.assign(new Error("実行中のレポートはHTML出力できません。"), { status: 409 });
+  }
+  const normalizedCaseId = String(caseId || "").trim();
+  const suiteCaseIds = new Set((report.suiteSnapshot?.cases || []).map((item) => item.id || item.caseId));
+  if (normalizedCaseId && !suiteCaseIds.has(normalizedCaseId)) {
+    throw Object.assign(new Error("指定のテストケースが見つかりません。"), { status: 404 });
+  }
+  const caseIds = resolveSuiteRunPdfCaseIds(report, {
+    caseId: normalizedCaseId,
+    scope: normalizedScope
+  });
+  if (normalizedScope === "failed" && !normalizedCaseId && !(caseIds || []).length) {
+    throw Object.assign(new Error("不合格のケースがないため、失敗のみのHTMLを出力できません。"), { status: 404 });
+  }
+  return renderHtmlReport({
+    report,
+    caseIds,
+    runsById: await pdfRunBodies(report)
+  });
 }
 
 async function renderReportPdfResource({ reportId, caseId, scope = "all" }) {
@@ -3648,6 +3725,19 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const suiteLatestResultsHtmlMatch = url.pathname.match(
+      /^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/latest-results-html$/
+    );
+    if (request.method === "GET" && suiteLatestResultsHtmlMatch) {
+      const suite = await suiteStore.get(suiteLatestResultsHtmlMatch[1]);
+      const mode = String(url.searchParams.get("mode") || "latest_per_case").trim().toLowerCase();
+      const result = await renderLatestSuiteResultsHtml(suite, mode);
+      sendHtmlReport(response, result.html, result.filename, {
+        download: ["1", "true"].includes(String(url.searchParams.get("download") || "").toLowerCase())
+      });
+      return;
+    }
+
     const suiteLatestResultsZipMatch = url.pathname.match(
       /^\/api\/suites\/([a-zA-Z0-9_-]+)\/export\/latest-results-zip$/
     );
@@ -3694,6 +3784,17 @@ const server = createServer(async (request, response) => {
       // (that re-fetches run bodies and is very expensive on GCS).
       sendJson(response, 200, {
         suiteRuns: (await suiteRunStore.list()).map(suiteRunProjection)
+      });
+      return;
+    }
+    const reportHtmlMatch = url.pathname.match(/^\/api\/suite-runs\/([a-zA-Z0-9_-]+)\/export\/html$/);
+    if (request.method === "GET" && reportHtmlMatch) {
+      const result = await renderSuiteRunHtml(reportHtmlMatch[1], {
+        caseId: url.searchParams.get("caseId") || "",
+        scope: url.searchParams.get("scope") || "all"
+      });
+      sendHtmlReport(response, result.html, result.filename, {
+        download: ["1", "true"].includes(String(url.searchParams.get("download") || "").toLowerCase())
       });
       return;
     }

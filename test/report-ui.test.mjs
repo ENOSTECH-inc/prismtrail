@@ -99,11 +99,45 @@ test("report actions have distinct Sheets, PDF, and raw JSON treatments", () => 
   assert.doesNotMatch(app, /window\.print\(/);
 });
 
+test("HTML reports are available from suites, reports, and individual cases in a sandboxed iframe", () => {
+  assert.match(app, /id="export-latest-results-html"/);
+  assert.match(app, /htmlButtonId = "open-report-html"/);
+  assert.match(app, /data-preview-case-run-html/);
+  assert.match(app, /latest-results-html\?mode=/);
+  assert.match(app, /\/export\/html\?caseId=/);
+  assert.match(app, /sandbox="allow-scripts allow-downloads"/);
+  assert.match(app, /referrerpolicy="no-referrer"/);
+  assert.doesNotMatch(app, /sandbox="[^"]*allow-same-origin/);
+  assert.match(styles, /\.html-report-dialog\s*\{/);
+  assert.match(styles, /\.report-action-html\s*\{/);
+  assert.match(styles, /\.report-action-html\s*\{[^}]*#d97706/s);
+  assert.doesNotMatch(app, /data-preview-case-html/);
+});
+
+test("suite editor uses a two-row toolbar when export actions are present", () => {
+  assert.match(app, /stacked = false/);
+  assert.match(app, /nav-toolbar\$\{stacked \? " nav-toolbar-stacked" : ""\}/);
+  assert.match(app, /backLabel: tr\("テストスイート一覧に戻る"[\s\S]*?stacked: true,/);
+  assert.match(styles, /\.nav-toolbar\.nav-toolbar-stacked\s*\{/);
+  assert.match(styles, /\.nav-toolbar-stacked \.toolbar-actions\s*\{/);
+  assert.match(styles, /\.nav-toolbar-stacked \+ \.editor-columns\s*\{/);
+  assert.match(styles, /grid-template-columns:\s*minmax\(0,1fr\) minmax\(240px,320px\)/);
+});
+
+test("export action labels use the same output wording", () => {
+  assert.match(app, /tr\("Gシート出力", "Export to Sheets"\)/);
+  assert.match(app, /tr\("HTML出力", "Export HTML"\)/);
+  assert.match(app, /tr\("PDF出力", "Export PDF"\)/);
+  assert.doesNotMatch(app, /tr\("HTMLレポート", "HTML report"\)/);
+  assert.doesNotMatch(app, /tr\("最新HTML", "Latest HTML"\)|tr\("単体HTML", "Case HTML"\)/);
+  assert.doesNotMatch(app, /最新結果をGシート(?:へ)?出力/);
+});
+
 test("completed full and single-case reports can export through a newly registered Sheet connection", () => {
   assert.match(app, /sheetConnectionForSuite\(report\.suiteId, \{ readyOnly: true \}\)/);
   assert.match(app, /sheetButtonId = "export-report-sheet"/);
   assert.match(app, /const sheet = !isLive && !proposalsGenerating/);
-  assert.match(app, /結果を出力してシートを開く/);
+  assert.match(app, /Gシート出力/);
   assert.match(app, /openAfterExport = false/);
   assert.match(app, /if \(openAfterExport\)/);
   assert.match(app, /window\.open\(exported\.connection\.spreadsheetUrl/);

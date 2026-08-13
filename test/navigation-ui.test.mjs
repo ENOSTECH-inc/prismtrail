@@ -63,8 +63,8 @@ test("suite editor separates run history from version history and groups actions
   assert.match(app, /バージョン履歴/);
   assert.match(app, /suiteRunHistory = state\.suiteRuns\.filter/);
   assert.match(app, /case-action-groups/);
-  assert.match(app, /case-export-menu/);
-  assert.match(styles, /\.case-export-menu\s*\{/);
+  assert.doesNotMatch(app, /case-export-menu|id="export-case-pdf"|id="export-cases-pdf"/);
+  assert.doesNotMatch(styles, /\.case-export-menu\s*\{/);
   assert.match(app, /id="export-latest-results-pdf"/);
   assert.match(app, /id="export-latest-results-sheet"/);
   assert.match(app, /function askLatestResultsScope\(/);
@@ -109,7 +109,22 @@ test("single-case and full-suite runs navigate to an optimistic report before st
   assert.match(app, /history\.replaceState\(null, "", `#\/reports\/\$\{resolvedReportId\}\$\{suffix\}`\)/);
   assert.match(app, /if \(!launchPending && \(isLive \|\| sheetExport\.status/);
   assert.match(app, /const saveState = document\.querySelector\("#save-state"\)/);
-  assert.match(app, /if \(saveState\) saveState\.textContent/);
+  assert.match(app, /saveState\.textContent = suiteSaveStatusLabel\(status\)/);
+});
+
+test("suite editor autosaves edits and has no manual save action", () => {
+  assert.doesNotMatch(app, /id="save-suite"|closest\("#save-suite"\)/);
+  assert.match(app, /const SUITE_AUTOSAVE_DELAY_MS = 350/);
+  assert.match(app, /function scheduleSuiteAutosave\(/);
+  assert.match(app, /function flushSuiteAutosave\(/);
+  assert.match(app, /suiteAutosaveChain[\s\S]*?persistSuiteAutosave/);
+  assert.match(app, /input\.addEventListener\("input", \(\) => \{[\s\S]*?scheduleSuiteAutosave\(\)/);
+  assert.match(app, /input\.addEventListener\("change", \(\) => scheduleSuiteAutosave\(\{ immediate: true \}\)\)/);
+  assert.match(app, /window\.addEventListener\("hashchange", async \(\) => \{[\s\S]*?await flushSuiteAutosave/);
+  assert.match(app, /tr\("保存中…", "Saving…"\)/);
+  assert.match(app, /tr\("保存失敗", "Save failed"\)/);
+  assert.match(styles, /\.suite-save-state\.is-saving/);
+  assert.match(styles, /\.suite-save-state\.is-error/);
 });
 
 test("suite run modal supports all runnable and never-successful scopes", () => {
