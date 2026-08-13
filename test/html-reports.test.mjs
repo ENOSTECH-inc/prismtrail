@@ -21,7 +21,7 @@ function fixture() {
     ]
   };
   const maliciousRun = {
-    question: "保存された質問 <script>alert(6)</script>",
+    question: "保存された質問 <script>alert(6)</script>。この後半まで含む長いプロンプトも、一切省略せずにヘッダーへ折り返して全文表示します。追加の分析条件と対象期間もすべて表示します。",
     agentLabel: "売上分析 Agent",
     summary: { durationMs: 2345 },
     events: [
@@ -47,15 +47,21 @@ test("single HTML report renders the imported design and escapes all untrusted t
   assert.equal(result.filename, "prismtrail-case-case_one.html");
   assert.match(result.html, /分析レポート/);
   assert.match(result.html, /保存された質問 &lt;script&gt;alert\(6\)&lt;\/script&gt;/);
-  assert.match(result.html, /分析コメント/);
-  assert.match(result.html, /データを集計しています/);
-  assert.match(result.html, /売上推移と前年差を確認します/);
-  assert.match(result.html, /東日本の伸びが全体を牽引しました/);
+  assert.doesNotMatch(result.html, /分析コメント|sec-insights/);
+  assert.match(result.html, /<span class="section-num">01<\/span>\s*<span class="section-title">実行SQL<\/span>/);
+  assert.match(result.html, /<span class="section-num">02<\/span>\s*<span class="section-title">データテーブル<\/span>/);
+  assert.ok(result.html.indexOf('id="sec-sql"') < result.html.indexOf('id="sec-datatable"'));
+  assert.doesNotMatch(result.html, /sec-appendix|付録（実行クエリ）/);
   assert.match(result.html, /Pythonコード/);
   assert.match(result.html, /西日本の内訳も確認しますか？/);
+  assert.match(result.html, /\.followup-list li::before\{content:"\?"/);
+  assert.match(result.html, /\.followup-list li\{[^}]*border-radius:10px[^}]*background:#F6F9FC/s);
   assert.match(result.html, /地域別/);
   assert.match(result.html, /Data Agent 応答JSON/);
   assert.match(result.html, /text\.thought/);
+  assert.match(result.html, /データを集計しています/);
+  assert.match(result.html, /売上推移と前年差を確認します/);
+  assert.match(result.html, /東日本の伸びが全体を牽引しました/);
   assert.match(result.html, /テーブル<\/span>\s*<span class="meta-value">2件/);
   assert.match(result.html, /&lt;script&gt;alert\(3\)&lt;\/script&gt;/);
   assert.match(result.html, /&lt;svg onload=alert\(4\)&gt;/);
@@ -65,6 +71,8 @@ test("single HTML report renders the imported design and escapes all untrusted t
   assert.ok(chartData);
   const chartSvg = Buffer.from(chartData, "base64").toString("utf8");
   assert.doesNotMatch(chartSvg, /<a\b|href=|xlink:href=|data:text\/html|<script/i);
+  assert.match(chartSvg, /<text\b/);
+  assert.match(chartSvg, />A<|>x<|>y</);
   assert.match(result.html, /headers\.map\(csvCell\)/);
   assert.doesNotMatch(result.html, /総合グレード|システム要件|ビジネス要件|判定:/);
 });
@@ -75,6 +83,8 @@ test("integrated HTML embeds each generated single report and keeps inner frames
   assert.equal(result.filename, "prismtrail-run-suite_run_html.html");
   assert.match(result.html, /2 件のData Agent分析を統合/);
   assert.match(result.html, /Data Agent分析/);
+  assert.match(result.html, /追加の分析条件と対象期間もすべて表示します。/);
+  assert.match(result.html, /\.card-title\s*\{[^}]*white-space:\s*normal/s);
   assert.match(result.html, /sandbox="allow-scripts allow-downloads"/);
   assert.doesNotMatch(result.html, /allow-same-origin/);
   const encoded = result.html.match(/data-b64="([A-Za-z0-9+/=]+)"/)?.[1];
@@ -82,6 +92,7 @@ test("integrated HTML embeds each generated single report and keeps inner frames
   const single = Buffer.from(encoded, "base64").toString("utf8");
   assert.match(single, /prismtrail-case_one\.csv/);
   assert.match(single, /&lt;script&gt;alert\(3\)&lt;\/script&gt;/);
+  assert.doesNotMatch(result.html, /toc-expand|summary-list|分析コメント/);
 });
 
 test("markdown conversion never treats source HTML as trusted markup", () => {
@@ -104,7 +115,8 @@ test("single report omits empty optional response sections", async () => {
     }
   });
   assert.match(result.html, /回答だけです。/);
-  assert.doesNotMatch(result.html, /href="#sec-datatable"|href="#sec-charts"|href="#sec-analysis"|href="#sec-followups"|href="#sec-appendix"/);
+  assert.match(result.html, /<span class="section-num">01<\/span>\s*<span class="section-title">出力全体<\/span>/);
+  assert.doesNotMatch(result.html, /href="#sec-sql"|href="#sec-datatable"|href="#sec-charts"|href="#sec-analysis"|href="#sec-followups"/);
 });
 
 test("reports include only cases with a persisted Data Agent response", async () => {
