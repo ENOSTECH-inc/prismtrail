@@ -12,6 +12,7 @@ import Fuse from "/vendor/fuse.min.mjs";
 const QUICK_SEARCH_RECENT_KEY = "prismtrail-quick-search-recent";
 const QUICK_SEARCH_RECENT_LIMIT = 8;
 const SUITE_RUN_ALIAS_PREFIX = "prismtrail-suite-run-alias:";
+const SUITE_AUTOSAVE_DELAY_MS = 350;
 const MCP_CLIENTS = Object.freeze({
   codex: {
     label: "Codex CLI / Desktop",
@@ -63,6 +64,7 @@ const state = {
     ? localStorage.getItem("prismtrail-settings-tab")
     : "auth",
   selectedSuite: null,
+  suiteSaveStatus: "saved",
   selectedCaseIndex: 0,
   editorTab: "cases",
   selectedRun: null,
@@ -91,6 +93,10 @@ const secondaryDataReady = {
   sheetConnections: false
 };
 const secondaryDataPromises = new Map();
+let suiteAutosaveTimer = null;
+let suiteAutosavePending = null;
+let suiteAutosaveChain = Promise.resolve();
+let suiteAutosaveRevision = 0;
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
@@ -297,19 +303,20 @@ function askConfirm(message, { confirmLabel = tr("続ける", "Continue"), cance
 }
 
 /** PDF 出力対象: all | failed | null(cancel) */
-function askPdfExportScope({ totalCount = 0, failedCount = 0 } = {}) {
+function askPdfExportScope({ totalCount = 0, failedCount = 0, format = "pdf" } = {}) {
   return new Promise((resolve) => {
     const existing = document.querySelector("#pdf-export-scope-dialog");
     existing?.remove();
     const dialog = document.createElement("dialog");
+    const htmlOutput = format === "html";
     dialog.id = "pdf-export-scope-dialog";
     dialog.className = "pdf-export-scope-dialog";
     dialog.innerHTML = `
       <form method="dialog" class="pdf-export-scope-shell">
         <header>
-          <span class="eyebrow">PDF</span>
-          <h2>${tr("PDFの出力対象", "PDF export scope")}</h2>
-          <p>${tr("ケース範囲を選ぶと、サマリー版と詳細版のPDFをZIPでまとめてダウンロードします。", "Choose the case scope to download summary and detailed PDFs together in a ZIP file.")}</p>
+          <span class="eyebrow">${htmlOutput ? "HTML" : "PDF"}</span>
+          <h2>${htmlOutput ? tr("HTMLレポートの表示対象", "HTML report scope") : tr("PDFの出力対象", "PDF export scope")}</h2>
+          <p>${htmlOutput ? tr("ケース範囲を選ぶと、アプリ内で閲覧・ダウンロードできるHTMLレポートを生成します。", "Choose the case scope to generate an HTML report for in-app viewing or download.") : tr("ケース範囲を選ぶと、サマリー版と詳細版のPDFをZIPでまとめてダウンロードします。", "Choose the case scope to download summary and detailed PDFs together in a ZIP file.")}</p>
         </header>
         <div class="pdf-export-scope-options" role="radiogroup" aria-label="${tr("出力対象", "Export scope")}">
           <label class="pdf-export-scope-option">
@@ -331,7 +338,7 @@ function askPdfExportScope({ totalCount = 0, failedCount = 0 } = {}) {
         </div>
         <footer>
           <button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button>
-          <button value="confirm" class="button report-action-pdf" type="submit">${icon("file-archive", 15)}${tr("PDFセットをダウンロード", "Download PDF set")}</button>
+          <button value="confirm" class="button ${htmlOutput ? "report-action-html" : "report-action-pdf"}" type="submit">${icon(htmlOutput ? "file-code-2" : "file-archive", 15)}${htmlOutput ? tr("HTML出力", "Export HTML") : tr("PDFセットをダウンロード", "Download PDF set")}</button>
         </footer>
       </form>`;
     document.body.appendChild(dialog);
@@ -405,12 +412,13 @@ function askLatestResultsScope(rollup = {}, { output = "pdf" } = {}) {
     const resultCount = Number(rollup.summary?.resultCaseCount || 0);
     const totalCount = Number(rollup.summary?.totalCaseCount || 0);
     const sheetOutput = output === "sheet";
+    const htmlOutput = output === "html";
     const dialog = document.createElement("dialog");
     dialog.id = "suite-latest-results-dialog";
     dialog.className = "suite-action-scope-dialog";
     dialog.innerHTML = `
       <form method="dialog" class="suite-action-scope-shell">
-        <header><h2>${sheetOutput ? tr("最新結果をGシート出力", "Export latest results to Sheets") : tr("最新結果でPDF出力", "Export latest results PDF")}</h2><p>${sheetOutput ? tr("1回の実行結果、またはケースIDごとの最新結果を選べます。", "Choose one recent run or the latest stored result for each case ID.") : tr("出力対象を選ぶと、サマリー版と詳細版のPDFをZIPでまとめてダウンロードします。", "Choose the result scope to download summary and detailed PDFs together in a ZIP file.")}</p></header>
+        <header><h2>${sheetOutput ? tr("Gシート出力", "Export to Sheets") : htmlOutput ? tr("最新結果でHTMLレポート", "HTML report from latest results") : tr("最新結果でPDF出力", "Export latest results PDF")}</h2><p>${sheetOutput ? tr("1回の実行結果、またはケースIDごとの最新結果を選べます。", "Choose one recent run or the latest stored result for each case ID.") : htmlOutput ? tr("出力対象を選ぶと、統合HTMLレポートをアプリ内で閲覧できます。", "Choose the result scope to view an integrated HTML report in the app.") : tr("出力対象を選ぶと、サマリー版と詳細版のPDFをZIPでまとめてダウンロードします。", "Choose the result scope to download summary and detailed PDFs together in a ZIP file.")}</p></header>
         <div class="suite-action-scope-options" role="radiogroup">
           <label class="suite-action-scope-option ${hasLatestRun ? "" : "is-disabled"}">
             <input type="radio" name="suite-latest-results-scope" value="latest_run" ${hasLatestRun && !resultCount ? "checked" : ""} ${hasLatestRun ? "" : "disabled"}>
@@ -422,7 +430,7 @@ function askLatestResultsScope(rollup = {}, { output = "pdf" } = {}) {
           </label>
         </div>
         ${sheetOutput ? `<aside class="suite-action-sheet-note">${icon("sheet", 16)}<span>${tr("接続済みスプレッドシートの AgentEval_Report タブを、この内容で更新します。", "This replaces the AgentEval_Report tab in the connected spreadsheet.")}</span></aside>` : ""}
-        <footer><button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button><button value="confirm" class="button ${sheetOutput ? "sheet-link" : "report-action-pdf"}" type="submit">${icon(sheetOutput ? "sheet" : "file-archive", 15)}${sheetOutput ? tr("Gシートへ出力", "Export to Sheets") : tr("PDFセットをダウンロード", "Download PDF set")}</button></footer>
+        <footer><button value="cancel" class="button secondary" type="submit">${tr("キャンセル", "Cancel")}</button><button value="confirm" class="button ${sheetOutput ? "sheet-link" : htmlOutput ? "report-action-html" : "report-action-pdf"}" type="submit">${icon(sheetOutput ? "sheet" : htmlOutput ? "file-code-2" : "file-archive", 15)}${sheetOutput ? tr("Gシート出力", "Export to Sheets") : htmlOutput ? tr("HTML出力", "Export HTML") : tr("PDFセットをダウンロード", "Download PDF set")}</button></footer>
       </form>`;
     document.body.appendChild(dialog);
     const finish = (value) => {
@@ -1272,7 +1280,8 @@ function navHeader({
   subtitleHtml = "",
   backHref = "",
   backLabel = "",
-  actions = ""
+  actions = "",
+  stacked = false
 } = {}) {
   const label = backLabel || tr("戻る", "Back");
   const back = backHref
@@ -1284,7 +1293,7 @@ function navHeader({
       ? `<span>${esc(subtitle)}</span>`
       : "";
   return `
-    <header class="nav-toolbar">
+    <header class="nav-toolbar${stacked ? " nav-toolbar-stacked" : ""}">
       <div class="toolbar-leading">
         ${back}
         <div class="toolbar-name">
@@ -1299,6 +1308,7 @@ function navHeader({
 
 function reportToolbarActions(report, {
   jsonButtonId = "open-report-json",
+  htmlButtonId = "open-report-html",
   pdfButtonId = "export-report-pdf",
   sheetButtonId = "export-report-sheet"
 } = {}) {
@@ -1307,14 +1317,14 @@ function reportToolbarActions(report, {
   const proposalsGenerating = ["pending", "generating"].includes(report.improvementProposals?.status);
   const connection = sheetConnectionForSuite(report.suiteId, { readyOnly: true });
   const sheet = !isLive && !proposalsGenerating
-    ? `<button id="${esc(sheetButtonId)}" class="button report-action-sheet" type="button">${icon("sheet", 15)}${tr("結果を出力してシートを開く", "Export result and open Sheet")}</button>`
+    ? `<button id="${esc(sheetButtonId)}" class="button report-action-sheet" type="button">${icon("sheet", 15)}${tr("Gシート出力", "Export to Sheets")}</button>`
     : "";
   const pdfDisabledReason = proposalsGenerating
     ? tr("改善提案の生成完了後にPDFを出力できます", "PDF export is available after proposal generation finishes")
     : isLive
       ? tr("実行完了後にPDFを出力できます", "PDF export is available after the run finishes")
       : "";
-  return `${sheet}<button id="${esc(jsonButtonId)}" class="button secondary report-action-json" type="button">${icon("braces", 15)}JSON</button><button id="${esc(pdfButtonId)}" class="button report-action-pdf" type="button" ${isLive || proposalsGenerating ? `disabled title="${esc(pdfDisabledReason)}"` : ""}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button>`;
+  return `${sheet}<button id="${esc(htmlButtonId)}" class="button report-action-html" type="button" ${isLive ? `disabled title="${esc(tr("実行完了後にHTMLレポートを表示できます", "HTML report is available after the run finishes"))}"` : ""}>${icon("file-code-2", 15)}${tr("HTML出力", "Export HTML")}</button><button id="${esc(jsonButtonId)}" class="button secondary report-action-json" type="button">${icon("braces", 15)}JSON</button><button id="${esc(pdfButtonId)}" class="button report-action-pdf" type="button" ${isLive || proposalsGenerating ? `disabled title="${esc(pdfDisabledReason)}"` : ""}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button>`;
 }
 
 function bindReportSheetExport(report, {
@@ -1375,6 +1385,28 @@ function openJsonViewer({ title, data }) {
       notify(tr("JSONをコピーできませんでした。", "Could not copy JSON."));
     }
   });
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    close();
+  });
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  refreshIcons();
+}
+
+function openHtmlReportViewer({ title, url }) {
+  document.querySelector("#html-report-dialog")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "html-report-dialog";
+  dialog.className = "html-report-dialog";
+  const downloadUrl = `${url}${url.includes("?") ? "&" : "?"}download=1`;
+  dialog.innerHTML = `<div class="html-report-shell">
+    <header><div>${icon("file-code-2", 19)}<span><small>${tr("アプリ内プレビュー", "In-app preview")}</small><strong>${esc(title)}</strong></span></div><div><a class="button report-action-html html-report-download" href="${esc(downloadUrl)}">${icon("download", 15)}${tr("HTMLをダウンロード", "Download HTML")}</a><button type="button" class="icon-button html-report-close" aria-label="${tr("閉じる", "Close")}" title="${tr("閉じる", "Close")}">${icon("x", 18)}</button></div></header>
+    <iframe src="${esc(url)}" title="${esc(title)}" sandbox="allow-scripts allow-downloads" referrerpolicy="no-referrer"></iframe>
+  </div>`;
+  const close = () => dialog.close();
+  dialog.querySelector(".html-report-close")?.addEventListener("click", close);
   dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     close();
@@ -1616,7 +1648,7 @@ function caseForm(item, index) {
     <div class="case-titlebar">
       <span class="case-number">${String(index + 1).padStart(2, "0")}</span>
       <div><input class="plain-title" data-field="title" value="${esc(item.title)}" aria-label="${tr("テストケース名", "Test case name")}"><small>${esc(state.agents.find((a) => a.id === item.agentId)?.displayName || tr("Data Agent未選択", "No Data Agent selected"))}</small><div class="case-result-history"><span class="success">${icon("circle-check", 13)}<small>${tr("最終成功", "Last pass")}</small><strong>${esc(fmtDate(resultHistory?.latestSuccessAt))}</strong></span><span class="failure">${icon("circle-x", 13)}<small>${tr("最終失敗", "Last failure")}</small><strong>${esc(fmtDate(resultHistory?.latestFailureAt))}</strong></span><span><small>${tr("直近結果", "Latest result")}</small><strong>${resultHistory?.latestStatus ? statusPill(resultHistory.latestStatus) : "—"}</strong></span></div></div>
-      <button class="icon-button danger" data-remove-case="${index}" aria-label="${tr("ケースを削除", "Delete case")}">${icon("trash-2")}</button>
+      <div class="case-title-actions"><button class="icon-button danger" data-remove-case="${index}" aria-label="${tr("ケースを削除", "Delete case")}">${icon("trash-2")}</button></div>
     </div>
     <div class="field-grid">
       <label class="span-2">${tr("検証プロンプト", "Test prompt")}<textarea data-field="prompt" rows="4">${esc(item.prompt)}</textarea></label>
@@ -1785,7 +1817,6 @@ function renderEditor() {
             <div class="case-action-groups">
               <div class="case-action-group primary-actions"><button id="run-selected-case" class="button primary" type="button" ${selectedCase && selectedCase.status !== "draft" ? "" : "disabled"}>${icon("play", 15)}${tr("選択ケースを実行", "Run selected case")}</button><button id="add-case" class="button secondary">${icon("plus", 15)}${tr("ケースを追加", "Add case")}</button></div>
               <div class="case-action-group edit-actions">${sheetShortcut}<button id="paste-cases" class="button secondary">${icon("clipboard-paste", 15)}${tr("表で一括編集", "Bulk edit table")}</button></div>
-              <details class="case-export-menu"><summary class="button report-action-pdf">${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}${icon("chevron-down", 13)}</summary><div><button id="export-case-pdf" class="button secondary" type="button" ${selectedCase ? "" : "disabled"}>${icon("file-down", 15)}${tr("選択ケース", "Selected case")}</button><button id="export-cases-pdf" class="button secondary" type="button" ${suite.cases.length ? "" : "disabled"}>${icon("files", 15)}${tr("全ケース", "All cases")}</button></div></details>
             </div>
           </div>
           <div id="case-detail">${selectedCase ? caseForm(selectedCase, state.selectedCaseIndex) : empty(tr("ケースがありません", "No test cases"), tr("上の作成方法から、最初のケースを追加してください。", "Choose a method above to add your first case."))}</div>`;
@@ -1853,10 +1884,11 @@ function renderEditor() {
     <div class="editor-shell">
       ${navHeader({
         title: suite.name,
-        subtitleHtml: `<em id="save-state">${tr("保存済み", "Saved")}</em> · ${tr("テストスイート", "Test suites")}`,
+        subtitleHtml: `<em id="save-state" class="suite-save-state is-${esc(state.suiteSaveStatus)}" role="status" aria-live="polite">${suiteSaveStatusLabel(state.suiteSaveStatus)}</em> · ${tr("自動保存", "Autosave")}`,
         backHref: "#/suites",
         backLabel: tr("テストスイート一覧に戻る", "Back to test suites"),
-        actions: `<button id="save-suite" class="button secondary" type="button">${icon("save", 15)}${tr("保存", "Save")}</button><button id="export-latest-results-sheet" class="button sheet-link" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("sheet", 15)}${tr("最新結果をGシート出力", "Export latest results to Sheets")}</button><button id="export-latest-results-pdf" class="button report-action-pdf" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button><button id="run-current-suite" class="button primary" type="button">${icon("play", 15)}${tr("全てのケースを実行", "Run all cases")}</button>`
+        stacked: true,
+        actions: `<button id="export-latest-results-sheet" class="button sheet-link" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("sheet", 15)}${tr("Gシート出力", "Export to Sheets")}</button><button id="export-latest-results-html" class="button report-action-html" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("file-code-2", 15)}${tr("HTML出力", "Export HTML")}</button><button id="export-latest-results-pdf" class="button report-action-pdf" type="button" ${hasLatestResult ? "" : `disabled title="${esc(tr("実行結果がまだありません", "No run results yet"))}"`}>${icon("file-down", 15)}${tr("PDF出力", "Export PDF")}</button><button id="run-current-suite" class="button primary" type="button">${icon("play", 15)}${tr("全てのケースを実行", "Run all cases")}</button>`
       })}
       <div class="${columnClass}">
         ${showCaseNav ? caseNav(suite) : ""}
@@ -2238,7 +2270,7 @@ function improvementProposalHtml(item) {
   return `<section class="improvement-proposal succeeded"><header><div>${icon("wand-sparkles", 21)}<span><small>${tr("Gemini改善分析", "Gemini improvement analysis")}</small><h3>${tr("A達成に向けた改善提案", "Proposals for reaching grade A")}</h3></span></div><button id="regenerate-improvement-proposals" class="button secondary" type="button">${icon("refresh-cw", 14)}${tr("対象全件を再生成", "Regenerate all targets")}</button></header>${proposal.diagnosis ? `<p class="improvement-diagnosis">${esc(proposal.diagnosis)}</p>` : ""}<div class="improvement-proposal-grid">${["systemPrompt", "referenceQuery", "sourceMart", "other"].map((key) => improvementProposalSectionHtml(key, sections[key])).join("")}</div>${proposal.evidenceGaps?.length ? `<div class="improvement-evidence-gaps"><strong>${tr("追加で確認したい情報", "Additional evidence needed")}</strong><ul>${proposal.evidenceGaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul></div>` : ""}<footer>${tr("この提案は設定を自動変更せず、評価・合否にも影響しません。", "These proposals do not automatically change configuration or affect scores and pass/fail results.")} · ${esc(proposal.model || "Gemini")} · ${fmtDate(proposal.generatedAt)}</footer></section>`;
 }
 
-function reportCaseCardHtml(item, { evidence = null, showRunLink = true, showImprovementProposal = true } = {}) {
+function reportCaseCardHtml(item, { evidence = null, reportId = "", showRunLink = true, showImprovementProposal = true } = {}) {
   if (!item) return "";
   if (item.status === "skipped" || item.status === "cancelled") {
     return `<article class="report-case ${item.status}">
@@ -2266,7 +2298,7 @@ function reportCaseCardHtml(item, { evidence = null, showRunLink = true, showImp
       </div>`
     : "";
   return `<article class="report-case report-case-detail ${item.status}" data-case-id="${esc(item.caseId || "")}">
-    <header class="case-detail-header"><div><span>${statusPill(item.status)}</span><small>${esc(item.caseId)}</small><h2 tabindex="-1">${esc(item.title)}</h2></div>${showRunLink && item.runId ? `<a class="case-detail-link" href="#/runs/${item.runId}">${icon("list-tree", 17)}<span>${tr("実行詳細を見る", "View run details")}</span>${icon("arrow-up-right", 15)}</a>` : ""}</header>
+    <header class="case-detail-header"><div><span>${statusPill(item.status)}</span><small>${esc(item.caseId)}</small><h2 tabindex="-1">${esc(item.title)}</h2></div><div class="case-detail-actions">${reportId ? `<button class="button report-action-html" type="button" data-preview-case-run-html="${esc(item.caseId)}">${icon("file-code-2", 15)}${tr("HTML出力", "Export HTML")}</button>` : ""}${showRunLink && item.runId ? `<a class="case-detail-link" href="#/runs/${item.runId}">${icon("list-tree", 17)}<span>${tr("実行詳細を見る", "View run details")}</span>${icon("arrow-up-right", 15)}</a>` : ""}</div></header>
     ${item.error ? `<p class="error-text">${esc(translateApiMessage(item.error))}</p>` : ""}
     <div class="case-scoreboard">
       ${responseReceiptBadge(item.responseReceipt)}
@@ -2443,10 +2475,10 @@ function wireCriteriaRowControls(row) {
     row.remove();
     if (list && !list.children.length) appendCriteriaRow(list);
     else renumberCriteriaRows(list);
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+    scheduleSuiteAutosave();
   });
   row.querySelector("[data-criteria-item]")?.addEventListener("input", () => {
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+    scheduleSuiteAutosave();
   });
   row.querySelector("[data-criteria-item]")?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
@@ -2455,7 +2487,7 @@ function wireCriteriaRowControls(row) {
     if (!list || list.children.length >= 20) return;
     const next = appendCriteriaRow(list);
     wireCriteriaRowControls(next);
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+    scheduleSuiteAutosave();
   });
 }
 
@@ -2484,11 +2516,13 @@ function addCaseToSuite() {
   });
   state.selectedCaseIndex = state.selectedSuite.cases.length - 1;
   state.editorTab = "cases";
+  scheduleSuiteAutosave({ immediate: true });
   renderEditor();
 }
 
 function openSuitePaste() {
   if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
+  scheduleSuiteAutosave({ immediate: true });
   state.editorTab = "cases";
   state.suitePasteOpen = true;
   state.suitePasteValidation = null;
@@ -2551,41 +2585,6 @@ async function submitSuitePaste(validateOnly) {
 function bindEditor() {
   document.querySelector("#add-case")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#run-selected-case")?.addEventListener("click", () => runSelectedCase());
-  document.querySelector("#export-case-pdf")?.addEventListener("click", async () => {
-    const suiteId = state.selectedSuite?.id;
-    const testCase = state.selectedSuite?.cases?.[state.selectedCaseIndex];
-    if (!suiteId || !testCase?.id) return;
-    const button = document.querySelector("#export-case-pdf");
-    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
-      try {
-        await saveSuite({ silent: true });
-        const filename = await downloadPdf(
-          `/api/suites/${suiteId}/export/case-pdf?caseId=${encodeURIComponent(testCase.id)}`,
-          `prismtrail-case-${testCase.id}.pdf`
-        );
-        notify(tr("PDFをダウンロードしました: {name}", "Downloaded PDF: {name}", { name: filename }), "success");
-      } catch (error) {
-        notify(error.message);
-      }
-    }, { overlay: true });
-  });
-  document.querySelector("#export-cases-pdf")?.addEventListener("click", async () => {
-    const suiteId = state.selectedSuite?.id;
-    if (!suiteId || !(state.selectedSuite?.cases || []).length) return;
-    const button = document.querySelector("#export-cases-pdf");
-    await withButtonBusy(button, tr("PDF生成中…", "Generating PDF…"), async () => {
-      try {
-        await saveSuite({ silent: true });
-        const filename = await downloadPdf(
-          `/api/suites/${suiteId}/export/cases-pdf`,
-          `prismtrail-suite-${suiteId}-cases.pdf`
-        );
-        notify(tr("全ケースのPDFをダウンロードしました: {name}", "Downloaded all-cases PDF: {name}", { name: filename }), "success");
-      } catch (error) {
-        notify(error.message);
-      }
-    }, { overlay: true });
-  });
   document.querySelector("#start-manually")?.addEventListener("click", addCaseToSuite);
   document.querySelector("#paste-cases")?.addEventListener("click", openSuitePaste);
   document.querySelector("#start-with-paste")?.addEventListener("click", openSuitePaste);
@@ -2595,8 +2594,12 @@ function bindEditor() {
       if (!["basics", "cases", "runs", "history"].includes(next)) return;
       if (next === state.editorTab) return;
       if (document.querySelector("#suite-name")) state.selectedSuite = collectSuite();
+      const autosave = scheduleSuiteAutosave({ immediate: true });
       state.editorTab = next;
-      if (next === "history") await loadSuiteVersions(state.selectedSuite.id);
+      if (next === "history") {
+        await autosave.catch(() => null);
+        await loadSuiteVersions(state.selectedSuite.id);
+      }
       renderEditor();
     });
   });
@@ -2611,6 +2614,7 @@ function bindEditor() {
       const nextIndex = Number(button.dataset.selectCase);
       if (nextIndex === state.selectedCaseIndex) return;
       state.selectedSuite = collectSuite();
+      scheduleSuiteAutosave({ immediate: true });
       state.selectedCaseIndex = nextIndex;
       renderEditor();
     })
@@ -2715,10 +2719,7 @@ function bindEditor() {
   document.querySelector("#suite-default-agent")?.addEventListener("change", (event) => {
     const agentId = event.currentTarget.value;
     state.selectedSuite.defaultAgentId = agentId;
-    if (!agentId) {
-      document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
-      return;
-    }
+    if (!agentId) return;
     document.querySelectorAll(".case-editor [data-field='agentId']").forEach((select) => {
       if (!select.value) select.value = agentId;
     });
@@ -2726,7 +2727,6 @@ function bindEditor() {
       ...item,
       agentId: item.agentId || agentId
     }));
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
   });
   const pasteDialog = document.querySelector("#suite-paste-dialog");
   pasteDialog?.addEventListener("close", () => {
@@ -2771,6 +2771,7 @@ function bindEditor() {
       } else if (state.selectedCaseIndex > removed) {
         state.selectedCaseIndex -= 1;
       }
+      scheduleSuiteAutosave({ immediate: true, suite: state.selectedSuite });
       renderEditor();
     })
   );
@@ -2782,14 +2783,14 @@ function bindEditor() {
       return;
     }
     appendCriteriaRow(list);
-    document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+    scheduleSuiteAutosave();
     wireCriteriaRowControls(list.lastElementChild);
   });
   document.querySelectorAll(".criteria-row").forEach((row) => wireCriteriaRowControls(row));
   document.querySelectorAll("input,textarea,select").forEach((input) => {
-    if (input.closest("#suite-paste-dialog")) return;
+    if (input.closest("#suite-paste-dialog, #suite-sheet-dialog")) return;
     input.addEventListener("input", () => {
-      document.querySelector("#save-state").textContent = tr("未保存", "Unsaved");
+      scheduleSuiteAutosave();
       const activeCard = document.querySelector(".case-nav-item.active");
       if (!activeCard || !input.closest(".case-editor")) return;
       if (input.dataset.field === "title") {
@@ -2834,6 +2835,7 @@ function bindEditor() {
         refreshIcons();
       }
     });
+    input.addEventListener("change", () => scheduleSuiteAutosave({ immediate: true }));
   });
 }
 
@@ -2895,25 +2897,84 @@ function collectSuite() {
   };
 }
 
-async function saveSuite({ silent = false, updateMethod = "ui_edit" } = {}) {
+function suiteSaveStatusLabel(status = state.suiteSaveStatus) {
+  if (status === "saving") return tr("保存中…", "Saving…");
+  if (status === "error") return tr("保存失敗", "Save failed");
+  return tr("保存済み", "Saved");
+}
+
+function setSuiteSaveStatus(status) {
+  state.suiteSaveStatus = status;
+  const saveState = document.querySelector("#save-state");
+  if (!saveState) return;
+  saveState.textContent = suiteSaveStatusLabel(status);
+  saveState.className = `suite-save-state is-${status}`;
+}
+
+async function persistSuiteAutosave({ suite, revision, silent, updateMethod }) {
   try {
-    const suite = collectSuite();
     const saved = await json(`/api/suites/${suite.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...suite, updateMethod })
     });
-    state.selectedSuite = saved;
-    state.suites = state.suites.map((item) => (item.id === saved.id ? saved : item));
-    const saveState = document.querySelector("#save-state");
-    if (saveState) saveState.textContent = tr("保存済み", "Saved");
+    const isLatest = revision === suiteAutosaveRevision && !suiteAutosavePending;
+    if (isLatest) {
+      if (state.selectedSuite?.id === saved.id) state.selectedSuite = saved;
+      state.suites = state.suites.map((item) => (item.id === saved.id ? saved : item));
+      if (state.selectedSuite?.id === saved.id) setSuiteSaveStatus("saved");
+    }
     if (!silent) notify(tr("テストスイートを保存しました。", "Test suite saved."), "success");
-    if (state.editorTab === "history") await loadSuiteVersions(saved.id);
     return saved;
   } catch (error) {
-    notify(error.message);
+    const isLatest = revision === suiteAutosaveRevision && !suiteAutosavePending;
+    if (isLatest && state.selectedSuite?.id === suite.id) setSuiteSaveStatus("error");
+    notify(
+      tr("自動保存に失敗しました: {message}", "Autosave failed: {message}", {
+        message: translateApiMessage(error.message)
+      })
+    );
     throw error;
   }
+}
+
+function flushSuiteAutosave() {
+  if (suiteAutosaveTimer) {
+    clearTimeout(suiteAutosaveTimer);
+    suiteAutosaveTimer = null;
+  }
+  if (!suiteAutosavePending) return suiteAutosaveChain;
+  const pending = suiteAutosavePending;
+  suiteAutosavePending = null;
+  const request = suiteAutosaveChain
+    .catch(() => null)
+    .then(() => persistSuiteAutosave(pending));
+  suiteAutosaveChain = request;
+  return request;
+}
+
+function scheduleSuiteAutosave({ immediate = false, silent = true, updateMethod = "ui_edit", suite = null } = {}) {
+  const snapshot = suite || (document.querySelector("#suite-name") ? collectSuite() : state.selectedSuite);
+  if (!snapshot?.id) return Promise.resolve(null);
+  state.selectedSuite = snapshot;
+  const revision = ++suiteAutosaveRevision;
+  suiteAutosavePending = { suite: snapshot, revision, silent, updateMethod };
+  setSuiteSaveStatus("saving");
+  if (suiteAutosaveTimer) clearTimeout(suiteAutosaveTimer);
+  if (immediate) {
+    const request = flushSuiteAutosave();
+    request.catch(() => {});
+    return request;
+  }
+  suiteAutosaveTimer = setTimeout(() => {
+    suiteAutosaveTimer = null;
+    void flushSuiteAutosave().catch(() => {});
+  }, SUITE_AUTOSAVE_DELAY_MS);
+  return Promise.resolve(snapshot);
+}
+
+function saveSuite({ silent = false, updateMethod = "ui_edit" } = {}) {
+  return scheduleSuiteAutosave({ immediate: true, silent, updateMethod });
 }
 
 async function loadSuiteVersions(suiteId, { selectId = state.selectedSuiteVersionId } = {}) {
@@ -3063,6 +3124,29 @@ async function exportLatestSuiteResultsPdf() {
   }
 }
 
+async function previewLatestSuiteResultsHtml() {
+  const suite = state.selectedSuite;
+  if (!suite?.id) return notify(tr("スイートが見つかりません。", "Suite not found."));
+  try {
+    const rollup = state.suiteResultRollup?.suiteId === suite.id
+      ? state.suiteResultRollup
+      : {
+          suiteId: suite.id,
+          latestRun: state.suiteRuns.find((run) => run.suiteId === suite.id && !["running", "cancelling"].includes(run.status)) || null,
+          summary: { totalCaseCount: suite.cases?.length || 0, resultCaseCount: 0 }
+        };
+    const mode = await askLatestResultsScope(rollup, { output: "html" });
+    if (!mode) return;
+    if (document.querySelector("#suite-name")) await saveSuite({ silent: true });
+    openHtmlReportViewer({
+      title: tr("{name} HTMLレポート", "{name} HTML report", { name: suite.name }),
+      url: `/api/suites/${encodeURIComponent(suite.id)}/export/latest-results-html?mode=${encodeURIComponent(mode)}`
+    });
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
 async function exportLatestSuiteResultsSheet() {
   const suite = state.selectedSuite;
   if (!suite?.id) return notify(tr("スイートが見つかりません。", "Suite not found."));
@@ -3077,7 +3161,7 @@ async function exportLatestSuiteResultsSheet() {
     const rollup = await loadSuiteResultRollup(suite.id);
     const mode = await askLatestResultsScope(rollup, { output: "sheet" });
     if (!mode) return;
-    setBusyOverlay(true, tr("最新結果をGシートへ出力中…", "Exporting latest results to Sheets…"));
+    setBusyOverlay(true, tr("Gシート出力中…", "Exporting to Sheets…"));
     const exported = await json(`/api/sheets/connections/${encodeURIComponent(connection.id)}/export-latest-results`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4509,7 +4593,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   state.selectedReportCaseId = selectedReportCaseId;
   const caseNav = filteredEntries.map((entry) => reportCaseNavItemHtml(entry, selectedReportCaseId)).join("");
   const selectedCaseDetail = selectedEntry?.item
-    ? reportCaseCardHtml({ ...selectedEntry.item, prompt: selectedEntry.item.prompt || selectedEntry.testCase.prompt }, { evidence: evidenceByCaseId?.[selectedEntry.item.caseId] || null })
+    ? reportCaseCardHtml({ ...selectedEntry.item, prompt: selectedEntry.item.prompt || selectedEntry.testCase.prompt }, { evidence: evidenceByCaseId?.[selectedEntry.item.caseId] || null, reportId: report.id })
     : selectedEntry
       ? reportCasePendingHtml(selectedEntry.testCase, selectedEntry.index, {
           active: selectedEntry.active,
@@ -4577,7 +4661,7 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
       : sheetExport.status === "failed"
         ? `<section class="sheet-export-status failed">${icon("triangle-alert", 20)}<div><strong>${tr("Google Sheetsへの自動出力に失敗しました", "Automatic export to Google Sheets failed")}</strong><p>${esc(translateApiMessage(sheetExport.message))}</p></div><a class="button secondary" href="${esc(sheetSettingsHref)}">${tr("Suiteの接続を確認", "Review suite connection")}</a></section>`
         : sheetExport.status === "skipped"
-          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${reportSheetConnection ? tr("Google Sheetsへ出力できます", "Ready to export to Google Sheets") : tr("このテストスイートはGoogle Sheetsに未接続です", "This test suite is not connected to Google Sheets")}</strong><p>${reportSheetConnection ? tr("後から登録した接続が見つかりました。画面上部の「Gシートへ出力」から、この結果を出力できます。", "A connection registered later is now available. Use “Export to Sheets” above to export this result.") : tr("Suite詳細で出力先を設定すると、この実行結果を手動で出力できます。", "Set a destination in the suite details to export this run manually.")}</p></div>${reportSheetConnection ? "" : `<a class="button secondary" href="${esc(sheetSettingsHref)}">${tr("Suiteで連携設定", "Configure in suite")}</a>`}</section>`
+          ? `<section class="sheet-export-status skipped">${icon("info", 20)}<div><strong>${reportSheetConnection ? tr("Google Sheetsへ出力できます", "Ready to export to Google Sheets") : tr("このテストスイートはGoogle Sheetsに未接続です", "This test suite is not connected to Google Sheets")}</strong><p>${reportSheetConnection ? tr("後から登録した接続が見つかりました。画面上部の「Gシート出力」から、この結果を出力できます。", "A connection registered later is now available. Use “Export to Sheets” above to export this result.") : tr("Suite詳細で出力先を設定すると、この実行結果を手動で出力できます。", "Set a destination in the suite details to export this run manually.")}</p></div>${reportSheetConnection ? "" : `<a class="button secondary" href="${esc(sheetSettingsHref)}">${tr("Suiteで連携設定", "Configure in suite")}</a>`}</section>`
           : "";
   const cancelAction = isRunning && !launchPending
     ? `<button id="cancel-suite-run" class="button danger" type="button">${icon("square", 15)}${tr("実行を中止", "Stop run")}</button>`
@@ -4698,6 +4782,34 @@ function renderReport(report, { evidenceByCaseId = null, selectedCaseId = null }
   });
   document.querySelector("#open-report-json")?.addEventListener("click", () => {
     openJsonViewer({ title: suiteRunLabel(report), data: report });
+  });
+  document.querySelector("#open-report-html")?.addEventListener("click", async () => {
+    const runnableCases = (report.suiteSnapshot?.cases || []).filter(
+      (item) => String(item.status || "").toLowerCase() !== "draft"
+    );
+    const failedCount = (report.caseRuns || []).filter((item) => ["failed", "error"].includes(item.status)).length;
+    let scope = "all";
+    if (!(isPartial && focusCaseId)) {
+      scope = await askPdfExportScope({ totalCount: runnableCases.length, failedCount, format: "html" });
+      if (!scope) return;
+    }
+    const params = new URLSearchParams();
+    if (isPartial && focusCaseId) params.set("caseId", focusCaseId);
+    else if (scope === "failed") params.set("scope", "failed");
+    openHtmlReportViewer({
+      title: suiteRunLabel(report),
+      url: `/api/suite-runs/${encodeURIComponent(report.id)}/export/html${params.size ? `?${params}` : ""}`
+    });
+  });
+  document.querySelectorAll("[data-preview-case-run-html]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const caseId = button.dataset.previewCaseRunHtml;
+      if (!caseId) return;
+      openHtmlReportViewer({
+        title: tr("{title}のHTMLレポート", "HTML report for {title}", { title: button.closest(".report-case")?.querySelector("h2")?.textContent || caseId }),
+        url: `/api/suite-runs/${encodeURIComponent(report.id)}/export/html?caseId=${encodeURIComponent(caseId)}`
+      });
+    });
   });
   document.querySelector("#export-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-report-pdf");
@@ -4922,6 +5034,7 @@ function renderRunDetail(run) {
         backLabel: tr("テスト実行結果一覧に戻る", "Back to test run results"),
         actions: reportToolbarActions(suiteRun, {
           jsonButtonId: "open-context-report-json",
+          htmlButtonId: "open-context-report-html",
           pdfButtonId: "export-context-report-pdf",
           sheetButtonId: "export-context-report-sheet"
         })
@@ -4931,7 +5044,7 @@ function renderRunDetail(run) {
     ? `<section class="case-drilldown-header" aria-label="${tr("表示中のテストケース", "Current test case")}"><div class="case-drilldown-inner"><a class="case-drilldown-close" href="${esc(backHref)}" aria-label="${tr("実行詳細を閉じる", "Close run details")}" title="${tr("実行詳細を閉じる", "Close run details")}">${icon("x", 18)}<span>${tr("閉じる", "Close")}</span></a><div class="case-drilldown-icon">${icon("list-tree", 19)}</div><div class="case-drilldown-copy"><span class="case-drilldown-eyebrow">${tr("テストケースの実行詳細を表示中", "Viewing test case run details")}</span><strong>${esc(context.caseTitle || title)}</strong><small>${esc(context.caseId || "")} · ${esc(subtitle)}</small></div></div></section>`
     : `<section class="run-context"><div><span>${tr("選択中のケース", "Selected case")}</span><strong>${esc(title)}</strong></div><div><span>${tr("検証プロンプト", "Verification prompt")}</span><p>${esc(run.question)}</p></div><code>${esc(run.id)}</code></section>`;
   const summaryContent = caseRun
-    ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, showRunLink: false, showImprovementProposal: false })
+    ? reportCaseCardHtml({ ...caseRun, prompt: caseRun.prompt || run.question }, { evidence, reportId: suiteRun?.id || "", showRunLink: false, showImprovementProposal: false })
     : standaloneRunSummaryHtml(run, evidence);
   const traceContent = `<section class="trace-panel"><div class="section-row"><div><h2>${tr("レスポンス詳細", "Response details")}</h2><p>${isLive ? tr("エージェント応答を待っています…", "Waiting for the agent response…") : tr("{count}件のイベント", "{count} events", { count: formatLocaleNumber((run.events || []).length) })} · ${esc(run.agentLabel)}</p></div></div>${events || (isLive ? empty(tr("実行中", "Running"), tr("完了するとトレースが表示されます。", "The trace will appear when the run finishes.")) : "")}</section>`;
   app.innerHTML = shell(`
@@ -4960,6 +5073,26 @@ function renderRunDetail(run) {
   }
   document.querySelector("#open-context-report-json")?.addEventListener("click", () => {
     openJsonViewer({ title: suiteRunLabel(suiteRun), data: suiteRun });
+  });
+  document.querySelector("#open-context-report-html")?.addEventListener("click", async () => {
+    const runnableCases = (suiteRun.suiteSnapshot?.cases || []).filter((item) => String(item.status || "").toLowerCase() !== "draft");
+    const failedCount = (suiteRun.caseRuns || []).filter((item) => ["failed", "error"].includes(item.status)).length;
+    const scope = await askPdfExportScope({ totalCount: runnableCases.length, failedCount, format: "html" });
+    if (!scope) return;
+    openHtmlReportViewer({
+      title: suiteRunLabel(suiteRun),
+      url: `/api/suite-runs/${encodeURIComponent(suiteRun.id)}/export/html${scope === "failed" ? "?scope=failed" : ""}`
+    });
+  });
+  document.querySelectorAll("[data-preview-case-run-html]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const caseId = button.dataset.previewCaseRunHtml;
+      if (!caseId) return;
+      openHtmlReportViewer({
+        title: context?.caseTitle || caseId,
+        url: `/api/suite-runs/${encodeURIComponent(suiteRun.id)}/export/html?caseId=${encodeURIComponent(caseId)}`
+      });
+    });
   });
   document.querySelector("#export-context-report-pdf")?.addEventListener("click", async () => {
     const button = document.querySelector("#export-context-report-pdf");
@@ -5169,6 +5302,7 @@ async function route() {
           state.suitePasteError = "";
           state.suiteSheetModalOpen = false;
           state.suiteResultRollup = null;
+          state.suiteSaveStatus = "saved";
           state.selectedCaseIndex = 0;
           state.editorTab = "cases";
           state.suiteVersions = [];
@@ -5233,10 +5367,17 @@ async function initialize() {
   }
 }
 
-window.addEventListener("hashchange", route);
-window.addEventListener("prismtrail:localechange", () => {
+window.addEventListener("hashchange", async () => {
+  await flushSuiteAutosave().catch(() => null);
+  route();
+});
+window.addEventListener("prismtrail:localechange", async () => {
+  await flushSuiteAutosave().catch(() => null);
   document.documentElement.lang = getLocale();
   route();
+});
+window.addEventListener("pagehide", () => {
+  void flushSuiteAutosave().catch(() => {});
 });
 app.addEventListener("click", async (event) => {
   const authButton = event.target.closest("#recheck-google-auth-banner");
@@ -5276,6 +5417,12 @@ app.addEventListener("click", async (event) => {
     exportLatestSuiteResultsPdf();
     return;
   }
+  const latestResultsHtmlButton = event.target.closest("#export-latest-results-html");
+  if (latestResultsHtmlButton) {
+    event.preventDefault();
+    previewLatestSuiteResultsHtml();
+    return;
+  }
   const latestResultsSheetButton = event.target.closest("#export-latest-results-sheet");
   if (latestResultsSheetButton) {
     event.preventDefault();
@@ -5286,12 +5433,6 @@ app.addEventListener("click", async (event) => {
   if (quickSearchButton) {
     event.preventDefault();
     openQuickSearch();
-    return;
-  }
-  const saveButton = event.target.closest("#save-suite");
-  if (saveButton) {
-    event.preventDefault();
-    saveSuite();
     return;
   }
   const toggle = event.target.closest("#sidebar-toggle");

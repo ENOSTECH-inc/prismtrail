@@ -110,6 +110,11 @@ The UI supports an Algolia-style command palette (`Ctrl/⌘K`, or the search con
 
 Vertex AI returns structured JSON with a message and a constrained suite patch. The UI always previews the proposal, and the user explicitly applies or discards it before the suite is saved.
 
+Suite editor forms use autosave instead of a manual save action. Text input is coalesced for a short
+interval, while discrete and structural changes flush immediately. Browser writes are serialized and
+the latest captured snapshot wins, preventing a slower earlier request from replacing newer edits.
+The header exposes saving, saved, and failed states; run and export actions flush pending edits first.
+
 ## GCS lightweight RAG
 
 `KnowledgeSource` stores only a GCS bucket, prefix, display metadata, and sync status. The application uses ADC with the Cloud Storage JSON API to:

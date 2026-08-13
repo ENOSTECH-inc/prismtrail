@@ -32,4 +32,6 @@ test("suite-wide execution uses the same primary treatment as case execution", (
 test("suite editor header relies on the sidebar locale switch", () => {
   const editorHeader = app.slice(app.indexOf("title: suite.name"), app.indexOf("<div class=\"${columnClass}\">"));
   assert.doesNotMatch(editorHeader, /localeSelector\(true\)/);
+  assert.doesNotMatch(editorHeader, /id="save-suite"/);
+  assert.match(editorHeader, /tr\("自動保存", "Autosave"\)/);
 });
