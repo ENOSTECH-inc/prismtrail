@@ -28,7 +28,7 @@
     "@pdfme/generator": "^6.1.12",
     "@pdfme/schemas": "^6.1.12",
     "fuse.js": "^7.5.0",
-    "google-auth-library": "^11.0.0",
+    "google-auth-library": "^11.0.2",
     "lucide": "^1.28.0",
     "nunjucks": "^3.2.4",
     "vega": "^6.3.1",
