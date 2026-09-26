@@ -1,0 +1,3 @@
+# Orca / Claude Code が新しい worktree を作るときにメインのチェックアウトからコピーする
+# gitignore 済みファイル (リテラルパスのみ。glob 不可。本番用 env は意図的に除外)
+.env

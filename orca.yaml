@@ -1,0 +1,5 @@
+# Orca の worktree 設定。新しい worktree を作るたびに setup が走る
+# (.env 類のコピーは .worktreeinclude が担当)
+scripts:
+  setup: |
+    cd "$ORCA_WORKTREE_PATH" && npm ci
