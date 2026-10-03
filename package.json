@@ -34,7 +34,7 @@
     "lucide": "^1.49.0",
     "nunjucks": "^3.2.4",
     "vega": "^6.4.0",
-    "vega-embed": "^7.1.0",
+    "vega-embed": "^7.3.0",
     "vega-lite": "^6.4.3"
   },
   "engines": {
