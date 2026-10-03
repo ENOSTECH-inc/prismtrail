@@ -31,7 +31,7 @@
     "fontkit": "^2.0.4",
     "fuse.js": "^7.5.0",
     "google-auth-library": "^11.1.0",
-    "lucide": "^1.28.0",
+    "lucide": "^1.49.0",
     "nunjucks": "^3.2.4",
     "vega": "^6.4.0",
     "vega-embed": "^7.1.0",
