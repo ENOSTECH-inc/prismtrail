@@ -24,7 +24,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@pdfme/common": "^6.1.12",
+    "@pdfme/common": "^6.2.8",
     "@pdfme/generator": "^6.1.13",
     "@pdfme/pdf-lib": "^6.1.12",
     "@pdfme/schemas": "^6.2.2",
